@@ -101,16 +101,28 @@ token gestures at each technology.
 2. Go WS handler invokes an **atomic Redis Lua script** that, in one
    step: checks the pool is open (`is_open == "1"`) and the room's lockout
    hasn't passed, checks sufficient balance, deducts the wallet, increments
-   the outcome pool and total pool, records the wager, and dedupes on
-   `idempotency_key` (returns the existing transaction if it's a retry).
+   the outcome pool and total pool, records the wager, dedupes on
+   `idempotency_key` (returns the existing transaction if it's a retry),
+   and appends the accepted wager to a Redis Stream outbox (see step 4).
    Target: reject/accept in **< 5ms**, zero state corruption.
 3. On acceptance, updated odds broadcast to all WebSocket clients in the
    room. Target: **< 30ms** end-to-end.
-4. The accepted wager event is emitted to Kafka topic **`wagers-placed`**.
-   The WebSocket server **never writes directly to PostgreSQL** on this
-   path.
-5. A dedicated Go consumer reads `wagers-placed` and batch-writes to the
-   PostgreSQL double-entry ledger (`transactions`, `ledger_entries`),
+4. **Transactional outbox.** The `XADD` to the `wager-outbox` stream
+   happens *inside* the same atomic Lua script as the balance mutation, so
+   an accepted wager and its event record commit together or not at all.
+   A separate relay process consumes the stream, produces to Kafka topic
+   **`wagers-placed`**, and acknowledges only after a successful produce.
+   A crash between the two leaves the event in the stream to be replayed.
+   Delivery into Kafka is therefore at-least-once, deduplicated downstream
+   by `idempotency_key`.
+
+   Without this, a crash between the Redis write and the Kafka produce
+   would debit a wallet that the ledger never learns about — Redis and
+   PostgreSQL would diverge silently, defeating the audit-trail and
+   double-spend guarantees below.
+5. The WebSocket server **never writes directly to PostgreSQL** on this
+   path. A dedicated Go consumer reads `wagers-placed` and batch-writes to
+   the PostgreSQL double-entry ledger (`transactions`, `ledger_entries`),
    maintaining a permanent audit trail decoupled from the hot path.
 
 ## 6. Auth
@@ -142,17 +154,20 @@ token gestures at each technology.
   sufficient for the first phase; can be added once the core loop is
   proven.
 
-## 9. Open Items for the Implementation Plan
+## 9. Items Resolved in the Implementation Plan
 
-These are intentionally left for the planning phase rather than this
-design doc, since they're implementation details rather than architectural
-decisions:
+These were left for the planning phase rather than this design doc, since
+they're implementation details rather than architectural decisions. All of
+them are now settled in
+[`docs/plans/2026-08-21-implementation-plan.md`](../plans/2026-08-21-implementation-plan.md);
+that plan is the authoritative reference for each:
 
-- Exact account login mechanism (email/password vs. OAuth provider).
-- Exact refill threshold and platform-wide refill target token amounts.
-- Redis key schema and the production Lua script contents.
-- Go WebSocket hub internals (goroutine/channel structure, ping/pong
-  heartbeat cadence).
-- Kafka topic partitioning strategy and consumer group design.
-- PostgreSQL double-entry schema field-level design.
-- Go repository folder layout (standard Go project layout conventions).
+- Account login mechanism → email + password, argon2id, JWT HS256
+  (plan §2).
+- Refill threshold and platform-wide refill target → plan §8.
+- Redis key schema and Lua script contracts → plan §4 and §5.
+- Go WebSocket hub internals → plan §9, phase 4 (per-room owner goroutine,
+  bounded send buffers, ping/pong heartbeat).
+- Kafka topic partitioning and consumer group design → plan §7.
+- PostgreSQL double-entry schema → plan §6.
+- Go repository folder layout → plan §3.
