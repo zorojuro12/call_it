@@ -84,11 +84,23 @@ finish in order — jump to the section matching what you're about to do.
 
 ## 8. Git & shipping
 
+**Branch-per-phase, no PR ceremony (decided 2026-08-23).** Before starting a
+plan phase's implementation, branch off `dev` (e.g. `phase-1-domain-core`).
+Commit incrementally as each logical unit reaches GREEN in the TDD cycle —
+not one squashed commit at the end of the phase (Phase 0 did this and it
+didn't reflect the actual work; don't repeat it). Merge into `dev` directly
+once the phase's tests/acceptance criteria pass — no `/pr`, no waiting for
+review; this is a solo project and PR ceremony doesn't add value with one
+developer. Sub-task-level branching (a branch per file/component within a
+phase) was considered and explicitly rejected as too much overhead for solo
+work.
+
 | Situation | Use |
 |---|---|
-| Committing | Follow `.claude/rules/ecc/common/git-workflow.md` format (`type: description`) directly — no dedicated skill needed for the commit itself |
-| Opening a PR | `pr` skill — discovers templates, analyzes changes, pushes |
-| Deciding how to integrate a finished branch (merge strategy, cleanup) | `finishing-a-development-branch` skill |
+| Starting a phase's implementation | `git checkout -b <phase-slug> dev` first, before writing code |
+| Committing | Follow `.claude/rules/ecc/common/git-workflow.md` format (`type: description`) directly, incrementally per logical unit — no dedicated skill needed for the commit itself |
+| Finishing a phase | Verify tests pass, then merge the phase branch into `dev` directly (`git merge`), delete the branch. `finishing-a-development-branch` skill covers the decision-making if the situation is more ambiguous than "tests pass, merge it" |
+| Opening a PR | Not used in this project's current workflow (solo, self-merge) — `pr` skill stays available if that changes (e.g. a collaborator joins) |
 | Scanning for leaked secrets/config issues before pushing | `security-scan` skill |
 
 ---
