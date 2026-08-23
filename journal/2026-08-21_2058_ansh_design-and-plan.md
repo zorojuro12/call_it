@@ -33,38 +33,21 @@ Sequence:
 
 ## Decisions Made
 
-- **Resume-signal wins over build speed by default** when the two conflict —
-  the explicit design mandate for the whole project. Real Kafka (not Redpanda)
-  chosen specifically because of this: deeper, more interview-defensible
-  hands-on experience even though it's heavier to run locally.
-- **Hybrid identity model**: everyone joins via room short-code; guests get a
-  session-scoped balance (wiped after), account holders persist a balance
-  across sessions. Net profit/loss (not final balance) rolls into the
-  persistent total, floored at 0.
-- **Host-configurable buy-in per room** (not a fixed platform constant).
-  Account holders can stake up to 3x the room's buy-in, capped by actual
-  balance; partial buy-in allowed and shown transparently in the UI.
-- **Manual refill economy**: claimable only when balance is below a low
-  threshold, max 3 claims per rolling 7-day window, refills to a fixed
-  platform-wide target independent of any room's buy-in. Deliberately reuses
-  the Redis sliding-window rate limiter already needed for wager throttling.
-- **Host cannot bet in their own room** — removes the conflict of interest
-  from the host also being the sole outcome-resolver. Confirmed cheap to
-  reverse later (one guard clause, no schema change) if that changes.
-- **Rounds support N custom outcomes** (2-4), not fixed binary — host defines
-  both the question and outcome options each round, since there's no external
-  data feed for these live in-the-moment events.
-- **Local Docker Compose demo first**; live cloud deployment is an explicit
-  later goal, not designed away — Terraform gets written as real infra-as-code
-  now, applied later.
-- **Monorepo** (`/backend`, `/frontend`), **short-lived JWT** for WS auth.
-- **Outbox amendment** (caught during `/plan`, not brainstorming): Redis
-  Streams `XADD` inside the same atomic Lua script as the wager mutation,
-  relayed to Kafka by a separate process. Closes a real crash-consistency gap
-  between the hot-path Redis write and the async Kafka/Postgres persistence.
-- **Library choices**: `gorilla/websocket` (recognizability over
-  `coder/websocket`'s cleaner API), `segmentio/kafka-go` (simplicity over
-  `twmb/franz-go`'s speed/transactions — can migrate later).
+Full reasoning for all of these is written down in the spec and plan, not
+restated here:
+
+- Resume-signal-wins-by-default, and Kafka-over-Redpanda as a direct
+  consequence of it — spec §1, §2.
+- Hybrid identity model, host-configurable per-room buy-in, refill economy —
+  spec §3.
+- Host cannot bet in their own room; rounds support N custom outcomes — spec
+  §4.
+- Local Docker Compose demo first, live deployment deferred but not designed
+  away — spec §8, plan §9 (phase 8).
+- Monorepo layout, short-lived JWT for WS auth — plan §3, spec §6.
+- Outbox amendment (caught during `/plan`, not brainstorming) — plan §1,
+  spec §5.
+- Library choices (`gorilla/websocket`, `segmentio/kafka-go`) — plan §2.
 
 ## Test Coverage
 
