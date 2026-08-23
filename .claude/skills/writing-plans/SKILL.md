@@ -46,12 +46,19 @@ independently testable deliverable.
 
 ## Bite-Sized Task Granularity
 
-**Each step is one action (2-5 minutes):**
+**Each step is one action (2-5 minutes). A task may contain multiple
+checkpoints — one per distinct behavior/case — each checkpoint running its
+own cycle:**
 - "Write the failing test" - step
 - "Run it to make sure it fails" - step
 - "Implement the minimal code to make the test pass" - step
 - "Run the tests and make sure they pass" - step
 - "Commit" - step
+
+A task with one straightforward behavior has one checkpoint (one commit). A
+task covering several cases gets one checkpoint per case (several commits) —
+don't invent checkpoints that aren't real distinctions, and don't collapse
+real ones into a single commit either.
 
 ## Plan Document Header
 
@@ -97,6 +104,8 @@ include this section.]
   and return types. A task's implementer sees only their own task; this
   block is how they learn the names and types neighboring tasks use.]
 
+**Checkpoint 1: [specific behavior or case this checkpoint covers]**
+
 - [ ] **Step 1: Write the failing test**
 
 ```python
@@ -128,6 +137,18 @@ Expected: PASS
 git add tests/path/test.py src/path/file.py
 git commit -m "feat: add specific feature"
 ```
+
+**Checkpoint 2: [next behavior or case, if this task has one]**
+
+- [ ] Step 1: Write the failing test
+- [ ] Step 2: Run — expect FAIL
+- [ ] Step 3: Write minimal implementation
+- [ ] Step 4: Run — expect PASS
+- [ ] Step 5: Commit
+
+[Repeat Checkpoint N for each further distinct behavior. Omit Checkpoint 2+
+entirely when the task genuinely has only one behavior — a single checkpoint
+is a complete, valid task, not a truncated one.]
 ````
 
 ## No Placeholders
