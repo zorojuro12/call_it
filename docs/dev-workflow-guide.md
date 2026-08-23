@@ -23,9 +23,20 @@ finish in order — jump to the section matching what you're about to do.
 
 ## 2. Turning an approved spec into an implementation plan
 
+**Two layers, don't confuse them.** `/impl-plan` is the *architectural* layer:
+run once per project (or per major subsystem) to resolve open design questions
+and produce the phase table. `writing-plans` is the *execution* layer: run once
+per phase (or per standalone feature), right before that phase's branch starts,
+to break one phase into numbered tasks with exact files, interfaces, and
+test→implement→verify→commit steps. `/impl-plan` was already run for CallIt —
+its output is `docs/plans/2026-08-21-implementation-plan.md`. Don't re-run it
+per phase.
+
 | Situation | Use |
 |---|---|
 | Spec is approved (✅ done — `docs/specs/2026-08-21-callit-design.md`), need a concrete build plan for one of the §9 open items (Redis schema, WS hub internals, Kafka partitioning, Postgres schema, repo layout) | `/impl-plan` command — restates requirements, assesses risk, produces step-by-step plan, **waits for CONFIRM before touching code** (renamed from `/plan` to avoid colliding with Claude Code's built-in Plan Mode) |
+| About to start a phase from the plan's §9 table, need it broken into committable tasks | `writing-plans` skill → saves to `docs/plans/YYYY-MM-DD-<name>.md` → hands off to `executing-plans` |
+| Building a standalone feature that was never one of the 9 phases (post-MVP additions) | `writing-plans` skill directly — no need to route through `/impl-plan` unless it raises genuinely new architectural questions |
 | Feature/refactor plan needs deeper multi-file architectural reasoning first | `planner` agent, or `code-architect` agent if there's existing code to pattern-match against (N/A yet — repo is pre-code) |
 | Deciding Go package/folder layout specifically | `planner` agent, cross-checked against the Go microservice reference layout at `/home/chikara/projects/ECC/examples/go-microservice-CLAUDE.md` |
 
@@ -40,14 +51,23 @@ finish in order — jump to the section matching what you're about to do.
 
 ## 4. Implementation (TDD loop)
 
+**Default path: `writing-plans` → `executing-plans`.** For anything substantial
+— a phase, a real feature — write the task/step plan first, then execute it.
+You get a reviewable artifact before code starts, and commit boundaries are
+fixed in the plan rather than decided ad hoc mid-session (which is what
+produced Phase 0's single mega-commit). The `orch-*` commands cover the same
+ground as one wrapped flow without leaving a standalone plan document; they're
+the better fit only for the narrow, well-shaped cases noted below.
+
 | Situation | Use |
 |---|---|
+| **Building a phase or a substantial feature (the default)** | `writing-plans` → `executing-plans` |
 | Starting any new feature/bug fix — write-tests-first enforcement | `tdd-guide` agent (RED → GREEN → IMPROVE, 80%+ coverage per `.claude/rules/ecc/common/testing.md`) |
-| End-to-end gated feature build (research → plan → TDD → review → commit, one wrapped flow) | `orch-add-feature` skill |
-| Changing existing working behavior to a new spec | `orch-change-feature` skill |
-| Fixing a bug — reproduce as failing regression test first | `orch-fix-defect` skill |
+| Fixing a bug — reproduce as failing regression test first | `orch-fix-defect` skill — genuinely well-shaped for this; a full task/step plan is overkill for "reproduce, fix, verify" |
 | Behavior-preserving refactor (tests stay green throughout) | `orch-refine-code` skill |
-| Bootstrapping the whole MVP skeleton from the design spec in one orchestrated pass | `orch-build-mvp` skill |
+| End-to-end gated feature build, one wrapped flow, no separate plan artifact wanted | `orch-add-feature` skill — the alternative to `writing-plans` when you don't need a reviewable plan first |
+| Changing existing working behavior to a new spec | `orch-change-feature` skill, or `writing-plans` if the change is large enough to want a plan document |
+| Bootstrapping the whole MVP skeleton from the design spec in one orchestrated pass | `orch-build-mvp` skill — superseded here; CallIt is building phase-by-phase instead |
 | Build/compile errors block progress | `build-fix` skill, or `go-build-resolver` agent once installed (Bucket 3, Go-specific) |
 | Removing dead code / unused exports as the codebase grows | `refactor-clean` skill / `refactor-cleaner` agent |
 
@@ -105,11 +125,132 @@ work.
 
 ---
 
+## 9. Decisions & tradeoffs (things deliberately NOT adopted)
+
+Each entry records what was considered, why it was declined, and the concrete
+condition that should flip the answer. **Verdicts are project-specific;
+the reasoning is portable.** Re-run the reasoning against a new project's
+conditions rather than inheriting the verdict — a team project, a
+multi-repo setup, or a verbose stack changes several of these.
+
+### Subagent-driven development — declined 2026-08-23
+
+**What it is:** `superpowers:subagent-driven-development` — dispatches a fresh
+implementer subagent per plan task, a task reviewer after each, a 5-round fix
+loop, and a final whole-branch review, coordinating through a git-ignored
+ledger at `.superpowers/sdd/<plan>/progress.md`.
+
+**Declined because:** the problem it solves — main-context pollution from
+implementation output — wasn't demonstrated here. Phase 0, an entire phase,
+was 464 lines across 10 files; Go plus terse `go test` output is cheap in
+context. The one compaction that did occur in this project came from
+*workflow discussion* (reading multiple SKILL.md files, the survey, the spec,
+the plan) not from building. Reading SDD's own 32KB `SKILL.md` costs about as
+much context as a whole phase of implementation.
+
+The cheaper substitute already exists: **branch per phase → journal entry →
+fresh session for the next phase** resets context to zero between phases for
+free. SDD addresses *within*-phase accumulation, which these phase sizes don't
+hit. If context feels tight, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in
+`~/.claude/settings.json` (currently `50`, i.e. compacting at half the window)
+is a one-line lever with more leverage than seven files of orchestration.
+
+**Costs if adopted:** 7 files (SKILL.md, 3 prompt templates, 3 scripts) plus
+the sibling `requesting-code-review` skill. Minimum 2 subagent dispatches per
+task (implementer + reviewer), up to ~12 for a task that runs the full fix
+loop, plus a final whole-branch review on the most capable model. It also
+carries an explicitly autonomous posture — *"Do not pause to check in with
+your human partner between tasks"* and *"Rulings, not stalls"* — stopping only
+for irreversible/destructive operations, security-sensitive actions, side
+effects outside the worktree (merge/push/publish), or a plan too broken to act
+on. Every ruling it makes is surfaced at the end, but not before.
+
+**Genuine upsides forgone:** the compaction-surviving ledger (it names
+re-dispatching already-completed tasks as the most expensive failure mode
+observed), and the per-task review gate.
+
+**Revisit when:** a phase's implementation genuinely exhausts context before
+completing — Phase 5 (Kafka + ledger + migrations + reconciliation) or Phase 6
+(Next.js frontend; JS/TS is far more verbose than Go) are the plausible
+candidates. Adopt with evidence about *which* phase forced it, not
+preemptively.
+
+**Portable?** The reasoning generalizes; the verdict does not. A verbose
+stack, larger tasks, or work you intend to run unattended flips this quickly.
+
+### Continuous learning v2 / instincts — declined 2026-08-23
+
+**What it is:** ECC's `continuous-learning-v2` — hooks capture every tool call
+to a JSONL log, a background Haiku agent periodically mines it for patterns
+(corrections, repeated workflows, error resolutions) and writes atomic
+"instincts" with confidence scores (0.3–0.9), scoped per-project or global.
+`/evolve` clusters instincts into skills; `/promote` graduates project
+instincts to global once seen in 2+ projects at ≥0.8 confidence. Commands:
+`/instinct-status`, `/instinct-export`, `/instinct-import`, `/evolve`,
+`/promote`, `/projects`, `/prune`, plus `/skill-create --instincts` (mines git
+history directly, no daemon required).
+
+**Current state:** present as a skill but **dormant** — `config.json` has
+`observer.enabled: false`, and `~/.claude/settings.json` has no `hooks` block
+registering `observe.sh`, nor is it installed as a plugin. Nothing is being
+captured.
+
+**Declined because:** it's a third store overlapping two that already work
+here — Claude's own memory (which captures the same "user corrected me" signal
+as `feedback` memories, with explicit reasoning, written on judgment) and the
+`journal` skill (session decisions and rationale). Adding a third creates the
+same "which store does this go in?" ambiguity the survey already flagged for
+`/save-session` vs. `journal`.
+
+It's also curated by *statistics* rather than judgment: "the user didn't
+correct this" is weak evidence for "this is right" — it may mean they didn't
+notice. Once an instinct crosses 0.7 confidence it auto-injects into every
+session with no human ever having approved it. False-positive memories are
+worse than missing ones, because they're trusted by default.
+
+**Cost shape (three separate line items):** the capture hook is cheap (shell
+script, no LLM). The background Haiku analysis pass is a genuine recurring
+spend that runs whether or not anything useful comes out. The one that costs
+the *working* model is SessionStart injection — up to
+`ECC_MAX_INJECTED_INSTINCTS` (default 6) instincts, capped by
+`ECC_SESSION_START_MAX_CHARS` (default 8000), pushed into every session
+regardless of relevance to that session's task.
+
+**Also:** the observer needs ≥20 queued observations before its first analysis
+runs, and much of what it would "discover" for a Go project is already written
+down in `golang-patterns`/`golang-testing` — rediscovering existing skill
+content, statistically, at recurring cost.
+
+**Revisit when:** *volume* and *novelty* both exist — many sessions, producing
+patterns not already captured in an installed skill or rule, ideally across
+several concurrent projects (which is what makes `/promote` meaningful). The
+trigger is juggling multiple repos, not reaching a particular phase here.
+`/skill-create --instincts` is the cheap on-ramp to try first: one-shot, mines
+git history, no daemon, no standing hook.
+
+**Portable?** Reasoning generalizes. For a team, or someone rotating across
+many client repos, the calculus genuinely flips — cross-project detection and
+export/import are solving real problems there that don't exist for one solo
+project.
+
+### Other tradeoffs decided here
+
+| Decision | Verdict | Revisit when |
+|---|---|---|
+| Branch granularity (§8) | Per phase, not per sub-task | A phase grows big enough that its branch stops being reviewable as one unit |
+| PR vs self-merge (§8) | Self-merge to `dev`, no PR | A collaborator joins — then `/pr` and `review-pr` earn their keep immediately |
+| `writing-plans` vs `orch-*` (§4) | `writing-plans` default; `orch-fix-defect`/`orch-refine-code` for their narrow shapes | Never really — they coexist; just don't use both for the same job |
+| Skills vs rules import timing (§3) | Skills eagerly (cheap, listing-only until invoked); rule dirs staggered per-phase (always-loaded full text) | If a rule pack turns out small enough that staggering costs more attention than it saves |
+| `journal` local vs `journal-global` | Project-local copy wins here (ADRs at `docs/decisions/`, not the global `docs/adr/`) | Starting a new project — use `journal-global` unless it needs project-specific tailoring |
+| `CLAUDE.md` timing (§3) | After Phase 0, not from the spec | Never — writing it before real code exists means documenting guesses |
+
+---
+
 ## Suggested order for CallIt specifically, right now
 
-1. `/impl-plan` — resolve the §9 open items (start with Redis Lua wager-placement schema, since it's the hot-path critical piece; each subsystem gets its own `/impl-plan` pass).
-2. Write `CLAUDE.md` once repo layout + schemas are decided.
-3. Install Bucket 3 stack-specific skills/rules (`golang-*`, `redis-patterns`, `postgres-patterns`) project-locally.
-4. `tdd-guide` / `orch-build-mvp` for the first implementation slice (Go WS handler + Redis Lua script, since it's the riskiest path).
-5. `security-review` on the wager-placement and auth code before first commit (mandatory, per code-review rules — this is exactly the kind of code the trigger list names).
-6. `journal` entry to close out the session.
+1. ~~`/impl-plan`~~ ✅ done — `docs/plans/2026-08-21-implementation-plan.md`.
+2. ~~Import Phase 0 tooling~~ ✅ done — `golang-*` rules/skills, `docker-patterns`.
+3. ~~Phase 0~~ ✅ done — commit `d60bd8d`.
+4. **Write `CLAUDE.md`** — Phase 0 exists now, so the gate is met. Run `/project-init` for a command-verified scaffold, then layer in the "why" content (invariants, rejected alternatives, gotchas) from the spec, plan, and journal. This is also where the commit-granularity convention belongs, since `CLAUDE.md` is always loaded.
+5. **Phase 1** — `git checkout -b phase-1-domain-core dev` → `writing-plans` (break the phase into committable tasks) → `executing-plans` (execute inline, commit per task) → merge to `dev`.
+6. `journal` entry, then a fresh session for Phase 2 (which is also the context reset that makes SDD unnecessary — see §9).
