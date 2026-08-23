@@ -207,17 +207,19 @@ call sites.
 Each phase ends in something runnable and verifiable. Phases 0–4 are the
 MVP and contain the demo; 5 onward are separate milestones.
 
-| # | Phase | Deliverable | Depends on |
-|---|---|---|---|
-| 0 | **Foundations** | Monorepo skeleton, `docker-compose.yml` (Redis/PostgreSQL/Kafka-KRaft), Makefile, GitHub Actions CI, config loader with fail-fast validation, structured logging, `/healthz` | — |
-| 1 | **Domain core (pure Go)** | Odds math, payout and dust distribution, round state machine, wallet rules (buy-in, 3× cap, partial buy-in, refill quota). No I/O; near-total unit coverage | 0 |
-| 2 | **Redis layer** | Key schema, the three Lua scripts, Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 |
-| 3 | **Auth + REST** | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 |
-| 4 | **WebSocket hub + round lifecycle** | Per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, server-side lock timer and 60-second auto-refund fallback. Playable end to end from a CLI client | 3 |
-| 5 | **Kafka + ledger** | Outbox relay, `wagers-placed` and `rounds-settled` producers, ledger-worker consumer, migrations, deferred constraint trigger, Redis↔PostgreSQL reconciliation test | 2, 4 |
-| 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4 |
-| 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5, 6 |
-| 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7 |
+| # | Phase | Deliverable | Depends on | Tooling to import (see `ecc-survey.md`) |
+|---|---|---|---|---|
+| 0 | **Foundations** | Monorepo skeleton, `docker-compose.yml` (Redis/PostgreSQL/Kafka-KRaft), Makefile, GitHub Actions CI, config loader with fail-fast validation, structured logging, `/healthz` | — | `golang-*` (patterns/testing/tdd/verification) rules + skills; `docker-patterns` skill — import *before* starting this phase, not after |
+| 1 | **Domain core (pure Go)** | Odds math, payout and dust distribution, round state machine, wallet rules (buy-in, 3× cap, partial buy-in, refill quota). No I/O; near-total unit coverage | 0 | None new — covered by Phase 0's Go tooling |
+| 2 | **Redis layer** | Key schema, the three Lua scripts, Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 | `redis-patterns` skill |
+| 3 | **Auth + REST** | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 | `api-design` skill |
+| 4 | **WebSocket hub + round lifecycle** | Per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, server-side lock timer and 60-second auto-refund fallback. Playable end to end from a CLI client | 3 | None new |
+| 5 | **Kafka + ledger** | Outbox relay, `wagers-placed` and `rounds-settled` producers, ledger-worker consumer, migrations, deferred constraint trigger, Redis↔PostgreSQL reconciliation test | 2, 4 | `postgres-patterns`, `database-migrations` skills |
+| 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4 | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
+| 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5, 6 | None new — spec already names k6 directly |
+| 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7 | Decide when unblocked |
+
+**Import rule:** skills (Bucket 2/3) are cheap — one line in the availability listing until invoked — so pull each phase's skills in *before* that phase starts, no need to batch them all up front. Language-specific **rule dirs** (`.claude/rules/ecc/<language>/`) are different: they're always-loaded full text into every turn once installed, per `.claude/rules/ecc/common/agents.md`'s description of rules as passive/always-on. Install a rule dir only right before the phase that needs it, so irrelevant stack rules don't sit in every turn's context for phases that don't touch that stack yet.
 
 Two sequencing choices are deliberate. **Phase 1 precedes all
 infrastructure** because the money math is where correctness bugs hide, and
