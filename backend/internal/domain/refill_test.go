@@ -74,3 +74,25 @@ func TestCanRefill_BalanceCheckedBeforeQuota(t *testing.T) {
 		t.Fatalf("CanRefill(%d, %d) = %v, want ErrRefillNotEligible", RefillTarget, RefillQuota, err)
 	}
 }
+
+func TestRefillAmount(t *testing.T) {
+	tests := []struct {
+		name    string
+		balance Tokens
+		want    Tokens
+	}{
+		{name: "an empty account tops up by the full target", balance: 0, want: RefillTarget},
+		{name: "a partial balance tops up by the difference", balance: 150, want: RefillTarget - 150},
+		{name: "one token short tops up by one", balance: RefillTarget - 1, want: 1},
+		{name: "an account at target tops up by nothing", balance: RefillTarget, want: 0},
+		{name: "an account above target never returns a negative", balance: 5000, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RefillAmount(tt.balance); got != tt.want {
+				t.Errorf("RefillAmount(%d) = %d, want %d", tt.balance, got, tt.want)
+			}
+		})
+	}
+}

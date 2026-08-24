@@ -19,3 +19,14 @@ func CanRefill(balance Tokens, claimsInWindow int) error {
 	}
 	return nil
 }
+
+// RefillAmount is the top-up that brings balance exactly to the platform
+// refill target. Callers should check CanRefill first; for a balance
+// already at or above the target this returns 0 rather than a negative
+// amount, so a careless caller cannot burn tokens.
+func RefillAmount(balance Tokens) Tokens {
+	if balance >= RefillTarget {
+		return 0
+	}
+	return RefillTarget - balance
+}
