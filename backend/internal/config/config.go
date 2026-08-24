@@ -12,9 +12,11 @@ import (
 // binary doesn't talk to yet (Redis, Postgres, Kafka, JWT) are added in
 // the phase that introduces that integration, not speculatively here.
 type Config struct {
-	Port     int
-	Env      string
-	LogLevel string
+	Port      int
+	Env       string
+	LogLevel  string
+	RedisAddr string
+	RedisDB   int
 }
 
 var validEnvs = map[string]bool{
@@ -38,9 +40,11 @@ type LookupFunc func(key string) (string, bool)
 // unset and rejecting invalid values immediately.
 func Load(lookup LookupFunc) (Config, error) {
 	cfg := Config{
-		Port:     8080,
-		Env:      "development",
-		LogLevel: "info",
+		Port:      8080,
+		Env:       "development",
+		LogLevel:  "info",
+		RedisAddr: "localhost:6379",
+		RedisDB:   0,
 	}
 
 	if v, ok := lookup("PORT"); ok {
@@ -66,6 +70,24 @@ func Load(lookup LookupFunc) (Config, error) {
 			return Config{}, fmt.Errorf("config: LOG_LEVEL %q is not one of debug|info|warn|error", v)
 		}
 		cfg.LogLevel = v
+	}
+
+	if v, ok := lookup("REDIS_ADDR"); ok {
+		if v == "" {
+			return Config{}, fmt.Errorf("config: REDIS_ADDR must not be empty")
+		}
+		cfg.RedisAddr = v
+	}
+
+	if v, ok := lookup("REDIS_DB"); ok {
+		db, err := strconv.Atoi(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: REDIS_DB %q is not a valid integer: %w", v, err)
+		}
+		if db < 0 || db > 15 {
+			return Config{}, fmt.Errorf("config: REDIS_DB %d out of valid range 0-15", db)
+		}
+		cfg.RedisDB = db
 	}
 
 	return cfg, nil
