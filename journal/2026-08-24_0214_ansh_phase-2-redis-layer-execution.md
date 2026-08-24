@@ -1,10 +1,10 @@
 # 2026-08-24 — ansh — Phase 2 Redis layer execution
 
-**Status:** Phase 2 (`internal/redisstore`) fully implemented and verified on branch `phase-2-redis-layer`, off `dev`: key schema, all 4 Lua scripts (`place_wager`, `lock_round`, `settle_round`, `refund_round`), Go wrappers, and 4 concurrency suites proving zero double-spend and exact token conservation. 29 commits, all green from a clean `make down && make up`. Branch is **not yet merged** — `finishing-a-development-branch` presented the 3-option menu and the user chose "keep as-is."
+**Status:** Phase 2 (`internal/redisstore`) fully implemented, verified, and **merged into `dev`**: key schema, all 4 Lua scripts (`place_wager`, `lock_round`, `settle_round`, `refund_round`), Go wrappers, and 4 concurrency suites proving zero double-spend and exact token conservation. `phase-2-redis-layer` merged into `dev` with `--no-ff` (merge commit `a961716`) and pushed to `origin/dev`; branch kept (not deleted) at the user's request. Merged result verified green from a clean `make down && make up` before pushing.
 **Decided:** No new decisions beyond the plan's own amendments (A1–A5, already recorded in `docs/plans/2026-08-24-phase-2-redis-layer.md`'s header) — folded back into the parent plan, spec, and CLAUDE.md per the plan's own Task 9 Checkpoint 2, matching how Phase 1 closed out its A1–A3.
 **Spec:** Updated — `docs/specs/2026-08-21-callit-design.md` §4 gained one sentence on how the "N/M players wagered" counter is actually computed (`SCARD round:{roundID}:bettors` over `HLEN` wallets minus host); parent plan §4/§5/§9 updated with the `bettors` key, `lock_round.lua` as a fourth script, the Go-computes/Lua-applies settlement split, and Phase 3's inherited writers; CLAUDE.md's Stack/Build & Test/Critical Invariants/Repository Layout/Testing/Installed Tooling/Git Workflow sections all updated to match current state.
-**Next:** Get the user's merge decision to close out `finishing-a-development-branch` (still pending — they chose "keep as-is" this session). After that, Phase 3 (Auth + REST) starts with its own `writing-plans` pass; `api-design` skill needs installing first per CLAUDE.md's per-phase tooling table.
-**Blocked on:** User's merge/integration choice for `phase-2-redis-layer`.
+**Next:** Phase 3 (Auth + REST — register/login, room creation, join-by-code, JWT issuance, rate-limit middleware) starts with its own `writing-plans` pass; `api-design` skill needs installing first per CLAUDE.md's per-phase tooling table.
+**Blocked on:** Nothing.
 **Touches:** `backend/internal/redisstore/*` (all files + tests), `backend/scripts/lua/*.lua`, `backend/internal/config/config.go`, `Makefile`, `.github/workflows/ci.yml`, `docs/plans/2026-08-21-implementation-plan.md`, `docs/specs/2026-08-21-callit-design.md`, `CLAUDE.md`, `docs/plans/2026-08-24-phase-2-redis-layer.md`
 
 ---
@@ -53,12 +53,11 @@ Also part of this session: resumed from the last two journal entries, pushed 41 
 
 ## Open Questions / Blockers
 
-- Merge decision for `phase-2-redis-layer` → `dev` is the only open item — same shape as Phase 1's close-out. User chose "keep as-is" this session; branch and worktree are untouched, ready to merge whenever.
 - Worth deciding before Phase 3's plan is written: should `writing-plans` explicitly flag checkpoints whose pass/fail can't be observed through the public API (like `lock_round.lua`'s `ALREADY_LOCKED` case), the same way it already flags checkpoints that can't RED because an earlier checkpoint's implementation already satisfies them? Both are variants of the same underlying problem — a specified checkpoint with no way to fail first.
 
 ## Relevant Commits
 
-29 commits on `phase-2-redis-layer` (branched off `dev` at the tip after Phase 1's merge + Phase 2 plan), from `70b63af` (chore: add go-redis v9.18.0 and wire Redis into test and CI) through `b551b57` (docs: fold Phase 2 amendments into the spec, plan, and CLAUDE.md). Full list via `git log --oneline phase-2-redis-layer ^dev`.
+30 commits on `phase-2-redis-layer` (branched off `dev` at the tip after Phase 1's merge + Phase 2 plan), from `70b63af` (chore: add go-redis v9.18.0 and wire Redis into test and CI) through `43442e6` (docs: journal Phase 2 Redis layer execution session). Merged into `dev` with `--no-ff` as `a961716` and pushed to `origin/dev`. Full list via `git log --oneline phase-2-redis-layer ^dev`.
 
 ## Spec Changes
 
@@ -68,4 +67,4 @@ Also part of this session: resumed from the last two journal entries, pushed 41 
 
 ## Next Step
 
-Get the user's merge decision for `phase-2-redis-layer` whenever they're ready. After that, Phase 3 (Auth + REST — register/login, room creation, join-by-code, JWT issuance, rate-limit middleware) gets its own `writing-plans` pass; per CLAUDE.md's per-phase tooling table, install `api-design` first.
+Phase 3 (Auth + REST — register/login, room creation, join-by-code, JWT issuance, rate-limit middleware) gets its own `writing-plans` pass; per CLAUDE.md's per-phase tooling table, install `api-design` first.
