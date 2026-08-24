@@ -12,6 +12,7 @@ import (
 )
 
 var settleRoundScript = redis.NewScript(lua.SettleRound)
+var refundRoundScript = redis.NewScript(lua.RefundRound)
 
 // ReadStakes reads a round's wagers hash into domain.Stake, sorted by
 // (UserID, Outcome).
@@ -120,4 +121,44 @@ func (s *Store) SettleRound(ctx context.Context, roundID string, winningOutcome 
 	}
 
 	return settlement, nil
+}
+
+// RefundRound refunds every stake on a locked round's timeout/disconnect
+// path. Unlike SettleRound there is nothing for Go to compute —
+// refunding is the identity function on stakes — so refund_round.lua
+// reads the wagers hash inside its own atomic unit.
+func (s *Store) RefundRound(ctx context.Context, roundID, idempotencyKey string) (domain.Tokens, error) {
+	round, err := s.Round(ctx, roundID)
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: refund round %s: %w", roundID, err)
+	}
+
+	keys := []string{RoundKey(roundID), RoomWalletsKey(round.RoomID), RoundWagersKey(roundID), s.outboxStream}
+	argv := []interface{}{idempotencyKey, roundID}
+
+	res, err := refundRoundScript.Run(ctx, s.client, keys, argv...).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: refund round %s: %w", roundID, err)
+	}
+
+	reply, err := toStringSlice(res)
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: refund round %s: %w", roundID, err)
+	}
+	if len(reply) == 0 {
+		return 0, fmt.Errorf("redisstore: refund round %s: empty reply", roundID)
+	}
+	if reply[0] != "OK" {
+		return 0, mapSettleStatus(reply)
+	}
+	if len(reply) < 2 {
+		return 0, fmt.Errorf("redisstore: refund round %s: malformed reply %v", roundID, reply)
+	}
+
+	total, err := strconv.ParseInt(reply[1], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: refund round %s: malformed total %q: %w", roundID, reply[1], err)
+	}
+
+	return domain.Tokens(total), nil
 }

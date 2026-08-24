@@ -378,6 +378,81 @@ func TestSettleRound_NobodyBackedWinner(t *testing.T) {
 	}
 }
 
+func TestRefundRound(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	roomID, roundID := setupSettleRound(t, store, "host1", 500, 3,
+		map[string]domain.Tokens{"u1": 500, "u2": 500},
+		[]domain.Stake{
+			{UserID: "u1", Outcome: 0, Amount: 100},
+			{UserID: "u1", Outcome: 2, Amount: 50},
+			{UserID: "u2", Outcome: 1, Amount: 300},
+		})
+
+	xlenBefore, err := store.client.XLen(ctx, store.outboxStream).Result()
+	if err != nil {
+		t.Fatalf("XLEN outbox before: %v", err)
+	}
+
+	total, err := store.RefundRound(ctx, roundID, testID(t, "idem"))
+	if err != nil {
+		t.Fatalf("RefundRound() = %v, want nil", err)
+	}
+	if total != 450 {
+		t.Errorf("RefundRound() = %d, want 450", total)
+	}
+
+	for userID, want := range map[string]string{"u1": "500", "u2": "500"} {
+		got, err := store.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
+		if err != nil {
+			t.Fatalf("HGET wallets %s: %v", userID, err)
+		}
+		if got != want {
+			t.Errorf("HGET wallets %s = %q, want %q — both of u1's stakes on different outcomes must come back", userID, got, want)
+		}
+	}
+
+	status, err := store.client.HGet(ctx, RoundKey(roundID), "status").Result()
+	if err != nil {
+		t.Fatalf("HGET round status: %v", err)
+	}
+	if status != "refunded" {
+		t.Errorf("status = %q, want %q", status, "refunded")
+	}
+
+	exists, err := store.client.HExists(ctx, RoundKey(roundID), "resolved_outcome").Result()
+	if err != nil {
+		t.Fatalf("HEXISTS resolved_outcome: %v", err)
+	}
+	if exists {
+		t.Errorf("HEXISTS resolved_outcome = true, want false")
+	}
+
+	xlenAfter, err := store.client.XLen(ctx, store.outboxStream).Result()
+	if err != nil {
+		t.Fatalf("XLEN outbox after: %v", err)
+	}
+	if xlenAfter != xlenBefore+1 {
+		t.Errorf("XLEN outbox grew by %d, want 1", xlenAfter-xlenBefore)
+	}
+	entries, err := store.client.XRevRangeN(ctx, store.outboxStream, "+", "-", 1).Result()
+	if err != nil {
+		t.Fatalf("XREVRANGE outbox: %v", err)
+	}
+	if entries[0].Values["type"] != "round_refunded" {
+		t.Errorf("entry type = %v, want %q", entries[0].Values["type"], "round_refunded")
+	}
+
+	sumWallets, err := sumHashValues(ctx, store, RoomWalletsKey(roomID))
+	if err != nil {
+		t.Fatalf("sum wallets: %v", err)
+	}
+	if sumWallets != 1000 {
+		t.Errorf("Σ wallets = %d, want 1000", sumWallets)
+	}
+}
+
 func sumHashValues(ctx context.Context, store *Store, key string) (int64, error) {
 	fields, err := store.client.HGetAll(ctx, key).Result()
 	if err != nil {
