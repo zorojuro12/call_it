@@ -309,3 +309,38 @@ func TestPlaceWager_RejectsLockedStatus(t *testing.T) {
 
 	assertNoMutation(t, store, roomID, roundID, "u1", before)
 }
+
+func TestPlaceWager_RejectsAfterLockInstant(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	t.Run("lock instant in the past rejects even though status is still open", func(t *testing.T) {
+		pastLock := time.Now().Add(-1000 * time.Millisecond)
+		roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, pastLock, map[string]domain.Tokens{"u1": 500})
+
+		before := snapshotWager(t, store, roomID, roundID, "u1")
+
+		_, err := store.PlaceWager(ctx, WagerRequest{
+			RoomID: roomID, RoundID: roundID, UserID: "u1",
+			Outcome: 1, Amount: 200, IdempotencyKey: testID(t, "idem"),
+		})
+		if !errors.Is(err, ErrPoolLocked) {
+			t.Fatalf("PlaceWager() past lock_at_ms error = %v, want ErrPoolLocked", err)
+		}
+
+		assertNoMutation(t, store, roomID, roundID, "u1", before)
+	})
+
+	t.Run("lock instant in the future accepts", func(t *testing.T) {
+		futureLock := time.Now().Add(30 * time.Second)
+		roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, futureLock, map[string]domain.Tokens{"u1": 500})
+
+		_, err := store.PlaceWager(ctx, WagerRequest{
+			RoomID: roomID, RoundID: roundID, UserID: "u1",
+			Outcome: 1, Amount: 200, IdempotencyKey: testID(t, "idem"),
+		})
+		if err != nil {
+			t.Fatalf("PlaceWager() future lock_at_ms = %v, want nil", err)
+		}
+	})
+}

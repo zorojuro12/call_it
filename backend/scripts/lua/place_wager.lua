@@ -42,6 +42,16 @@ if status ~= 'open' then
   return {'POOL_LOCKED'}
 end
 
+-- Lockout is judged by Redis's own clock, never a timestamp the caller
+-- supplies — this is what makes the client-latency exploit structurally
+-- impossible rather than merely discouraged (spec §4).
+local lockAtMS = tonumber(redis.call('HGET', roundKey, 'lock_at_ms'))
+local t = redis.call('TIME')
+local nowMS = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+if nowMS >= lockAtMS then
+  return {'POOL_LOCKED'}
+end
+
 local outcomeCount = tonumber(redis.call('HGET', roundKey, 'outcome_count'))
 
 local newBalance = redis.call('HINCRBY', walletsKey, userID, -amount)
