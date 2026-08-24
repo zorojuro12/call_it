@@ -34,3 +34,43 @@ func TestCanRefill_Balance(t *testing.T) {
 		})
 	}
 }
+
+func TestCanRefill_Quota(t *testing.T) {
+	tests := []struct {
+		name           string
+		claimsInWindow int
+		wantErr        bool
+	}{
+		{name: "no claims used yet", claimsInWindow: 0},
+		{name: "one claim used", claimsInWindow: 1},
+		{name: "the last available claim", claimsInWindow: RefillQuota - 1},
+		{name: "the quota is exhausted", claimsInWindow: RefillQuota, wantErr: true},
+		{name: "somehow over quota is still exhausted", claimsInWindow: RefillQuota + 5, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CanRefill(0, tt.claimsInWindow)
+
+			if tt.wantErr {
+				if !errors.Is(err, ErrRefillQuotaExhausted) {
+					t.Fatalf("CanRefill(0, %d) = %v, want ErrRefillQuotaExhausted", tt.claimsInWindow, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("CanRefill(0, %d): unexpected error: %v", tt.claimsInWindow, err)
+			}
+		})
+	}
+}
+
+func TestCanRefill_BalanceCheckedBeforeQuota(t *testing.T) {
+	// An ineligible balance should report why it is ineligible rather
+	// than blaming the quota, so the UI can say the useful thing.
+	err := CanRefill(RefillTarget, RefillQuota)
+
+	if !errors.Is(err, ErrRefillNotEligible) {
+		t.Fatalf("CanRefill(%d, %d) = %v, want ErrRefillNotEligible", RefillTarget, RefillQuota, err)
+	}
+}

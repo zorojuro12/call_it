@@ -14,5 +14,8 @@ func CanRefill(balance Tokens, claimsInWindow int) error {
 	if balance >= RefillTarget {
 		return fmt.Errorf("%w: balance %d, target %d", ErrRefillNotEligible, balance, RefillTarget)
 	}
+	if claimsInWindow >= RefillQuota {
+		return fmt.Errorf("%w: %d of %d claims used", ErrRefillQuotaExhausted, claimsInWindow, RefillQuota)
+	}
 	return nil
 }
