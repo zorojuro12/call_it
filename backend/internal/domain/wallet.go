@@ -41,11 +41,16 @@ func IsPartialBuyIn(accountBalance, roomBuyIn Tokens) bool {
 }
 
 // ValidateStake rejects a wager that is not a positive whole number of
-// tokens. A zero stake is not a wager; a negative one would mint tokens
-// out of the pool.
+// tokens, or that exceeds the wallet it would be drawn from. A zero
+// stake is not a wager; a negative one would mint tokens out of the
+// pool. The 3x account cap needs no check here — it is already embodied
+// in sessionBalance by AccountSessionBalance.
 func ValidateStake(amount, sessionBalance Tokens) error {
 	if amount <= 0 {
 		return fmt.Errorf("%w: got %d", ErrInvalidStake, amount)
+	}
+	if amount > sessionBalance {
+		return fmt.Errorf("%w: stake %d, balance %d", ErrInsufficientFunds, amount, sessionBalance)
 	}
 	return nil
 }

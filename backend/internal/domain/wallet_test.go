@@ -185,3 +185,26 @@ func TestValidateStake_Valid(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateStake_InsufficientFunds(t *testing.T) {
+	tests := []struct {
+		name           string
+		amount         Tokens
+		sessionBalance Tokens
+	}{
+		{name: "one token more than the balance", amount: 1001, sessionBalance: 1000},
+		{name: "far more than the balance", amount: 50_000, sessionBalance: 1000},
+		{name: "any stake against an empty wallet", amount: 1, sessionBalance: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStake(tt.amount, tt.sessionBalance)
+
+			if !errors.Is(err, ErrInsufficientFunds) {
+				t.Fatalf("ValidateStake(%d, %d) = %v, want ErrInsufficientFunds",
+					tt.amount, tt.sessionBalance, err)
+			}
+		})
+	}
+}

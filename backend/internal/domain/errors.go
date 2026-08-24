@@ -13,4 +13,5 @@ var (
 	ErrInvalidOutcome      = errors.New("domain: outcome index out of range")
 	ErrInvalidBuyIn        = errors.New("domain: room buy-in out of range")
 	ErrInvalidStake        = errors.New("domain: stake must be positive")
+	ErrInsufficientFunds   = errors.New("domain: stake exceeds available balance")
 )
