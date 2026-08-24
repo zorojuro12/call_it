@@ -32,12 +32,19 @@ var ErrNotInRoom = errors.New("redisstore: user has no wallet in this room")
 // resolved or refunded.
 var ErrRoundTerminal = errors.New("redisstore: round is already terminal")
 
+// ErrAlreadySettled is returned when SettleRound or RefundRound targets
+// a round that has already resolved or refunded — a benign replay must
+// credit nothing a second time.
+var ErrAlreadySettled = errors.New("redisstore: round is already settled")
+
 // mapSettleStatus maps settle_round.lua's and refund_round.lua's non-OK
 // status codes to Go errors. Later checkpoints add a case per guard as
 // each is implemented.
 func mapSettleStatus(reply []string) error {
 	code := reply[0]
 	switch code {
+	case "ALREADY_RESOLVED":
+		return ErrAlreadySettled
 	default:
 		return fmt.Errorf("redisstore: settle round: unrecognized status %q", code)
 	}

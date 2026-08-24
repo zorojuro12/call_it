@@ -2,6 +2,7 @@ package redisstore
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strconv"
 	"testing"
@@ -202,6 +203,58 @@ func TestSettleRound(t *testing.T) {
 	}
 	if poolsTotal != 500 {
 		t.Errorf("pools total = %d, want 500 (unchanged by settlement)", poolsTotal)
+	}
+}
+
+func TestSettleRound_Idempotent(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	roomID, roundID := setupSettleRound(t, store, "host1", 500, 3,
+		map[string]domain.Tokens{"u1": 500, "u2": 500, "u3": 500},
+		[]domain.Stake{
+			{UserID: "u1", Outcome: 0, Amount: 100},
+			{UserID: "u2", Outcome: 1, Amount: 300},
+			{UserID: "u3", Outcome: 0, Amount: 100},
+		})
+
+	if _, err := store.SettleRound(ctx, roundID, 0, testID(t, "idem")); err != nil {
+		t.Fatalf("SettleRound() first = %v, want nil", err)
+	}
+
+	before := map[string]string{}
+	for _, userID := range []string{"u1", "u2", "u3"} {
+		v, err := store.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
+		if err != nil {
+			t.Fatalf("HGET wallets %s: %v", userID, err)
+		}
+		before[userID] = v
+	}
+	xlenBefore, err := store.client.XLen(ctx, store.outboxStream).Result()
+	if err != nil {
+		t.Fatalf("XLEN outbox before: %v", err)
+	}
+
+	_, err = store.SettleRound(ctx, roundID, 0, testID(t, "idem"))
+	if !errors.Is(err, ErrAlreadySettled) {
+		t.Fatalf("SettleRound() second error = %v, want ErrAlreadySettled", err)
+	}
+
+	for _, userID := range []string{"u1", "u2", "u3"} {
+		v, err := store.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
+		if err != nil {
+			t.Fatalf("HGET wallets %s: %v", userID, err)
+		}
+		if v != before[userID] {
+			t.Errorf("wallet %s = %q after second settle, want unchanged %q", userID, v, before[userID])
+		}
+	}
+	xlenAfter, err := store.client.XLen(ctx, store.outboxStream).Result()
+	if err != nil {
+		t.Fatalf("XLEN outbox after: %v", err)
+	}
+	if xlenAfter != xlenBefore {
+		t.Errorf("XLEN outbox = %d after second settle, want unchanged %d", xlenAfter, xlenBefore)
 	}
 }
 

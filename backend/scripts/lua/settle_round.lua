@@ -21,6 +21,11 @@ local dust = ARGV[3]
 local idempotencyKey = ARGV[4]
 local roundID = ARGV[5]
 
+local currentStatus = redis.call('HGET', roundKey, 'status')
+if currentStatus == 'resolved' or currentStatus == 'refunded' then
+  return {'ALREADY_RESOLVED', currentStatus}
+end
+
 local creditedCount = 0
 local i = 6
 while ARGV[i] ~= nil do
