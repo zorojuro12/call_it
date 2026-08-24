@@ -398,19 +398,36 @@ func placeConcurrentWagers(t *testing.T, store *Store, roomID, roundID string, p
 		userIDs = append(userIDs, userID)
 	}
 
+	// Precomputed sequentially — math/rand.Rand is not safe for
+	// concurrent use, so the random draws must happen before any
+	// goroutine starts, not inside one.
+	type job struct {
+		userID  string
+		outcome int
+		amount  domain.Tokens
+	}
+	jobs := make([]job, n)
+	for i := range jobs {
+		jobs[i] = job{
+			userID:  userIDs[rng.Intn(len(userIDs))],
+			outcome: rng.Intn(3),
+			amount:  domain.Tokens(1 + rng.Intn(50)),
+		}
+	}
+
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := 0; i < n; i++ {
+	for i, j := range jobs {
 		wg.Add(1)
-		go func(i int) {
+		go func(i int, j job) {
 			defer wg.Done()
 			<-start
 			_, _ = store.PlaceWager(ctx, WagerRequest{
-				RoomID: roomID, RoundID: roundID, UserID: userIDs[rng.Intn(len(userIDs))],
-				Outcome: rng.Intn(3), Amount: domain.Tokens(1 + rng.Intn(50)),
+				RoomID: roomID, RoundID: roundID, UserID: j.userID,
+				Outcome: j.outcome, Amount: j.amount,
 				IdempotencyKey: fmt.Sprintf("full-round-%s-%d", roundID, i),
 			})
-		}(i)
+		}(i, j)
 	}
 	close(start)
 	wg.Wait()
