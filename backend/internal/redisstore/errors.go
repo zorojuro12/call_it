@@ -27,6 +27,11 @@ var ErrHostCannotBet = errors.New("redisstore: host cannot wager in their own ro
 // attempts to place a wager.
 var ErrNotInRoom = errors.New("redisstore: user has no wallet in this room")
 
+// ErrRoundTerminal is returned when an operation that requires a
+// non-terminal round (e.g. locking) targets one that has already
+// resolved or refunded.
+var ErrRoundTerminal = errors.New("redisstore: round is already terminal")
+
 // mapWagerStatus maps place_wager.lua's non-OK status codes to Go
 // errors. Task 4 adds a case per guard as each one is implemented; an
 // unrecognized code for now returns a wrapped generic error naming it,

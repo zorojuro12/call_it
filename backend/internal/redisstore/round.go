@@ -8,7 +8,10 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zorojuro12/call_it/backend/internal/domain"
+	lua "github.com/zorojuro12/call_it/backend/scripts/lua"
 )
+
+var lockRoundScript = redis.NewScript(lua.LockRound)
 
 // Round is the round hash's typed projection. ResolvedOutcome is -1
 // when the round has not resolved — a refunded round never gets one
@@ -123,4 +126,33 @@ func (s *Store) Pools(ctx context.Context, roundID string) ([]domain.Tokens, dom
 	}
 
 	return pools, domain.Tokens(total), nil
+}
+
+// LockRound transitions a round from open to locked. Locking an
+// already-locked round is a no-op — the timer that fires this may
+// retry, and a second lock is the state the caller wanted. Locking a
+// resolved or refunded round returns ErrRoundTerminal, since relocking a
+// resolved round would make it settleable twice.
+func (s *Store) LockRound(ctx context.Context, roundID string) error {
+	res, err := lockRoundScript.Run(ctx, s.client, []string{RoundKey(roundID)}).Result()
+	if err != nil {
+		return fmt.Errorf("redisstore: lock round %s: %w", roundID, err)
+	}
+
+	reply, err := toStringSlice(res)
+	if err != nil {
+		return fmt.Errorf("redisstore: lock round %s: %w", roundID, err)
+	}
+	if len(reply) == 0 {
+		return fmt.Errorf("redisstore: lock round %s: empty reply", roundID)
+	}
+
+	switch reply[0] {
+	case "OK", "ALREADY_LOCKED":
+		return nil
+	case "ROUND_TERMINAL":
+		return ErrRoundTerminal
+	default:
+		return fmt.Errorf("redisstore: lock round %s: unrecognized status %q", roundID, reply[0])
+	}
 }

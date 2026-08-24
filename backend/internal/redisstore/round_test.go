@@ -102,3 +102,108 @@ func TestCreateRound(t *testing.T) {
 		t.Errorf("Round(\"missing\") error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestLockRound(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roundID := testID(t, "round")
+	roomID := testID(t, "room")
+	lockAt := time.Now().Add(30 * time.Second)
+
+	if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
+		t.Fatalf("CreateRound() = %v, want nil", err)
+	}
+
+	if err := store.LockRound(ctx, roundID); err != nil {
+		t.Fatalf("LockRound() = %v, want nil", err)
+	}
+
+	status, err := store.client.HGet(ctx, RoundKey(roundID), "status").Result()
+	if err != nil {
+		t.Fatalf("HGET round status: %v", err)
+	}
+	if status != "locked" {
+		t.Errorf("status = %q, want %q", status, "locked")
+	}
+
+	round, err := store.Round(ctx, roundID)
+	if err != nil {
+		t.Fatalf("Round() = %v, want nil", err)
+	}
+	if round.Status != domain.RoundLocked {
+		t.Errorf("Round().Status = %q, want %q", round.Status, domain.RoundLocked)
+	}
+
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 500); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	if err := store.JoinRoom(ctx, roomID, "u1", 500); err != nil {
+		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+	if _, err := store.PlaceWager(ctx, WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 1, Amount: 200, IdempotencyKey: testID(t, "idem"),
+	}); !errors.Is(err, ErrPoolLocked) {
+		t.Errorf("PlaceWager() against a locked round error = %v, want ErrPoolLocked", err)
+	}
+}
+
+func TestLockRound_AlreadyLocked(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roundID := testID(t, "round")
+	roomID := testID(t, "room")
+	lockAt := time.Now().Add(30 * time.Second)
+
+	if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
+		t.Fatalf("CreateRound() = %v, want nil", err)
+	}
+	if err := store.LockRound(ctx, roundID); err != nil {
+		t.Fatalf("LockRound() first = %v, want nil", err)
+	}
+
+	if err := store.LockRound(ctx, roundID); err != nil {
+		t.Fatalf("LockRound() second = %v, want nil (benign no-op)", err)
+	}
+
+	status, err := store.client.HGet(ctx, RoundKey(roundID), "status").Result()
+	if err != nil {
+		t.Fatalf("HGET round status: %v", err)
+	}
+	if status != "locked" {
+		t.Errorf("status = %q, want %q", status, "locked")
+	}
+}
+
+func TestLockRound_Terminal(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	for _, terminalStatus := range []string{"resolved", "refunded"} {
+		t.Run(terminalStatus, func(t *testing.T) {
+			roundID := testID(t, "round")
+			roomID := testID(t, "room")
+			lockAt := time.Now().Add(30 * time.Second)
+
+			if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
+				t.Fatalf("CreateRound() = %v, want nil", err)
+			}
+			if err := store.client.HSet(ctx, RoundKey(roundID), "status", terminalStatus).Err(); err != nil {
+				t.Fatalf("HSET round status %s: %v", terminalStatus, err)
+			}
+
+			err := store.LockRound(ctx, roundID)
+			if !errors.Is(err, ErrRoundTerminal) {
+				t.Fatalf("LockRound() on %s round error = %v, want ErrRoundTerminal", terminalStatus, err)
+			}
+
+			status, err := store.client.HGet(ctx, RoundKey(roundID), "status").Result()
+			if err != nil {
+				t.Fatalf("HGET round status: %v", err)
+			}
+			if status != terminalStatus {
+				t.Errorf("status = %q, want unchanged %q", status, terminalStatus)
+			}
+		})
+	}
+}
