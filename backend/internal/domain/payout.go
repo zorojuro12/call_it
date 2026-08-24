@@ -1,5 +1,7 @@
 package domain
 
+import "fmt"
+
 // Stake is one participant's committed tokens on one outcome of a round.
 // It mirrors a single field of the round:{roundID}:wagers hash, whose key
 // is "{userID}:{outcomeIdx}" (plan §4) — so (UserID, Outcome) is unique
@@ -64,8 +66,18 @@ type Settlement struct {
 // outcomeCount is the round's declared number of outcomes, used to
 // reject a winning index the round never had.
 func Settle(stakes []Stake, winningOutcome, outcomeCount int) (Settlement, error) {
+	if err := ValidateOutcomeIndex(winningOutcome, outcomeCount); err != nil {
+		return Settlement{}, err
+	}
+
 	var total, winningPool Tokens
 	for _, s := range stakes {
+		if s.Amount <= 0 {
+			return Settlement{}, fmt.Errorf("%w: user %q staked %d", ErrInvalidStake, s.UserID, s.Amount)
+		}
+		if err := ValidateOutcomeIndex(s.Outcome, outcomeCount); err != nil {
+			return Settlement{}, err
+		}
 		total += s.Amount
 		if s.Outcome == winningOutcome {
 			winningPool += s.Amount
@@ -74,16 +86,18 @@ func Settle(stakes []Stake, winningOutcome, outcomeCount int) (Settlement, error
 
 	payouts := make([]Payout, 0, len(stakes))
 	var paid Tokens
-	for _, s := range stakes {
-		if s.Outcome != winningOutcome {
-			continue
+	if winningPool > 0 {
+		for _, s := range stakes {
+			if s.Outcome != winningOutcome {
+				continue
+			}
+			// Safe in int64 by a wide margin: the largest single stake is
+			// StakeCapMultiple * MaxBuyIn = 30,000, so stake * total stays
+			// many orders of magnitude below overflow.
+			amount := s.Amount * total / winningPool
+			payouts = append(payouts, Payout{UserID: s.UserID, Amount: amount})
+			paid += amount
 		}
-		// Safe in int64 by a wide margin: the largest single stake is
-		// StakeCapMultiple * MaxBuyIn = 30,000, so stake * total stays
-		// many orders of magnitude below overflow.
-		amount := s.Amount * total / winningPool
-		payouts = append(payouts, Payout{UserID: s.UserID, Amount: amount})
-		paid += amount
 	}
 
 	return Settlement{

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -238,5 +239,87 @@ func TestSettle_PlayerResultsNetSumsToNegativeDust(t *testing.T) {
 	}
 	if netSum != -got.Dust {
 		t.Errorf("player nets sum to %d, want %d (minus the dust)", netSum, -got.Dust)
+	}
+}
+
+func TestSettle_RejectsInvalidWinningOutcome(t *testing.T) {
+	tests := []struct {
+		name           string
+		winningOutcome int
+		outcomeCount   int
+	}{
+		{name: "winning index equal to the outcome count", winningOutcome: 2, outcomeCount: 2},
+		{name: "winning index beyond the outcome count", winningOutcome: 7, outcomeCount: 3},
+		{name: "negative winning index", winningOutcome: -1, outcomeCount: 2},
+	}
+
+	stakes := []Stake{{UserID: "alice", Outcome: 0, Amount: 100}}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Settle(stakes, tt.winningOutcome, tt.outcomeCount)
+
+			if !errors.Is(err, ErrInvalidOutcome) {
+				t.Fatalf("Settle(_, %d, %d) = %v, want ErrInvalidOutcome",
+					tt.winningOutcome, tt.outcomeCount, err)
+			}
+		})
+	}
+}
+
+func TestSettle_RejectsStakeOnOutcomeTheRoundLacks(t *testing.T) {
+	stakes := []Stake{
+		{UserID: "alice", Outcome: 0, Amount: 100},
+		{UserID: "bob", Outcome: 5, Amount: 100},
+	}
+
+	_, err := Settle(stakes, 0, 2)
+
+	if !errors.Is(err, ErrInvalidOutcome) {
+		t.Fatalf("Settle = %v, want ErrInvalidOutcome", err)
+	}
+}
+
+func TestSettle_RejectsNonPositiveStakes(t *testing.T) {
+	tests := []struct {
+		name   string
+		amount Tokens
+	}{
+		{name: "a zero stake", amount: 0},
+		{name: "a negative stake would mint tokens", amount: -100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stakes := []Stake{
+				{UserID: "alice", Outcome: 0, Amount: 100},
+				{UserID: "bob", Outcome: 1, Amount: tt.amount},
+			}
+
+			_, err := Settle(stakes, 0, 2)
+
+			if !errors.Is(err, ErrInvalidStake) {
+				t.Fatalf("Settle with a %d stake = %v, want ErrInvalidStake", tt.amount, err)
+			}
+		})
+	}
+}
+
+func TestSettle_EmptyRound(t *testing.T) {
+	// A round nobody wagered in has an empty winning pool, so it takes
+	// the refund path — with nothing to refund.
+	got, err := Settle(nil, 0, 2)
+
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+	if len(got.Payouts) != 0 {
+		t.Errorf("Settle produced %d payouts for an empty round, want 0", len(got.Payouts))
+	}
+	if len(got.Results) != 0 {
+		t.Errorf("Settle produced %d results for an empty round, want 0", len(got.Results))
+	}
+	if got.Dust != 0 {
+		t.Errorf("Settle dust = %d, want 0", got.Dust)
 	}
 }
