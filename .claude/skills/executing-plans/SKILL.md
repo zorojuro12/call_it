@@ -41,8 +41,14 @@ For each task:
 
 After all tasks complete and verified:
 - Announce: "I'm using the finishing-a-development-branch skill to complete this work."
-- **REQUIRED SUB-SKILL:** Use superpowers:finishing-a-development-branch
+- **REQUIRED SUB-SKILL:** Use `finishing-a-development-branch` (installed
+  project-locally at `.claude/skills/finishing-a-development-branch/` — no
+  `superpowers:` prefix, that name doesn't resolve here)
 - Follow that skill to verify tests, present options, execute choice
+- In this project the expected choice is **Option 1, merge locally into `dev`**
+  (CLAUDE.md: self-merge, no PR ceremony). Use `--no-ff` so the phase stays a
+  visible merge commit — with `dev` unmoved the merge would otherwise
+  fast-forward and erase the phase boundary.
 
 ## When to Stop and Ask for Help
 

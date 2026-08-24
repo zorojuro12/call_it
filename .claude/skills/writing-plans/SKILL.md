@@ -60,6 +60,21 @@ task covering several cases gets one checkpoint per case (several commits) —
 don't invent checkpoints that aren't real distinctions, and don't collapse
 real ones into a single commit either.
 
+**A checkpoint is one RED→GREEN cycle — that's the test for whether it's real.**
+If you can't write a test that fails *before* the implementation exists, it
+isn't a checkpoint: fold those test cases into the checkpoint that implements
+the behavior they cover. A checkpoint whose test passes the moment it's written
+is the signal that granularity has been pushed one notch past where the cycle
+actually divides.
+
+This matters beyond tidiness. Every checkpoint's Step 2 says "expect FAIL", so
+a checkpoint that expects PASS contradicts its own template — and
+`executing-plans` requires stopping on any mismatch between an instruction and
+reality. A cold executor hits that, halts, and may "fix" a correct test until
+it fails. (Observed in the Phase 1 plan, 2026-08-23: four such checkpoints —
+regression pins for behavior an earlier checkpoint's implementation already
+satisfied.)
+
 ## Plan Document Header
 
 **Every plan MUST start with this header:**
@@ -200,9 +215,29 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
+## Where a Plan Stops
+
+**Don't write merge, push, or PR steps into a plan.** `executing-plans` Step 3
+hands off to `finishing-a-development-branch`, which verifies tests and presents
+the merge/PR/keep menu — it owns integration, and deliberately keeps that
+decision with the user. A plan whose final task also merges gives the executor
+two paths for one merge, and pre-empts a choice that isn't the plan's to make.
+
+A plan's final task ends at **"branch is green and verified."** Phase-specific
+wrap-up that neither skill covers — amending a parent plan, recording a
+convention's outcome, writing a journal entry — belongs in that final task. The
+merge does not.
+
 ## Execution Handoff
 
-After saving the plan, report its path and confirm before executing:
+Before handing off, **commit the plan to the integration branch.** A plan
+executed in a different session is untracked at handoff, and the executing
+session's first act is `git checkout -b <slug> dev` — so an uncommitted plan
+follows onto the feature branch and lands in that phase's history as though it
+were phase work. Commit any other stray files (a previous session's journal
+entry, say) at the same time, so the executor starts from a clean tree.
+
+Then report the plan's path and confirm before executing:
 
 **"Plan complete and saved to `docs/plans/<filename>.md`. Review it, then I'll
 execute inline with the `executing-plans` skill — task by task, committing at
@@ -210,6 +245,11 @@ each task boundary, stopping if I hit a blocker. Ready?"**
 
 - **REQUIRED SUB-SKILL:** Use the `executing-plans` skill
 - Inline execution in this session, with checkpoints for review
+
+**Executing in a separate session** — including a different model — is equally
+valid and needs no conversation history: `CLAUDE.md` auto-loads, and the plan
+carries its own Global Constraints and any amendments it makes to a parent plan
+or spec. See `docs/dev-workflow-guide.md` for this project's two-model loop.
 
 (Upstream also offers a subagent-driven mode — a fresh subagent per task with
 two-stage review. That skill isn't installed in this project; inline execution
