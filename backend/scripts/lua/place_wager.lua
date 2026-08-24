@@ -53,6 +53,10 @@ if nowMS >= lockAtMS then
 end
 
 local outcomeCount = tonumber(redis.call('HGET', roundKey, 'outcome_count'))
+local outcomeNum = tonumber(outcome)
+if outcomeNum == nil or outcomeNum < 0 or outcomeNum >= outcomeCount then
+  return {'INVALID_OUTCOME'}
+end
 
 local newBalance = redis.call('HINCRBY', walletsKey, userID, -amount)
 redis.call('HINCRBY', poolsKey, outcome, amount)

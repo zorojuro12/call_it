@@ -3,7 +3,9 @@ package redisstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -343,4 +345,35 @@ func TestPlaceWager_RejectsAfterLockInstant(t *testing.T) {
 			t.Fatalf("PlaceWager() future lock_at_ms = %v, want nil", err)
 		}
 	})
+}
+
+func TestPlaceWager_RejectsInvalidOutcome(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	lockAt := time.Now().Add(30 * time.Second)
+
+	for _, outcome := range []int{3, 4, -1} {
+		t.Run(fmt.Sprintf("outcome %d", outcome), func(t *testing.T) {
+			roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{"u1": 500})
+			before := snapshotWager(t, store, roomID, roundID, "u1")
+
+			_, err := store.PlaceWager(ctx, WagerRequest{
+				RoomID: roomID, RoundID: roundID, UserID: "u1",
+				Outcome: outcome, Amount: 200, IdempotencyKey: testID(t, "idem"),
+			})
+			if !errors.Is(err, domain.ErrInvalidOutcome) {
+				t.Fatalf("PlaceWager() outcome %d error = %v, want domain.ErrInvalidOutcome", outcome, err)
+			}
+
+			assertNoMutation(t, store, roomID, roundID, "u1", before)
+
+			exists, err := store.client.HExists(ctx, RoundPoolsKey(roundID), strconv.Itoa(outcome)).Result()
+			if err != nil {
+				t.Fatalf("HEXISTS pools %d: %v", outcome, err)
+			}
+			if exists {
+				t.Errorf("HEXISTS pools %d = true, want false — no stray pool field for an invalid outcome", outcome)
+			}
+		})
+	}
 }

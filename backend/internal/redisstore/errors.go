@@ -3,6 +3,8 @@ package redisstore
 import (
 	"errors"
 	"fmt"
+
+	"github.com/zorojuro12/call_it/backend/internal/domain"
 )
 
 // ErrNotFound is returned when a key or hash field this package expects
@@ -25,6 +27,8 @@ func mapWagerStatus(reply []string) error {
 	switch code {
 	case "POOL_LOCKED":
 		return ErrPoolLocked
+	case "INVALID_OUTCOME":
+		return domain.ErrInvalidOutcome
 	default:
 		return fmt.Errorf("redisstore: place wager: unrecognized status %q", code)
 	}
