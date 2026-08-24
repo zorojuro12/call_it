@@ -145,3 +145,43 @@ func TestIsPartialBuyIn(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateStake_NonPositive(t *testing.T) {
+	tests := []struct {
+		name   string
+		amount Tokens
+	}{
+		{name: "a zero stake is not a wager", amount: 0},
+		{name: "a negative stake would mint tokens", amount: -100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStake(tt.amount, 1000)
+
+			if !errors.Is(err, ErrInvalidStake) {
+				t.Fatalf("ValidateStake(%d, 1000) = %v, want ErrInvalidStake", tt.amount, err)
+			}
+		})
+	}
+}
+
+func TestValidateStake_Valid(t *testing.T) {
+	tests := []struct {
+		name           string
+		amount         Tokens
+		sessionBalance Tokens
+	}{
+		{name: "a stake below the balance is accepted", amount: 100, sessionBalance: 1000},
+		{name: "a stake equal to the balance is accepted", amount: 1000, sessionBalance: 1000},
+		{name: "the smallest possible stake is accepted", amount: 1, sessionBalance: 1000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateStake(tt.amount, tt.sessionBalance); err != nil {
+				t.Errorf("ValidateStake(%d, %d): unexpected error: %v", tt.amount, tt.sessionBalance, err)
+			}
+		})
+	}
+}

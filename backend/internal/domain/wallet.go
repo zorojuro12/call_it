@@ -39,3 +39,13 @@ func AccountSessionBalance(accountBalance, roomBuyIn Tokens) Tokens {
 func IsPartialBuyIn(accountBalance, roomBuyIn Tokens) bool {
 	return accountBalance < roomBuyIn
 }
+
+// ValidateStake rejects a wager that is not a positive whole number of
+// tokens. A zero stake is not a wager; a negative one would mint tokens
+// out of the pool.
+func ValidateStake(amount, sessionBalance Tokens) error {
+	if amount <= 0 {
+		return fmt.Errorf("%w: got %d", ErrInvalidStake, amount)
+	}
+	return nil
+}
