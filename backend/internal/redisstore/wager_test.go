@@ -433,3 +433,116 @@ func TestPlaceWager_RejectsNonMember(t *testing.T) {
 		t.Errorf("HEXISTS wallets stranger = true, want false — a rejected wager must not mint a wallet")
 	}
 }
+
+func TestPlaceWager_RejectsInsufficientFunds(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	lockAt := time.Now().Add(30 * time.Second)
+	roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{"u1": 500})
+
+	before := snapshotWager(t, store, roomID, roundID, "u1")
+
+	_, err := store.PlaceWager(ctx, WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 1, Amount: 501, IdempotencyKey: testID(t, "idem"),
+	})
+	if !errors.Is(err, domain.ErrInsufficientFunds) {
+		t.Fatalf("PlaceWager() stake 501 error = %v, want domain.ErrInsufficientFunds", err)
+	}
+	assertNoMutation(t, store, roomID, roundID, "u1", before)
+
+	result, err := store.PlaceWager(ctx, WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 1, Amount: 500, IdempotencyKey: testID(t, "idem"),
+	})
+	if err != nil {
+		t.Fatalf("PlaceWager() stake 500 = %v, want nil", err)
+	}
+	if result.Balance != 0 {
+		t.Errorf("Balance = %d, want 0", result.Balance)
+	}
+}
+
+func TestPlaceWager_GuardPrecedence(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	t.Run("replayed key and locked round returns the cached reply, not POOL_LOCKED", func(t *testing.T) {
+		lockAt := time.Now().Add(30 * time.Second)
+		roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{"u1": 500})
+		key := testID(t, "idem")
+		req := WagerRequest{RoomID: roomID, RoundID: roundID, UserID: "u1", Outcome: 1, Amount: 200, IdempotencyKey: key}
+
+		first, err := store.PlaceWager(ctx, req)
+		if err != nil {
+			t.Fatalf("PlaceWager() first = %v, want nil", err)
+		}
+
+		if err := store.client.HSet(ctx, RoundKey(roundID), "status", "locked").Err(); err != nil {
+			t.Fatalf("HSET round status locked: %v", err)
+		}
+
+		replayed, err := store.PlaceWager(ctx, req)
+		if err != nil {
+			t.Fatalf("PlaceWager() replay after lock = %v, want nil (cached reply, not a rejection)", err)
+		}
+		if !reflect.DeepEqual(replayed, first) {
+			t.Errorf("replayed WagerResult = %+v, want deep-equal to first %+v", replayed, first)
+		}
+	})
+
+	t.Run("locked round and invalid outcome rejects as locked", func(t *testing.T) {
+		lockAt := time.Now().Add(30 * time.Second)
+		roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{"u1": 500})
+		if err := store.client.HSet(ctx, RoundKey(roundID), "status", "locked").Err(); err != nil {
+			t.Fatalf("HSET round status locked: %v", err)
+		}
+
+		_, err := store.PlaceWager(ctx, WagerRequest{
+			RoomID: roomID, RoundID: roundID, UserID: "u1",
+			Outcome: 99, Amount: 200, IdempotencyKey: testID(t, "idem"),
+		})
+		if !errors.Is(err, ErrPoolLocked) {
+			t.Errorf("error = %v, want ErrPoolLocked (status checked before outcome range)", err)
+		}
+	})
+
+	t.Run("invalid outcome and caller is host rejects as invalid outcome", func(t *testing.T) {
+		lockAt := time.Now().Add(30 * time.Second)
+		roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{"host1": 500})
+
+		_, err := store.PlaceWager(ctx, WagerRequest{
+			RoomID: roomID, RoundID: roundID, UserID: "host1",
+			Outcome: 99, Amount: 200, IdempotencyKey: testID(t, "idem"),
+		})
+		if !errors.Is(err, domain.ErrInvalidOutcome) {
+			t.Errorf("error = %v, want domain.ErrInvalidOutcome (outcome range checked before host)", err)
+		}
+	})
+
+	t.Run("caller is host and stake exceeds balance rejects as host", func(t *testing.T) {
+		lockAt := time.Now().Add(30 * time.Second)
+		roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{"host1": 500})
+
+		_, err := store.PlaceWager(ctx, WagerRequest{
+			RoomID: roomID, RoundID: roundID, UserID: "host1",
+			Outcome: 1, Amount: 10_000, IdempotencyKey: testID(t, "idem"),
+		})
+		if !errors.Is(err, ErrHostCannotBet) {
+			t.Errorf("error = %v, want ErrHostCannotBet (host checked before funds)", err)
+		}
+	})
+
+	t.Run("non-member with a huge stake rejects as not in room", func(t *testing.T) {
+		lockAt := time.Now().Add(30 * time.Second)
+		roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{"u1": 500})
+
+		_, err := store.PlaceWager(ctx, WagerRequest{
+			RoomID: roomID, RoundID: roundID, UserID: "stranger",
+			Outcome: 1, Amount: 1_000_000, IdempotencyKey: testID(t, "idem"),
+		})
+		if !errors.Is(err, ErrNotInRoom) {
+			t.Errorf("error = %v, want ErrNotInRoom (membership checked before funds)", err)
+		}
+	})
+}

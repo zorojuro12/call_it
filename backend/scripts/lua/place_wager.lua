@@ -67,6 +67,9 @@ local existingBalance = redis.call('HGET', walletsKey, userID)
 if not existingBalance then
   return {'NOT_IN_ROOM'}
 end
+if tonumber(existingBalance) < amount then
+  return {'INSUFFICIENT_FUNDS'}
+end
 
 local newBalance = redis.call('HINCRBY', walletsKey, userID, -amount)
 redis.call('HINCRBY', poolsKey, outcome, amount)

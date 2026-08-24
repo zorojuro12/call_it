@@ -42,6 +42,8 @@ func mapWagerStatus(reply []string) error {
 		return ErrHostCannotBet
 	case "NOT_IN_ROOM":
 		return ErrNotInRoom
+	case "INSUFFICIENT_FUNDS":
+		return domain.ErrInsufficientFunds
 	default:
 		return fmt.Errorf("redisstore: place wager: unrecognized status %q", code)
 	}
