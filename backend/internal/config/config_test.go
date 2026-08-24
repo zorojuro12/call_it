@@ -12,7 +12,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "all defaults when nothing set",
 			env:  map[string]string{},
-			want: Config{Port: 8080, Env: "development", LogLevel: "info"},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0},
 		},
 		{
 			name: "explicit values override defaults",
@@ -21,7 +21,37 @@ func TestLoad(t *testing.T) {
 				"ENV":       "production",
 				"LOG_LEVEL": "debug",
 			},
-			want: Config{Port: 9090, Env: "production", LogLevel: "debug"},
+			want: Config{Port: 9090, Env: "production", LogLevel: "debug", RedisAddr: "localhost:6379", RedisDB: 0},
+		},
+		{
+			name: "explicit redis addr overrides default",
+			env:  map[string]string{"REDIS_ADDR": "redis:6379"},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "redis:6379", RedisDB: 0},
+		},
+		{
+			name:    "empty redis addr fails fast",
+			env:     map[string]string{"REDIS_ADDR": ""},
+			wantErr: true,
+		},
+		{
+			name: "redis db at top of valid range",
+			env:  map[string]string{"REDIS_DB": "15"},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 15},
+		},
+		{
+			name:    "redis db above valid range fails fast",
+			env:     map[string]string{"REDIS_DB": "16"},
+			wantErr: true,
+		},
+		{
+			name:    "redis db below valid range fails fast",
+			env:     map[string]string{"REDIS_DB": "-1"},
+			wantErr: true,
+		},
+		{
+			name:    "non-numeric redis db fails fast",
+			env:     map[string]string{"REDIS_DB": "notanumber"},
+			wantErr: true,
 		},
 		{
 			name:    "non-numeric port fails fast",

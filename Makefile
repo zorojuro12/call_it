@@ -1,4 +1,4 @@
-.PHONY: up up-full down test lint build migrate loadtest
+.PHONY: up up-full down test test-unit lint build migrate loadtest
 
 # Core services only (Redis, PostgreSQL) — what Phases 0-4 need.
 up:
@@ -11,7 +11,15 @@ up-full:
 down:
 	docker compose down
 
+# Brings Redis up and waits for it to report healthy before testing —
+# internal/redisstore's integration tests fail (never skip) without it.
 test:
+	docker compose up -d redis
+	@until [ "$$(docker inspect -f '{{.State.Health.Status}}' call-it-redis-1 2>/dev/null)" = "healthy" ]; do sleep 1; done
+	cd backend && go test ./... -race -cover
+
+# Assumes Redis is already up (e.g. via `make up`) — skips the Docker round trip.
+test-unit:
 	cd backend && go test ./... -race -cover
 
 lint:

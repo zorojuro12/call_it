@@ -72,7 +72,7 @@ call_it/
 │   │   ├── events/             # event schemas, Kafka producer/consumer
 │   │   └── ledger/             # PostgreSQL double-entry repository
 │   ├── migrations/             # NNNN_name.up.sql / .down.sql
-│   ├── scripts/lua/            # place_wager.lua, settle_round.lua, refund_round.lua
+│   ├── scripts/lua/            # place_wager.lua, lock_round.lua, settle_round.lua, refund_round.lua
 │   └── test/                   # integration + concurrency suites (testcontainers)
 ├── frontend/                   # Next.js (Phase 6)
 └── loadtest/                   # k6 scripts
@@ -90,6 +90,12 @@ container running.
 All amounts are **integer token units**. No floats appear in Redis or in
 the ledger; odds become floating point only at the presentation layer.
 
+Brace placeholders (`{roomID}`, `{roundID}`, ...) are substitutions, **not**
+Redis Cluster hash tags — `room:{roomID}` means the literal key
+`room:7f3a...`. This deployment is single-node; if it ever moves to
+Cluster, co-locating a room's keys would need real hash tags, which is a
+schema change, not a wrapper change.
+
 | Key | Type | Contents |
 |---|---|---|
 | `code:{roomCode}` | STRING | → `roomID` (join lookup) |
@@ -98,9 +104,18 @@ the ledger; odds become floating point only at the presentation layer.
 | `round:{roundID}` | HASH | `room_id`, `status`, `lock_at_ms`, `outcome_count`, `resolved_outcome` |
 | `round:{roundID}:pools` | HASH | `0..n` → pool amount, `total` → sum |
 | `round:{roundID}:wagers` | HASH | `{userID}:{outcomeIdx}` → amount |
+| `round:{roundID}:bettors` | SET | distinct user IDs that have wagered |
 | `idem:{key}` | STRING | cached result, TTL 24h |
 | `ratelimit:{scope}:{id}` | ZSET | sliding window — wager throttle *and* refill quota |
 | `wager-outbox` | STREAM | outbox events awaiting relay to Kafka |
+
+`round:{roundID}:bettors` was added in Phase 2 (Amendment A2,
+`docs/plans/2026-08-24-phase-2-redis-layer.md`): the "N/M players have
+wagered" progress signal (§4 of the design spec) counts distinct
+*players*, not wagers, and `round:{roundID}:wagers`'s
+`{userID}:{outcomeIdx}` fields can't answer that — one player betting two
+outcomes is two fields there. `SCARD` on this set is the numerator; the
+set's members never leave the server, only the count does.
 
 **Authoritative clock.** Lockout is evaluated using `redis.call('TIME')`
 inside the script rather than a timestamp supplied by the application
@@ -128,11 +143,41 @@ One atomic unit:
 7. `XADD wager-outbox` — the outbox write, atomic with the mutation above.
 8. `SET idem:{key}` with TTL; return the new balance and updated pools.
 
+### `lock_round.lua`
+
+Added in Phase 2 (Amendment A3). A fourth script, not named above: something
+has to perform the `open → locked` compare-and-set. Phase 4 owns the
+countdown timer that decides *when* to fire it, but the Redis write itself
+had no owner, and `settle_round.lua`'s flow (below) depends on the round
+already being locked before it runs. A status CAS, nothing more; idempotent
+in the sense that locking an already-locked round is a benign no-op, and
+locking a resolved or refunded round is refused.
+
 ### `settle_round.lua`
 
 Idempotent; a second invocation returns `ALREADY_RESOLVED`. Payout for a
-stake `a` on winning outcome `W` is `floor(a * total / pool_W)`. Two edge
-cases the spec did not cover, decided here:
+stake `a` on winning outcome `W` is `floor(a * total / pool_W)`.
+
+**Settlement math runs in Go, not Lua** (Phase 2 Amendment A1,
+`docs/plans/2026-08-24-phase-2-redis-layer.md`) — this supersedes the
+original design of computing the payout formula inside the script.
+`internal/domain.Settle` already implements it at 100% coverage with a fuzz
+test proving `Σ payouts + dust == Σ stakes`; reimplementing it in Lua would
+be a second, less-tested copy that has to agree with the first exactly. The
+duplication is unavoidable the other way too: `Settlement.Results` — the
+per-player reveal Phase 4 broadcasts when a round closes — comes from
+`domain.Settle` regardless, so Go runs the settlement math either way.
+Settlement is therefore: `lock_round.lua` CASes `open → locked`; Go reads
+the round's stakes and calls `domain.Settle`; `settle_round.lua` CASes
+`locked → resolved|refunded` and applies the computed payouts atomically,
+crediting each wallet and emitting one outbox event. The read-then-write
+window between Go's read and the script's write is safe because
+`place_wager.lua` already rejects any wager once the round is locked, so
+the wagers hash cannot grow in between.
+
+Two edge cases the spec did not cover, decided here — both still true
+under the Go-computes/Lua-applies split, since `domain.Settle` produces
+them, not the script:
 
 - **`pool_W == 0`** (nobody picked the winning outcome): every participant
   is refunded in full and the round is marked `refunded` rather than
@@ -144,7 +189,10 @@ cases the spec did not cover, decided here:
 
 ### `refund_round.lua`
 
-The host-disconnect and 60-second-timeout path. Also idempotent.
+The host-disconnect and 60-second-timeout path. Also idempotent. Unlike
+settlement there is nothing to compute — refunding is the identity function
+on stakes — so this script reads the wagers hash inside its own atomic unit
+rather than taking amounts from Go.
 
 ---
 
@@ -216,13 +264,26 @@ MVP and contain the demo; 5 onward are separate milestones.
 |---|---|---|---|---|
 | 0 | **Foundations** | Monorepo skeleton, `docker-compose.yml` (Redis/PostgreSQL/Kafka-KRaft), Makefile, GitHub Actions CI, config loader with fail-fast validation, structured logging, `/healthz` | — | `golang-*` (patterns/testing/tdd/verification) rules + skills; `docker-patterns` skill — import *before* starting this phase, not after |
 | 1 | **Domain core (pure Go)** | Odds math, payout and dust distribution, round state machine, wallet rules (buy-in, 3× cap, partial buy-in, refill quota). No I/O; near-total unit coverage | 0 | None new — covered by Phase 0's Go tooling |
-| 2 | **Redis layer** | Key schema, the three Lua scripts, Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 | `redis-patterns` skill |
+| 2 | **Redis layer** | Key schema, four Lua scripts (`place_wager`, `lock_round`, `settle_round`, `refund_round`), Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 | `redis-patterns` skill |
 | 3 | **Auth + REST** | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 | `api-design` skill |
 | 4 | **WebSocket hub + round lifecycle** | Per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, server-side lock timer and 60-second auto-refund fallback. Playable end to end from a CLI client | 3 | None new |
 | 5 | **Kafka + ledger** | Outbox relay, `wagers-placed` and `rounds-settled` producers, ledger-worker consumer, migrations, deferred constraint trigger, Redis↔PostgreSQL reconciliation test | 2, 4 | `postgres-patterns`, `database-migrations` skills |
 | 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4 | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
 | 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5, 6 | None new — spec already names k6 directly |
 | 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7 | Decide when unblocked |
+
+**Phase 3 note (added at Phase 2 close-out, Amendment A4/A5).** Phase 2
+already wrote the real room and round writers — `CreateRoom`, `JoinRoom`,
+`CreateRound`, `LockRound` — in `internal/redisstore`, since it owns "key
+schema" per this table and test-only fixtures would have drifted from the
+real thing. Phase 3's `internal/room` and `internal/round` wrap these
+functions rather than writing hashes directly; short-code generation still
+belongs to Phase 3 (`CreateRoom` takes a code as a parameter, it does not
+invent one). The shared sliding-window rate limiter this table's key schema
+names (`ratelimit:{scope}:{id}`) was deferred to Phase 3 as well — nothing
+in Phase 2 calls it, so it landed next to its first caller (the refill
+endpoint and wager-placement middleware) instead of sitting unused for a
+full phase.
 
 **Import rule:** skills (Bucket 2/3) are cheap — one line in the availability listing until invoked — so pull each phase's skills in *before* that phase starts, no need to batch them all up front. Language-specific **rule dirs** (`.claude/rules/ecc/<language>/`) are different: they're always-loaded full text into every turn once installed, per `.claude/rules/ecc/common/agents.md`'s description of rules as passive/always-on. Install a rule dir only right before the phase that needs it, so irrelevant stack rules don't sit in every turn's context for phases that don't touch that stack yet.
 

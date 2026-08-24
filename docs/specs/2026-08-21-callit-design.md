@@ -108,7 +108,10 @@ token gestures at each technology.
   placed their bets". No per-user notification, indicator, or wager
   count. The denominator excludes the host, who cannot wager; the
   counter counts players rather than wagers, so a player's second wager
-  moves the pools but not the counter.
+  moves the pools but not the counter. Implemented (Phase 2) as
+  `SCARD round:{roundID}:bettors` over `HLEN room:{roomID}:wallets` minus
+  the host — a set cardinality, so a player's second wager (`SADD` is a
+  no-op on an existing member) never moves the numerator.
 
   Known limitation: each broadcast is triggered by one wager, so a pool
   delta is one player's exact stake with only the identity missing. In a
