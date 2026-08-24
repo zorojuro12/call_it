@@ -188,17 +188,22 @@ Zookeeper) to keep local resource use manageable.
 
 ## 8. Economy constants
 
-Centralized in `internal/config` as named constants — no magic numbers at
-call sites.
-
 | Constant | Value |
 |---|---|
 | New account starting balance | 1,000 |
 | Refill target | 1,000 |
-| Refill eligibility threshold | balance < 200 |
 | Refill quota | 3 per rolling 7-day window |
-| Room buy-in bounds (host-set) | 100 – 100,000 |
+| Room buy-in bounds (host-set) | 100 – 10,000 |
 | Account-holder stake cap | min(3 × room buy-in, account balance) |
+
+Defined in `internal/domain/economy.go`, not `internal/config`: these are
+platform invariants rather than deployment configuration, and the domain
+must not depend on the env loader. The separate "refill eligibility
+threshold" this table previously carried was removed — it created a dead
+zone between the threshold and the target, and the quota was always the
+real limiter. Buy-in ceiling lowered from 100,000, which sat a hundred
+times above the refill target. See
+`docs/plans/2026-08-23-phase-1-domain-core.md` §A1–A3.
 
 ---
 
