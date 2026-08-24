@@ -58,6 +58,11 @@ if outcomeNum == nil or outcomeNum < 0 or outcomeNum >= outcomeCount then
   return {'INVALID_OUTCOME'}
 end
 
+local hostID = redis.call('HGET', roomKey, 'host_id')
+if hostID == userID then
+  return {'HOST_CANNOT_BET'}
+end
+
 local newBalance = redis.call('HINCRBY', walletsKey, userID, -amount)
 redis.call('HINCRBY', poolsKey, outcome, amount)
 local total = redis.call('HINCRBY', poolsKey, 'total', amount)

@@ -18,6 +18,11 @@ var ErrNotFound = errors.New("redisstore: key or field not found")
 // passed its lock instant.
 var ErrPoolLocked = errors.New("redisstore: round is locked")
 
+// ErrHostCannotBet is returned when the room's host attempts to place a
+// wager in their own room — the conflict of interest the host-cannot-bet
+// rule removes (spec §4).
+var ErrHostCannotBet = errors.New("redisstore: host cannot wager in their own room")
+
 // mapWagerStatus maps place_wager.lua's non-OK status codes to Go
 // errors. Task 4 adds a case per guard as each one is implemented; an
 // unrecognized code for now returns a wrapped generic error naming it,
@@ -29,6 +34,8 @@ func mapWagerStatus(reply []string) error {
 		return ErrPoolLocked
 	case "INVALID_OUTCOME":
 		return domain.ErrInvalidOutcome
+	case "HOST_CANNOT_BET":
+		return ErrHostCannotBet
 	default:
 		return fmt.Errorf("redisstore: place wager: unrecognized status %q", code)
 	}

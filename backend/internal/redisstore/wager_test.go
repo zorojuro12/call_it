@@ -377,3 +377,33 @@ func TestPlaceWager_RejectsInvalidOutcome(t *testing.T) {
 		})
 	}
 }
+
+func TestPlaceWager_RejectsHost(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	lockAt := time.Now().Add(30 * time.Second)
+	roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{
+		"host1": 500, // the host holds a wallet for room bookkeeping; the guard is what stops them, not an absent wallet
+		"u1":    500,
+	})
+
+	before := snapshotWager(t, store, roomID, roundID, "host1")
+
+	_, err := store.PlaceWager(ctx, WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "host1",
+		Outcome: 1, Amount: 200, IdempotencyKey: testID(t, "idem"),
+	})
+	if !errors.Is(err, ErrHostCannotBet) {
+		t.Fatalf("PlaceWager() as host error = %v, want ErrHostCannotBet", err)
+	}
+	assertNoMutation(t, store, roomID, roundID, "host1", before)
+
+	// Control case: a non-host player in the same room is accepted.
+	_, err = store.PlaceWager(ctx, WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 1, Amount: 200, IdempotencyKey: testID(t, "idem"),
+	})
+	if err != nil {
+		t.Fatalf("PlaceWager() as non-host = %v, want nil", err)
+	}
+}
