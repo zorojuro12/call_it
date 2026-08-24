@@ -40,6 +40,49 @@ per phase.
 | Feature/refactor plan needs deeper multi-file architectural reasoning first | `planner` agent, or `code-architect` agent if there's existing code to pattern-match against (N/A yet — repo is pre-code) |
 | Deciding Go package/folder layout specifically | `planner` agent, cross-checked against the Go microservice reference layout at `/home/chikara/projects/ECC/examples/go-microservice-CLAUDE.md` |
 
+### 2a. The two-model loop: plan in Opus, execute in Sonnet
+
+**Adopted 2026-08-23, starting with Phase 1.** Planning and execution run in
+*separate Claude Code windows* on different models:
+
+| Window | Model | Does |
+|---|---|---|
+| Planning | Opus | `writing-plans` — resolves open questions, argues amendments against the spec, produces the phase plan |
+| Executing | Sonnet | `executing-plans` — works the plan task by task, commits per checkpoint |
+
+**Why the split.** `.claude/rules/ecc/common/performance.md` puts Sonnet on main
+development work and reserves Opus for architecture and deep reasoning. A plan
+that has done its job leaves no design to derive — so the expensive model earns
+its keep during planning, and the cheaper one does the typing.
+
+**The executing window needs no conversation history.** This is the property
+that makes the split work, and it's a constraint on the *plan*, not a hope about
+the executor: `CLAUDE.md` auto-loads in any session in this repo, and everything
+else the executor needs must be written into the plan itself — Global
+Constraints, environment gotchas, and any amendment the plan makes to the parent
+plan or spec. If a plan can only be executed by someone who watched it being
+written, it isn't finished.
+
+**Mechanics:**
+
+1. **Commit the plan to `dev` before handing off.** The executing window's first
+   act is `git checkout -b <slug> dev`, and an untracked plan file follows onto
+   the feature branch — landing the plan's own creation in the phase's history.
+   Sweep up any other stray files (a previous session's journal entry) at the
+   same time.
+2. Point the Sonnet window at the plan path. **Don't create the branch by hand** —
+   `executing-plans` Step 1 does it.
+3. Expect it to raise questions before starting; its Step 1 requires a critical
+   review pass. That's the skill working, not a defect in the plan.
+4. **Only one window edits `.claude/skills/` at a time.** Both sessions can reach
+   the same files, and `ListAgents` won't necessarily see the other one. On
+   2026-08-23 an executing window rewrote `writing-plans` (`ab190b9`) while a
+   planning window was mid-review of the same file.
+
+**Watch item:** a long plan costs real context on Sonnet. Tasks are independent
+in execution order, so a degraded session can be resumed in a fresh window —
+checkbox state in the plan plus `git log` shows exactly where it stopped.
+
 ## 3. Setting project-level conventions
 
 | Situation | Use |
