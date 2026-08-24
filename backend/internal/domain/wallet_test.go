@@ -36,3 +36,73 @@ func TestValidateBuyIn(t *testing.T) {
 		})
 	}
 }
+
+func TestGuestSessionBalance(t *testing.T) {
+	tests := []struct {
+		name  string
+		buyIn Tokens
+		want  Tokens
+	}{
+		{name: "a guest joins with exactly the buy-in", buyIn: 500, want: 500},
+		{name: "the 3x account multiple never applies to guests", buyIn: MaxBuyIn, want: MaxBuyIn},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := GuestSessionBalance(tt.buyIn); got != tt.want {
+				t.Errorf("GuestSessionBalance(%d) = %d, want %d", tt.buyIn, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAccountSessionBalance(t *testing.T) {
+	tests := []struct {
+		name           string
+		accountBalance Tokens
+		roomBuyIn      Tokens
+		want           Tokens
+	}{
+		{
+			name:           "a wealthy account is capped at three times the buy-in",
+			accountBalance: 10_000,
+			roomBuyIn:      500,
+			want:           1500,
+		},
+		{
+			name:           "an account below the cap brings its whole balance",
+			accountBalance: 800,
+			roomBuyIn:      500,
+			want:           800,
+		},
+		{
+			name:           "an account short of the buy-in joins partial",
+			accountBalance: 200,
+			roomBuyIn:      2000,
+			want:           200,
+		},
+		{
+			name:           "an account exactly at the cap brings the cap",
+			accountBalance: 1500,
+			roomBuyIn:      500,
+			want:           1500,
+		},
+		{
+			name:           "an empty account brings nothing",
+			accountBalance: 0,
+			roomBuyIn:      500,
+			want:           0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AccountSessionBalance(tt.accountBalance, tt.roomBuyIn)
+
+			if got != tt.want {
+				t.Errorf("AccountSessionBalance(%d, %d) = %d, want %d",
+					tt.accountBalance, tt.roomBuyIn, got, tt.want)
+			}
+		})
+	}
+}

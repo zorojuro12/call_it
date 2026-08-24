@@ -10,3 +10,24 @@ func ValidateBuyIn(buyIn Tokens) error {
 	}
 	return nil
 }
+
+// GuestSessionBalance is what a guest joins a room with: exactly the
+// room's buy-in, wiped when the session ends (spec §3). Guests hold no
+// persistent account, so the account-holder multiple never applies to
+// them.
+func GuestSessionBalance(roomBuyIn Tokens) Tokens {
+	return roomBuyIn
+}
+
+// AccountSessionBalance is what an account holder joins a room with:
+// min(StakeCapMultiple x buy-in, account balance) (plan §8). Handing
+// them the whole cap up front is what lets place_wager.lua check nothing
+// but the session balance — the cap is embodied in the wallet rather
+// than re-evaluated on every wager.
+func AccountSessionBalance(accountBalance, roomBuyIn Tokens) Tokens {
+	limit := roomBuyIn * StakeCapMultiple
+	if accountBalance < limit {
+		return accountBalance
+	}
+	return limit
+}
