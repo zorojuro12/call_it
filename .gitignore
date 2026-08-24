@@ -13,3 +13,6 @@ frontend/.next/
 
 # Editor / OS
 .DS_Store
+
+# Personal notes — not part of the project, not tracked
+notes/
