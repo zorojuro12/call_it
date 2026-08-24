@@ -80,3 +80,63 @@ func TestCreateRoom(t *testing.T) {
 		t.Errorf("EXISTS room:%s = %d, want 0 — invalid buy-in must write nothing", badRoomID, exists)
 	}
 }
+
+func TestJoinRoom(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 500); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+
+	if err := store.JoinRoom(ctx, roomID, "u1", 500); err != nil {
+		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+	balField, err := store.client.HGet(ctx, RoomWalletsKey(roomID), "u1").Result()
+	if err != nil {
+		t.Fatalf("HGET room:%s:wallets u1: %v", roomID, err)
+	}
+	if balField != "500" {
+		t.Errorf("HGET wallets u1 = %q, want %q", balField, "500")
+	}
+	balance, err := store.Balance(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("Balance() = %v, want nil", err)
+	}
+	if balance != domain.Tokens(500) {
+		t.Errorf("Balance() = %d, want 500", balance)
+	}
+
+	if _, err := store.Balance(ctx, roomID, "never-joined"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Balance() for user who never joined error = %v, want ErrNotFound", err)
+	}
+
+	err = store.JoinRoom(ctx, roomID, "u-zero", 0)
+	if !errors.Is(err, domain.ErrInvalidStake) {
+		t.Fatalf("JoinRoom() with balance 0 error = %v, want ErrInvalidStake", err)
+	}
+	exists, err := store.client.HExists(ctx, RoomWalletsKey(roomID), "u-zero").Result()
+	if err != nil {
+		t.Fatalf("HEXISTS wallets u-zero: %v", err)
+	}
+	if exists {
+		t.Errorf("HEXISTS wallets u-zero = true, want false — invalid balance must write nothing")
+	}
+
+	if err := store.JoinRoom(ctx, roomID, "u2", 500); err != nil {
+		t.Fatalf("JoinRoom(u2) = %v, want nil", err)
+	}
+	// The host also holds a wallet field for room bookkeeping, but must
+	// not count toward the player denominator (spec §4).
+	if err := store.JoinRoom(ctx, roomID, "host1", 500); err != nil {
+		t.Fatalf("JoinRoom(host1) = %v, want nil", err)
+	}
+	count, err := store.PlayerCount(ctx, roomID)
+	if err != nil {
+		t.Fatalf("PlayerCount() = %v, want nil", err)
+	}
+	if count != 2 {
+		t.Errorf("PlayerCount() = %d, want 2 (host excluded)", count)
+	}
+}
