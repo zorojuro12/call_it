@@ -93,6 +93,32 @@ token gestures at each technology.
   round auto-locks at t=0 as normal. If it remains unresolved 60 seconds
   after lockout, all wagers in that round are **auto-refunded** via a
   fallback queue.
+- **Wagers are anonymous until the round reaches a terminal state.** No
+  participant may learn who backed which outcome, or for how much, until
+  the round resolves or refunds; at that point every participant's stake
+  and net result are revealed together. This is not presentation polish:
+  the host resolves the outcome, so a host who could see positions
+  beforehand could favour an outcome to benefit a friend, reintroducing
+  through a side channel the conflict of interest that the
+  host-cannot-wager rule removes. Live odds are unaffected — they are
+  computed from pool totals, never from per-user positions.
+
+  While a round is open, the only permitted progress signal is an
+  aggregate counter of how many players have wagered — "2/5 players have
+  placed their bets". No per-user notification, indicator, or wager
+  count. The denominator excludes the host, who cannot wager; the
+  counter counts players rather than wagers, so a player's second wager
+  moves the pools but not the counter.
+
+  Known limitation: each broadcast is triggered by one wager, so a pool
+  delta is one player's exact stake with only the identity missing. In a
+  room of three or four the wagerer is easy to guess; in a room of
+  thirty the crowd hides them. Closing the gap would mean batching pool
+  updates, which conflicts with the <30 ms target in §7, or adding noise
+  to odds that must be exact at settlement. It is accepted. What the
+  rule guarantees is that the host never has a systematic, complete view
+  of the board before resolving — not that no individual stake can ever
+  be guessed.
 
 ## 5. Write Path / Data Flow
 

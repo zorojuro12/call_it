@@ -79,6 +79,17 @@ push/PR to `main` and `dev`. Nothing merges with any of those red.
 - **Refills and wager-placement throttling share one Redis sliding-window
   rate limiter.** One mechanism, two call sites — don't fork a second
   implementation for either use case.
+- **Wagers stay anonymous until the round is terminal.** No payload from
+  any phase may carry per-user wager data before the round resolves or
+  refunds — `internal/domain`'s `Settlement.Results` is the reveal, and
+  nothing earlier. Live odds broadcast pool totals only. The host
+  resolves outcomes, so early visibility would hand them the conflict of
+  interest that the host-cannot-wager rule exists to remove. The only
+  permitted in-round progress signal is an aggregate count of players
+  who have wagered ("2/5 players have placed their bets") — denominator
+  excludes the host, and it counts players, not wagers. Binds Phase 3
+  (REST payloads), Phase 4 (WebSocket broadcasts), and Phase 6 (the
+  frontend must not reconstruct per-user state client-side).
 
 (These bind Phases 1-5 as they're built; Phase 0 — config and health check —
 doesn't yet touch most of them. See the plan for full context on each.)
@@ -141,9 +152,12 @@ Phase 0 lost its commit granularity.
 80% minimum coverage, TDD (RED → GREEN → IMPROVE), AAA structure —
 `.claude/rules/ecc/common/testing.md` (always loaded, not restated here).
 Table-driven tests per `.claude/skills/golang-testing/`. Current coverage
-(verified live): `internal/config` 100%, `internal/httpapi` 85.7%, `cmd/api`
-0% — that last one is expected, not a gap: it's thin wiring with no
-branching logic of its own, per the plan's own note on `main.go`.
+(verified live): `internal/config` 100%, `internal/httpapi` 85.7%,
+`internal/domain` 100% (this package's floor is 100%, not the project's 80%
+— plan §9's "near-total unit coverage" call, since there is no wiring code
+here to excuse a gap), `cmd/api` 0% — that last one is expected, not a gap:
+it's thin wiring with no branching logic of its own, per the plan's own note
+on `main.go`.
 
 ## Installed Tooling
 
