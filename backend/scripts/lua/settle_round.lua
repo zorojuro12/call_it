@@ -1,0 +1,2 @@
+-- Placeholder: implemented in Task 6 (Amendment A1, applies a
+-- Go-computed settlement).

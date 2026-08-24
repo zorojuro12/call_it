@@ -1,0 +1,1 @@
+-- Placeholder: implemented in Task 7 (timeout/disconnect refund path).

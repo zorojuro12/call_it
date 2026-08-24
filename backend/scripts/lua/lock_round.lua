@@ -1,0 +1,1 @@
+-- Placeholder: implemented in Task 5 (Amendment A3, open -> locked CAS).
