@@ -54,3 +54,21 @@ func ValidateStake(amount, sessionBalance Tokens) error {
 	}
 	return nil
 }
+
+// ApplySessionResult folds a finished session's net profit or loss into
+// a persistent account balance (spec §3). It is the delta that carries
+// across, not the session's final balance — an account holder who brings
+// 1,500 of a 10,000 balance into a room and leaves with 2,400 gains 900,
+// not 2,400.
+//
+// The floor at zero is defence in depth: a session balance never exceeds
+// the account balance it came from, so the sum cannot legitimately go
+// negative. It exists so that an inconsistent caller cannot mint a
+// negative account rather than because the arithmetic needs it.
+func ApplySessionResult(accountBalance, sessionStart, sessionEnd Tokens) Tokens {
+	updated := accountBalance + (sessionEnd - sessionStart)
+	if updated < 0 {
+		return 0
+	}
+	return updated
+}

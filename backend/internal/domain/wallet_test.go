@@ -208,3 +208,74 @@ func TestValidateStake_InsufficientFunds(t *testing.T) {
 		})
 	}
 }
+
+func TestApplySessionResult(t *testing.T) {
+	tests := []struct {
+		name           string
+		accountBalance Tokens
+		sessionStart   Tokens
+		sessionEnd     Tokens
+		want           Tokens
+	}{
+		{
+			name:           "a winning session adds only the net gain",
+			accountBalance: 1000,
+			sessionStart:   1000,
+			sessionEnd:     1600,
+			want:           1600,
+		},
+		{
+			name:           "a partial buy-in win adds the gain, not the session total",
+			accountBalance: 300,
+			sessionStart:   300,
+			sessionEnd:     900,
+			want:           900,
+		},
+		{
+			name:           "a capped session adds the gain on top of the untouched balance",
+			accountBalance: 10_000,
+			sessionStart:   1500,
+			sessionEnd:     2400,
+			want:           10_900,
+		},
+		{
+			name:           "a losing session subtracts only the net loss",
+			accountBalance: 10_000,
+			sessionStart:   1500,
+			sessionEnd:     400,
+			want:           8900,
+		},
+		{
+			name:           "a total wipeout of a full-balance session floors at zero",
+			accountBalance: 1000,
+			sessionStart:   1000,
+			sessionEnd:     0,
+			want:           0,
+		},
+		{
+			name:           "a break-even session changes nothing",
+			accountBalance: 1000,
+			sessionStart:   1000,
+			sessionEnd:     1000,
+			want:           1000,
+		},
+		{
+			name:           "an inconsistent caller cannot drive the balance negative",
+			accountBalance: 100,
+			sessionStart:   5000,
+			sessionEnd:     0,
+			want:           0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ApplySessionResult(tt.accountBalance, tt.sessionStart, tt.sessionEnd)
+
+			if got != tt.want {
+				t.Errorf("ApplySessionResult(%d, %d, %d) = %d, want %d",
+					tt.accountBalance, tt.sessionStart, tt.sessionEnd, got, tt.want)
+			}
+		})
+	}
+}
