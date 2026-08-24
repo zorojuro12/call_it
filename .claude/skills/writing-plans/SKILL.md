@@ -90,6 +90,23 @@ include this section.]
 
 ## Task Structure
 
+**Spec-driven, not code-driven (project adaptation, 2026-08-23).** Upstream's
+template pre-writes full test and implementation code for every checkpoint.
+That earns its keep under `subagent-driven-development`, where each task goes
+to a fresh, cold-context subagent that never sees the rest of the plan —
+pre-written code means a cheap model can transcribe and verify instead of a
+capable model re-deriving the implementation. This project doesn't use that
+execution mode (declined — `docs/dev-workflow-guide.md` §9); `executing-plans`
+runs inline, in the same context that wrote the plan. Under that mode,
+pre-writing full code buys nothing — the executor would derive essentially
+the same code either way — and it made a single phase's plan exceed 3000
+lines (Phase 1: 8 tasks, 35 checkpoints, 61 code blocks, ~88 lines/checkpoint
+average — see `journal/` for the session that flagged this). So: **specify
+the exact behavior precisely; let execution write the code.** If this project
+ever adopts subagent-driven execution, revert to full pre-written code for
+whichever tasks go that route — the two modes need different plan formats,
+this isn't a universal improvement.
+
 ````markdown
 ### Task N: [Component Name]
 
@@ -101,48 +118,49 @@ include this section.]
 **Interfaces:**
 - Consumes: [what this task uses from earlier tasks — exact signatures]
 - Produces: [what later tasks rely on — exact function names, parameter
-  and return types. A task's implementer sees only their own task; this
-  block is how they learn the names and types neighboring tasks use.]
+  and return types. Kept exact regardless of execution mode: this is what
+  keeps cross-task types consistent, e.g. not `clearLayers()` in Task 3 vs
+  `clearFullLayers()` in Task 7.]
 
 **Checkpoint 1: [specific behavior or case this checkpoint covers]**
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write a failing test for this exact behavior**
 
-```python
-def test_specific_behavior():
-    result = function(input)
-    assert result == expected
-```
+Spec: [exact input(s) → exact expected output or error, stated precisely
+enough that two different implementers would write the same test — e.g.
+"input `[]`, pool empty → returns `ErrEmptyPool`", not "handle the empty
+case." Show a code block only if a subtle assertion detail needs pinning
+down (a specific float tolerance, an exact error message string) — not by
+default.]
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/path/test.py::test_name -v`
-Expected: FAIL with "function not defined"
+Run: [exact command]
+Expected: FAIL with [exact expected failure reason]
 
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 3: Implement to satisfy the test**
 
-```python
-def function(input):
-    return expected
-```
+Contract: [the behavior in 1-2 lines, using the exact signature from
+Interfaces above. Not a function body — the executor writes that against
+this contract and the test from Step 1.]
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pytest tests/path/test.py::test_name -v`
+Run: [exact command]
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/path/test.py src/path/file.py
-git commit -m "feat: add specific feature"
+git add [exact paths]
+git commit -m "[exact type: description]"
 ```
 
 **Checkpoint 2: [next behavior or case, if this task has one]**
 
-- [ ] Step 1: Write the failing test
+- [ ] Step 1: Write a failing test for: [exact spec, as above]
 - [ ] Step 2: Run — expect FAIL
-- [ ] Step 3: Write minimal implementation
+- [ ] Step 3: Implement to satisfy: [exact contract, as above]
 - [ ] Step 4: Run — expect PASS
 - [ ] Step 5: Commit
 
@@ -156,10 +174,19 @@ is a complete, valid task, not a truncated one.]
 Every step must contain the actual content an engineer needs. These are **plan failures** — never write them:
 - "TBD", "TODO", "implement later", "fill in details"
 - "Add appropriate error handling" / "add validation" / "handle edge cases"
-- "Write tests for the above" (without actual test code)
-- "Similar to Task N" (repeat the code — the engineer may be reading tasks out of order)
-- Steps that describe what to do without showing how (code blocks required for code steps)
-- References to types, functions, or methods not defined in any task
+- "Write tests for the above" (without an exact input→output/error spec)
+- "Similar to Task N" (repeat the full spec — the executor may work tasks out of order)
+- "Handle the edge case" without saying which edge case and what the exact
+  expected behavior is
+- References to types, functions, or methods not defined in any task's
+  Interfaces block
+
+**In this project, a precise behavior spec satisfies this rule — full code is
+not required** (see Task Structure above for why). The bar is: could two
+different implementers, given only this step, write the same test/same
+implementation? If yes, it's specific enough. "Reject values below the room
+buy-in" fails that bar (which values? what happens instead?); "input stake
+50, room buy-in 100 → returns `ErrBelowBuyIn`, wallet untouched" passes it.
 
 ## Self-Review
 
