@@ -14,4 +14,5 @@ var (
 	ErrInvalidBuyIn        = errors.New("domain: room buy-in out of range")
 	ErrInvalidStake        = errors.New("domain: stake must be positive")
 	ErrInsufficientFunds   = errors.New("domain: stake exceeds available balance")
+	ErrRefillNotEligible   = errors.New("domain: balance is not below the refill target")
 )
