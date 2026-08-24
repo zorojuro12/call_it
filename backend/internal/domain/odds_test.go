@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestMultiplier(t *testing.T) {
 	tests := []struct {
@@ -35,5 +38,49 @@ func TestMultiplier_FractionalResult(t *testing.T) {
 	const want = 10.0 / 3.0
 	if got != want {
 		t.Errorf("Multiplier(1000, 300) = %v, want %v", got, want)
+	}
+}
+
+func TestMultipliers(t *testing.T) {
+	tests := []struct {
+		name  string
+		total Tokens
+		pools []Tokens
+		want  []float64
+	}{
+		{
+			name:  "a two-outcome board",
+			total: 1000,
+			pools: []Tokens{250, 750},
+			want:  []float64{4, 1000.0 / 750.0},
+		},
+		{
+			name:  "an unbacked outcome sits at zero among backed ones",
+			total: 1000,
+			pools: []Tokens{500, 500, 0},
+			want:  []float64{2, 2, 0},
+		},
+		{
+			name:  "a round with no wagers yet",
+			total: 0,
+			pools: []Tokens{0, 0},
+			want:  []float64{0, 0},
+		},
+		{
+			name:  "no outcomes yields an empty board, not nil",
+			total: 0,
+			pools: []Tokens{},
+			want:  []float64{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Multipliers(tt.total, tt.pools)
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Multipliers(%d, %v) = %v, want %v", tt.total, tt.pools, got, tt.want)
+			}
+		})
 	}
 }
