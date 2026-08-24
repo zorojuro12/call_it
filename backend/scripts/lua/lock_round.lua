@@ -7,6 +7,16 @@
 
 local roundKey = KEYS[1]
 
+local status = redis.call('HGET', roundKey, 'status')
+
+if status == 'locked' then
+  return {'ALREADY_LOCKED'}
+end
+
+if status ~= 'open' then
+  return {'ROUND_TERMINAL', status}
+end
+
 redis.call('HSET', roundKey, 'status', 'locked')
 
 return {'OK'}
