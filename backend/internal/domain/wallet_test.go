@@ -106,3 +106,42 @@ func TestAccountSessionBalance(t *testing.T) {
 		})
 	}
 }
+
+func TestIsPartialBuyIn(t *testing.T) {
+	tests := []struct {
+		name           string
+		accountBalance Tokens
+		roomBuyIn      Tokens
+		want           bool
+	}{
+		{
+			name:           "a balance below the buy-in is partial",
+			accountBalance: 200,
+			roomBuyIn:      2000,
+			want:           true,
+		},
+		{
+			name:           "a balance exactly at the buy-in is not partial",
+			accountBalance: 2000,
+			roomBuyIn:      2000,
+			want:           false,
+		},
+		{
+			name:           "a balance above the buy-in is not partial",
+			accountBalance: 5000,
+			roomBuyIn:      2000,
+			want:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsPartialBuyIn(tt.accountBalance, tt.roomBuyIn)
+
+			if got != tt.want {
+				t.Errorf("IsPartialBuyIn(%d, %d) = %v, want %v",
+					tt.accountBalance, tt.roomBuyIn, got, tt.want)
+			}
+		})
+	}
+}

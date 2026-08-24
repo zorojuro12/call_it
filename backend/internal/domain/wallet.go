@@ -31,3 +31,11 @@ func AccountSessionBalance(accountBalance, roomBuyIn Tokens) Tokens {
 	}
 	return limit
 }
+
+// IsPartialBuyIn reports whether an account holder is joining with less
+// than the room's full buy-in, which the UI surfaces transparently
+// (spec §3, e.g. "joined with 200/2000"). It is a display rule, not a
+// gate — a partial buy-in is always permitted.
+func IsPartialBuyIn(accountBalance, roomBuyIn Tokens) bool {
+	return accountBalance < roomBuyIn
+}
