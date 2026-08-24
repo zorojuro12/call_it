@@ -61,6 +61,18 @@ func (s *Store) SettleRound(ctx context.Context, roundID string, winningOutcome 
 	if err != nil {
 		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: %w", roundID, err)
 	}
+	// Checked here too, not just in the script: an unlocked round should
+	// fail without computing a settlement it will never apply. The
+	// script keeps its own check regardless, since this read is not
+	// atomic with it.
+	switch round.Status {
+	case domain.RoundResolved, domain.RoundRefunded:
+		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: %w", roundID, ErrAlreadySettled)
+	case domain.RoundLocked:
+		// proceed
+	default:
+		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: %w", roundID, ErrNotLocked)
+	}
 
 	stakes, err := s.ReadStakes(ctx, roundID)
 	if err != nil {

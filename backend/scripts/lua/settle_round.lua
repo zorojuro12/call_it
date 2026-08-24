@@ -25,6 +25,9 @@ local currentStatus = redis.call('HGET', roundKey, 'status')
 if currentStatus == 'resolved' or currentStatus == 'refunded' then
   return {'ALREADY_RESOLVED', currentStatus}
 end
+if currentStatus ~= 'locked' then
+  return {'NOT_LOCKED', currentStatus}
+end
 
 local creditedCount = 0
 local i = 6

@@ -258,6 +258,63 @@ func TestSettleRound_Idempotent(t *testing.T) {
 	}
 }
 
+func TestSettleRound_RequiresLock(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	lockAt := time.Now().Add(30 * time.Second)
+
+	roomID := testID(t, "room")
+	roundID := testID(t, "round")
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 500); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
+		t.Fatalf("CreateRound() = %v, want nil", err)
+	}
+	if err := store.JoinRoom(ctx, roomID, "u1", 500); err != nil {
+		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+	if _, err := store.PlaceWager(ctx, WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 0, Amount: 100, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager() = %v, want nil", err)
+	}
+	// Round is deliberately left open — not locked.
+
+	xlenBefore, err := store.client.XLen(ctx, store.outboxStream).Result()
+	if err != nil {
+		t.Fatalf("XLEN outbox before: %v", err)
+	}
+
+	_, err = store.SettleRound(ctx, roundID, 0, testID(t, "idem"))
+	if !errors.Is(err, ErrNotLocked) {
+		t.Fatalf("SettleRound() on open round error = %v, want ErrNotLocked", err)
+	}
+
+	balance, err := store.client.HGet(ctx, RoomWalletsKey(roomID), "u1").Result()
+	if err != nil {
+		t.Fatalf("HGET wallets u1: %v", err)
+	}
+	if balance != "400" {
+		t.Errorf("wallet u1 = %q, want unchanged %q (500 - 100 stake)", balance, "400")
+	}
+	status, err := store.client.HGet(ctx, RoundKey(roundID), "status").Result()
+	if err != nil {
+		t.Fatalf("HGET round status: %v", err)
+	}
+	if status != "open" {
+		t.Errorf("status = %q, want unchanged %q", status, "open")
+	}
+	xlenAfter, err := store.client.XLen(ctx, store.outboxStream).Result()
+	if err != nil {
+		t.Fatalf("XLEN outbox after: %v", err)
+	}
+	if xlenAfter != xlenBefore {
+		t.Errorf("XLEN outbox = %d, want unchanged %d", xlenAfter, xlenBefore)
+	}
+}
+
 func sumHashValues(ctx context.Context, store *Store, key string) (int64, error) {
 	fields, err := store.client.HGetAll(ctx, key).Result()
 	if err != nil {
