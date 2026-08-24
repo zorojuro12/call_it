@@ -170,3 +170,73 @@ func TestSettle_PlayerBackingBothSidesIsPaidOnlyOnTheWinner(t *testing.T) {
 		t.Errorf("Settle payouts = %+v, want %+v", got.Payouts, want)
 	}
 }
+
+func TestSettle_PlayerResults(t *testing.T) {
+	// Total 1000, winning pool 400, so a 2.5x multiplier.
+	stakes := []Stake{
+		{UserID: "alice", Outcome: 0, Amount: 100},
+		{UserID: "bob", Outcome: 0, Amount: 300},
+		{UserID: "carol", Outcome: 1, Amount: 600},
+	}
+
+	got, err := Settle(stakes, 0, 2)
+
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+	want := []PlayerResult{
+		{UserID: "alice", Staked: 100, Returned: 250, Net: 150},
+		{UserID: "bob", Staked: 300, Returned: 750, Net: 450},
+		{UserID: "carol", Staked: 600, Returned: 0, Net: -600},
+	}
+	if !reflect.DeepEqual(got.Results, want) {
+		t.Errorf("Settle results = %+v, want %+v", got.Results, want)
+	}
+}
+
+func TestSettle_PlayerResultsAggregateAcrossOutcomes(t *testing.T) {
+	// alice hedges across both outcomes and must appear once, with her
+	// stakes summed. Total 1000, winning pool 400: a 2.5x multiplier.
+	stakes := []Stake{
+		{UserID: "alice", Outcome: 0, Amount: 400},
+		{UserID: "alice", Outcome: 1, Amount: 100},
+		{UserID: "bob", Outcome: 1, Amount: 500},
+	}
+
+	got, err := Settle(stakes, 0, 2)
+
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+	want := []PlayerResult{
+		{UserID: "alice", Staked: 500, Returned: 1000, Net: 500},
+		{UserID: "bob", Staked: 500, Returned: 0, Net: -500},
+	}
+	if !reflect.DeepEqual(got.Results, want) {
+		t.Errorf("Settle results = %+v, want %+v", got.Results, want)
+	}
+}
+
+func TestSettle_PlayerResultsNetSumsToNegativeDust(t *testing.T) {
+	// Every token a winner gains is a token a loser lost, except what
+	// flooring strands as dust. So the players' nets must sum to exactly
+	// minus the dust.
+	stakes := []Stake{
+		{UserID: "alice", Outcome: 0, Amount: 1},
+		{UserID: "bob", Outcome: 0, Amount: 2},
+		{UserID: "carol", Outcome: 1, Amount: 7},
+	}
+
+	got, err := Settle(stakes, 0, 2)
+
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+	var netSum Tokens
+	for _, r := range got.Results {
+		netSum += r.Net
+	}
+	if netSum != -got.Dust {
+		t.Errorf("player nets sum to %d, want %d (minus the dust)", netSum, -got.Dust)
+	}
+}
