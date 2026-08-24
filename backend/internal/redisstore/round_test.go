@@ -1,0 +1,104 @@
+package redisstore
+
+import (
+	"context"
+	"errors"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/zorojuro12/call_it/backend/internal/domain"
+)
+
+func TestCreateRound(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roundID := testID(t, "round")
+	roomID := testID(t, "room")
+	lockAt := time.Now().Add(30 * time.Second)
+
+	if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
+		t.Fatalf("CreateRound() = %v, want nil", err)
+	}
+
+	fields, err := store.client.HGetAll(ctx, RoundKey(roundID)).Result()
+	if err != nil {
+		t.Fatalf("HGETALL round:%s: %v", roundID, err)
+	}
+	if fields["room_id"] != roomID {
+		t.Errorf("room_id = %q, want %q", fields["room_id"], roomID)
+	}
+	if fields["status"] != "open" {
+		t.Errorf("status = %q, want %q", fields["status"], "open")
+	}
+	if fields["outcome_count"] != "3" {
+		t.Errorf("outcome_count = %q, want %q", fields["outcome_count"], "3")
+	}
+	if fields["lock_at_ms"] != strconv.FormatInt(lockAt.UnixMilli(), 10) {
+		t.Errorf("lock_at_ms = %q, want %q", fields["lock_at_ms"], strconv.FormatInt(lockAt.UnixMilli(), 10))
+	}
+
+	poolFields, err := store.client.HGetAll(ctx, RoundPoolsKey(roundID)).Result()
+	if err != nil {
+		t.Fatalf("HGETALL round:%s:pools: %v", roundID, err)
+	}
+	wantPools := map[string]string{"0": "0", "1": "0", "2": "0", "total": "0"}
+	if len(poolFields) != len(wantPools) {
+		t.Errorf("pools has %d fields, want %d: %v", len(poolFields), len(wantPools), poolFields)
+	}
+	for k, v := range wantPools {
+		if poolFields[k] != v {
+			t.Errorf("pools[%q] = %q, want %q", k, poolFields[k], v)
+		}
+	}
+
+	round, err := store.Round(ctx, roundID)
+	if err != nil {
+		t.Fatalf("Round() = %v, want nil", err)
+	}
+	if round.Status != domain.RoundOpen {
+		t.Errorf("Round().Status = %q, want %q", round.Status, domain.RoundOpen)
+	}
+	if round.OutcomeCount != 3 {
+		t.Errorf("Round().OutcomeCount = %d, want 3", round.OutcomeCount)
+	}
+	if round.ResolvedOutcome != -1 {
+		t.Errorf("Round().ResolvedOutcome = %d, want -1", round.ResolvedOutcome)
+	}
+
+	pools, total, err := store.Pools(ctx, roundID)
+	if err != nil {
+		t.Fatalf("Pools() = %v, want nil", err)
+	}
+	wantSlice := []domain.Tokens{0, 0, 0}
+	if len(pools) != len(wantSlice) {
+		t.Fatalf("Pools() = %v, want %v", pools, wantSlice)
+	}
+	for i := range wantSlice {
+		if pools[i] != wantSlice[i] {
+			t.Errorf("Pools()[%d] = %d, want %d", i, pools[i], wantSlice[i])
+		}
+	}
+	if total != 0 {
+		t.Errorf("Pools() total = %d, want 0", total)
+	}
+
+	for _, n := range []int{1, 5} {
+		badRoundID := testID(t, "round")
+		err := store.CreateRound(ctx, badRoundID, roomID, n, lockAt)
+		if !errors.Is(err, domain.ErrInvalidOutcomeCount) {
+			t.Errorf("CreateRound() with outcomeCount %d error = %v, want ErrInvalidOutcomeCount", n, err)
+		}
+		exists, err := store.client.Exists(ctx, RoundKey(badRoundID)).Result()
+		if err != nil {
+			t.Fatalf("EXISTS round:%s: %v", badRoundID, err)
+		}
+		if exists != 0 {
+			t.Errorf("EXISTS round:%s = %d, want 0 — invalid outcome count must write nothing", badRoundID, exists)
+		}
+	}
+
+	if _, err := store.Round(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Round(\"missing\") error = %v, want ErrNotFound", err)
+	}
+}
