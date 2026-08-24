@@ -39,3 +39,11 @@ func (s RoundStatus) Transition(next RoundStatus) (RoundStatus, error) {
 func (s RoundStatus) IsTerminal() bool {
 	return len(validTransitions[s]) == 0
 }
+
+// AcceptsWagers reports whether a round in this status may take new
+// wagers. Only an open round does. This is the status half of the rule
+// only — lockout is additionally enforced against the Redis clock inside
+// place_wager.lua (plan §5), never against a Go timestamp.
+func (s RoundStatus) AcceptsWagers() bool {
+	return s == RoundOpen
+}

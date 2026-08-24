@@ -120,3 +120,25 @@ func TestRoundStatusIsTerminal(t *testing.T) {
 		})
 	}
 }
+
+func TestRoundStatusAcceptsWagers(t *testing.T) {
+	tests := []struct {
+		name   string
+		status RoundStatus
+		want   bool
+	}{
+		{name: "open accepts wagers", status: RoundOpen, want: true},
+		{name: "locked rejects wagers", status: RoundLocked, want: false},
+		{name: "resolved rejects wagers", status: RoundResolved, want: false},
+		{name: "refunded rejects wagers", status: RoundRefunded, want: false},
+		{name: "an unrecognized status rejects wagers", status: RoundStatus("garbage"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.status.AcceptsWagers(); got != tt.want {
+				t.Errorf("RoundStatus(%q).AcceptsWagers() = %v, want %v", tt.status, got, tt.want)
+			}
+		})
+	}
+}
