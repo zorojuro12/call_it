@@ -11,4 +11,5 @@ var (
 	ErrInvalidTransition   = errors.New("domain: invalid round status transition")
 	ErrInvalidOutcomeCount = errors.New("domain: round outcome count out of range")
 	ErrInvalidOutcome      = errors.New("domain: outcome index out of range")
+	ErrInvalidBuyIn        = errors.New("domain: room buy-in out of range")
 )
