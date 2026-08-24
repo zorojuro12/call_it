@@ -63,6 +63,11 @@ if hostID == userID then
   return {'HOST_CANNOT_BET'}
 end
 
+local existingBalance = redis.call('HGET', walletsKey, userID)
+if not existingBalance then
+  return {'NOT_IN_ROOM'}
+end
+
 local newBalance = redis.call('HINCRBY', walletsKey, userID, -amount)
 redis.call('HINCRBY', poolsKey, outcome, amount)
 local total = redis.call('HINCRBY', poolsKey, 'total', amount)

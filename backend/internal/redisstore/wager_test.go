@@ -407,3 +407,29 @@ func TestPlaceWager_RejectsHost(t *testing.T) {
 		t.Fatalf("PlaceWager() as non-host = %v, want nil", err)
 	}
 }
+
+func TestPlaceWager_RejectsNonMember(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	lockAt := time.Now().Add(30 * time.Second)
+	roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{"u1": 500})
+
+	before := snapshotWager(t, store, roomID, roundID, "stranger")
+
+	_, err := store.PlaceWager(ctx, WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "stranger",
+		Outcome: 1, Amount: 200, IdempotencyKey: testID(t, "idem"),
+	})
+	if !errors.Is(err, ErrNotInRoom) {
+		t.Fatalf("PlaceWager() as stranger error = %v, want ErrNotInRoom", err)
+	}
+	assertNoMutation(t, store, roomID, roundID, "stranger", before)
+
+	exists, err := store.client.HExists(ctx, RoomWalletsKey(roomID), "stranger").Result()
+	if err != nil {
+		t.Fatalf("HEXISTS wallets stranger: %v", err)
+	}
+	if exists {
+		t.Errorf("HEXISTS wallets stranger = true, want false — a rejected wager must not mint a wallet")
+	}
+}

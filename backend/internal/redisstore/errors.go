@@ -23,6 +23,10 @@ var ErrPoolLocked = errors.New("redisstore: round is locked")
 // rule removes (spec §4).
 var ErrHostCannotBet = errors.New("redisstore: host cannot wager in their own room")
 
+// ErrNotInRoom is returned when a user with no wallet field in the room
+// attempts to place a wager.
+var ErrNotInRoom = errors.New("redisstore: user has no wallet in this room")
+
 // mapWagerStatus maps place_wager.lua's non-OK status codes to Go
 // errors. Task 4 adds a case per guard as each one is implemented; an
 // unrecognized code for now returns a wrapped generic error naming it,
@@ -36,6 +40,8 @@ func mapWagerStatus(reply []string) error {
 		return domain.ErrInvalidOutcome
 	case "HOST_CANNOT_BET":
 		return ErrHostCannotBet
+	case "NOT_IN_ROOM":
+		return ErrNotInRoom
 	default:
 		return fmt.Errorf("redisstore: place wager: unrecognized status %q", code)
 	}
