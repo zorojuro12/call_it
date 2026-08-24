@@ -6,8 +6,12 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/zorojuro12/call_it/backend/internal/domain"
+	lua "github.com/zorojuro12/call_it/backend/scripts/lua"
 )
+
+var settleRoundScript = redis.NewScript(lua.SettleRound)
 
 // ReadStakes reads a round's wagers hash into domain.Stake, sorted by
 // (UserID, Outcome).
@@ -46,4 +50,62 @@ func (s *Store) ReadStakes(ctx context.Context, roundID string) ([]domain.Stake,
 	})
 
 	return stakes, nil
+}
+
+// SettleRound settles a locked round: Go computes the payout via
+// domain.Settle (Amendment A1 — settlement math is not duplicated in
+// Lua), then settle_round.lua applies it atomically — CAS to a terminal
+// status, credit every payout, emit one outbox event.
+func (s *Store) SettleRound(ctx context.Context, roundID string, winningOutcome int, idempotencyKey string) (domain.Settlement, error) {
+	round, err := s.Round(ctx, roundID)
+	if err != nil {
+		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: %w", roundID, err)
+	}
+
+	stakes, err := s.ReadStakes(ctx, roundID)
+	if err != nil {
+		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: %w", roundID, err)
+	}
+
+	settlement, err := domain.Settle(stakes, winningOutcome, round.OutcomeCount)
+	if err != nil {
+		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: %w", roundID, err)
+	}
+
+	terminalStatus := "resolved"
+	resolvedOutcomeArg := strconv.Itoa(winningOutcome)
+	if settlement.Refunded {
+		terminalStatus = "refunded"
+		resolvedOutcomeArg = ""
+	}
+
+	keys := []string{RoundKey(roundID), RoomWalletsKey(round.RoomID), s.outboxStream}
+	argv := []interface{}{
+		terminalStatus,
+		resolvedOutcomeArg,
+		strconv.FormatInt(int64(settlement.Dust), 10),
+		idempotencyKey,
+		roundID,
+	}
+	for _, p := range settlement.Payouts {
+		argv = append(argv, p.UserID, strconv.FormatInt(int64(p.Amount), 10))
+	}
+
+	res, err := settleRoundScript.Run(ctx, s.client, keys, argv...).Result()
+	if err != nil {
+		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: %w", roundID, err)
+	}
+
+	reply, err := toStringSlice(res)
+	if err != nil {
+		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: %w", roundID, err)
+	}
+	if len(reply) == 0 {
+		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: empty reply", roundID)
+	}
+	if reply[0] != "OK" {
+		return domain.Settlement{}, mapSettleStatus(reply)
+	}
+
+	return settlement, nil
 }

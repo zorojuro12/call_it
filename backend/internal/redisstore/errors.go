@@ -32,6 +32,17 @@ var ErrNotInRoom = errors.New("redisstore: user has no wallet in this room")
 // resolved or refunded.
 var ErrRoundTerminal = errors.New("redisstore: round is already terminal")
 
+// mapSettleStatus maps settle_round.lua's and refund_round.lua's non-OK
+// status codes to Go errors. Later checkpoints add a case per guard as
+// each is implemented.
+func mapSettleStatus(reply []string) error {
+	code := reply[0]
+	switch code {
+	default:
+		return fmt.Errorf("redisstore: settle round: unrecognized status %q", code)
+	}
+}
+
 // mapWagerStatus maps place_wager.lua's non-OK status codes to Go
 // errors. Task 4 adds a case per guard as each one is implemented; an
 // unrecognized code for now returns a wrapped generic error naming it,
