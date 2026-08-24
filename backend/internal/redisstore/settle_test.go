@@ -315,6 +315,69 @@ func TestSettleRound_RequiresLock(t *testing.T) {
 	}
 }
 
+func TestSettleRound_NobodyBackedWinner(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	roomID, roundID := setupSettleRound(t, store, "host1", 500, 3,
+		map[string]domain.Tokens{"u1": 500, "u2": 500},
+		[]domain.Stake{
+			{UserID: "u1", Outcome: 0, Amount: 100},
+			{UserID: "u2", Outcome: 1, Amount: 300},
+		})
+
+	settlement, err := store.SettleRound(ctx, roundID, 2, testID(t, "idem"))
+	if err != nil {
+		t.Fatalf("SettleRound() = %v, want nil", err)
+	}
+
+	if !settlement.Refunded {
+		t.Errorf("Refunded = false, want true")
+	}
+	if settlement.Dust != 0 {
+		t.Errorf("Dust = %d, want 0", settlement.Dust)
+	}
+	for _, r := range settlement.Results {
+		if r.Net != 0 {
+			t.Errorf("Results[%s].Net = %d, want 0", r.UserID, r.Net)
+		}
+	}
+
+	for userID, want := range map[string]string{"u1": "500", "u2": "500"} {
+		got, err := store.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
+		if err != nil {
+			t.Fatalf("HGET wallets %s: %v", userID, err)
+		}
+		if got != want {
+			t.Errorf("HGET wallets %s = %q, want %q", userID, got, want)
+		}
+	}
+
+	status, err := store.client.HGet(ctx, RoundKey(roundID), "status").Result()
+	if err != nil {
+		t.Fatalf("HGET round status: %v", err)
+	}
+	if status != "refunded" {
+		t.Errorf("status = %q, want %q", status, "refunded")
+	}
+
+	exists, err := store.client.HExists(ctx, RoundKey(roundID), "resolved_outcome").Result()
+	if err != nil {
+		t.Fatalf("HEXISTS resolved_outcome: %v", err)
+	}
+	if exists {
+		t.Errorf("HEXISTS resolved_outcome = true, want false — a refunded round never records a winning outcome")
+	}
+
+	sumWallets, err := sumHashValues(ctx, store, RoomWalletsKey(roomID))
+	if err != nil {
+		t.Fatalf("sum wallets: %v", err)
+	}
+	if sumWallets != 1000 {
+		t.Errorf("Σ wallets = %d, want 1000", sumWallets)
+	}
+}
+
 func sumHashValues(ctx context.Context, store *Store, key string) (int64, error) {
 	fields, err := store.client.HGetAll(ctx, key).Result()
 	if err != nil {
