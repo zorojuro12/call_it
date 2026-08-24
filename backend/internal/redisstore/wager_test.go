@@ -2,12 +2,57 @@ package redisstore
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 )
+
+// wagerSnapshot captures the mutable state a rejected wager must never
+// touch: the wagerer's balance, the pools hash, and the outbox length.
+type wagerSnapshot struct {
+	balance string
+	pools   map[string]string
+	xlen    int64
+}
+
+func snapshotWager(t *testing.T, store *Store, roomID, roundID, userID string) wagerSnapshot {
+	t.Helper()
+	ctx := context.Background()
+
+	balance, err := store.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		t.Fatalf("snapshot HGET wallets %s: %v", userID, err)
+	}
+	pools, err := store.client.HGetAll(ctx, RoundPoolsKey(roundID)).Result()
+	if err != nil {
+		t.Fatalf("snapshot HGETALL pools: %v", err)
+	}
+	xlen, err := store.client.XLen(ctx, store.outboxStream).Result()
+	if err != nil {
+		t.Fatalf("snapshot XLEN outbox: %v", err)
+	}
+
+	return wagerSnapshot{balance: balance, pools: pools, xlen: xlen}
+}
+
+func assertNoMutation(t *testing.T, store *Store, roomID, roundID, userID string, before wagerSnapshot) {
+	t.Helper()
+	after := snapshotWager(t, store, roomID, roundID, userID)
+
+	if after.balance != before.balance {
+		t.Errorf("wallet mutated: before %q, after %q", before.balance, after.balance)
+	}
+	if !reflect.DeepEqual(after.pools, before.pools) {
+		t.Errorf("pools mutated: before %v, after %v", before.pools, after.pools)
+	}
+	if after.xlen != before.xlen {
+		t.Errorf("outbox mutated: before XLEN %d, after %d", before.xlen, after.xlen)
+	}
+}
 
 // setupWagerRoom creates a room, a round, and joins the given players
 // (userID -> balance), returning the room and round IDs.
@@ -240,4 +285,27 @@ func TestPlaceWager_IdempotentReplay(t *testing.T) {
 	if ttl <= 0 || ttl > 86400*time.Second {
 		t.Errorf("TTL idem:%s = %v, want (0, 86400s]", key, ttl)
 	}
+}
+
+func TestPlaceWager_RejectsLockedStatus(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	lockAt := time.Now().Add(30 * time.Second)
+	roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{"u1": 500})
+
+	if err := store.client.HSet(ctx, RoundKey(roundID), "status", "locked").Err(); err != nil {
+		t.Fatalf("HSET round status locked: %v", err)
+	}
+
+	before := snapshotWager(t, store, roomID, roundID, "u1")
+
+	_, err := store.PlaceWager(ctx, WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 1, Amount: 200, IdempotencyKey: testID(t, "idem"),
+	})
+	if !errors.Is(err, ErrPoolLocked) {
+		t.Fatalf("PlaceWager() on locked round error = %v, want ErrPoolLocked", err)
+	}
+
+	assertNoMutation(t, store, roomID, roundID, "u1", before)
 }

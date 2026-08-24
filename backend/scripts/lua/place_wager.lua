@@ -37,6 +37,11 @@ if cached then
   return cjson.decode(cached)
 end
 
+local status = redis.call('HGET', roundKey, 'status')
+if status ~= 'open' then
+  return {'POOL_LOCKED'}
+end
+
 local outcomeCount = tonumber(redis.call('HGET', roundKey, 'outcome_count'))
 
 local newBalance = redis.call('HINCRBY', walletsKey, userID, -amount)
