@@ -20,6 +20,7 @@ local roundKey = KEYS[3]
 local poolsKey = KEYS[4]
 local wagersKey = KEYS[5]
 local bettorsKey = KEYS[6]
+local idemKey = KEYS[7]
 local outboxKey = KEYS[8]
 
 local userID = ARGV[1]
@@ -28,6 +29,13 @@ local amount = tonumber(ARGV[3])
 local idempotencyKey = ARGV[4]
 local roomID = ARGV[5]
 local roundID = ARGV[6]
+
+-- Idempotency check first, before any mutation: a replayed key returns
+-- the cached reply verbatim.
+local cached = redis.call('GET', idemKey)
+if cached then
+  return cjson.decode(cached)
+end
 
 local outcomeCount = tonumber(redis.call('HGET', roundKey, 'outcome_count'))
 
@@ -55,5 +63,7 @@ local reply = {'OK', tostring(newBalance), tostring(bettorCount), tostring(total
 for i = 0, outcomeCount - 1 do
   table.insert(reply, redis.call('HGET', poolsKey, tostring(i)))
 end
+
+redis.call('SET', idemKey, cjson.encode(reply), 'EX', 86400)
 
 return reply

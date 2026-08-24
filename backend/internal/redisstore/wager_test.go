@@ -2,6 +2,7 @@ package redisstore
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -172,5 +173,71 @@ func TestPlaceWager_Accept(t *testing.T) {
 	}
 	if result3.Total != 350 {
 		t.Errorf("third Total = %d, want 350", result3.Total)
+	}
+}
+
+func TestPlaceWager_IdempotentReplay(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	lockAt := time.Now().Add(30 * time.Second)
+	roomID, roundID := setupWagerRoom(t, store, "host1", 500, 3, lockAt, map[string]domain.Tokens{"u1": 500})
+
+	key := testID(t, "idem")
+	req := WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 1, Amount: 200, IdempotencyKey: key,
+	}
+
+	first, err := store.PlaceWager(ctx, req)
+	if err != nil {
+		t.Fatalf("PlaceWager() first = %v, want nil", err)
+	}
+
+	second, err := store.PlaceWager(ctx, req)
+	if err != nil {
+		t.Fatalf("PlaceWager() second (replay) = %v, want nil", err)
+	}
+	if !reflect.DeepEqual(second, first) {
+		t.Errorf("replayed WagerResult = %+v, want deep-equal to first %+v", second, first)
+	}
+
+	balField, err := store.client.HGet(ctx, RoomWalletsKey(roomID), "u1").Result()
+	if err != nil {
+		t.Fatalf("HGET wallets u1: %v", err)
+	}
+	if balField != "300" {
+		t.Errorf("HGET wallets u1 = %q, want %q — debited once", balField, "300")
+	}
+
+	poolField, err := store.client.HGet(ctx, RoundPoolsKey(roundID), "1").Result()
+	if err != nil {
+		t.Fatalf("HGET pools 1: %v", err)
+	}
+	if poolField != "200" {
+		t.Errorf("HGET pools 1 = %q, want %q", poolField, "200")
+	}
+
+	bettorCount, err := store.client.SCard(ctx, RoundBettorsKey(roundID)).Result()
+	if err != nil {
+		t.Fatalf("SCARD bettors: %v", err)
+	}
+	if bettorCount != 1 {
+		t.Errorf("SCARD bettors = %d, want 1", bettorCount)
+	}
+
+	xlen, err := store.client.XLen(ctx, store.outboxStream).Result()
+	if err != nil {
+		t.Fatalf("XLEN outbox: %v", err)
+	}
+	if xlen != 1 {
+		t.Errorf("XLEN outbox = %d, want 1 — no duplicate outbox event", xlen)
+	}
+
+	ttl, err := store.client.TTL(ctx, IdemKey(key)).Result()
+	if err != nil {
+		t.Fatalf("TTL idem:%s: %v", key, err)
+	}
+	if ttl <= 0 || ttl > 86400*time.Second {
+		t.Errorf("TTL idem:%s = %v, want (0, 86400s]", key, ttl)
 	}
 }
