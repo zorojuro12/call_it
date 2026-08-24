@@ -8,5 +8,7 @@ import "errors"
 // codes (POOL_LOCKED, HOST_CANNOT_BET, NOT_IN_ROOM) gain Go counterparts
 // in Phase 2, when something here returns them.
 var (
-	ErrInvalidTransition = errors.New("domain: invalid round status transition")
+	ErrInvalidTransition   = errors.New("domain: invalid round status transition")
+	ErrInvalidOutcomeCount = errors.New("domain: round outcome count out of range")
+	ErrInvalidOutcome      = errors.New("domain: outcome index out of range")
 )

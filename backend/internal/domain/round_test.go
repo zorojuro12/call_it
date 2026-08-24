@@ -142,3 +142,66 @@ func TestRoundStatusAcceptsWagers(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateOutcomeCount(t *testing.T) {
+	tests := []struct {
+		name    string
+		count   int
+		wantErr bool
+	}{
+		{name: "two outcomes is the binary minimum", count: 2},
+		{name: "three outcomes is allowed", count: 3},
+		{name: "four outcomes is the maximum", count: 4},
+		{name: "one outcome is not a prediction", count: 1, wantErr: true},
+		{name: "zero outcomes is rejected", count: 0, wantErr: true},
+		{name: "negative outcomes is rejected", count: -1, wantErr: true},
+		{name: "five outcomes exceeds the maximum", count: 5, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateOutcomeCount(tt.count)
+
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidOutcomeCount) {
+					t.Fatalf("ValidateOutcomeCount(%d) = %v, want ErrInvalidOutcomeCount", tt.count, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("ValidateOutcomeCount(%d): unexpected error: %v", tt.count, err)
+			}
+		})
+	}
+}
+
+func TestValidateOutcomeIndex(t *testing.T) {
+	tests := []struct {
+		name    string
+		idx     int
+		count   int
+		wantErr bool
+	}{
+		{name: "first outcome of two", idx: 0, count: 2},
+		{name: "last outcome of four", idx: 3, count: 4},
+		{name: "index equal to count is out of range", idx: 2, count: 2, wantErr: true},
+		{name: "index beyond count is out of range", idx: 9, count: 4, wantErr: true},
+		{name: "negative index is out of range", idx: -1, count: 4, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateOutcomeIndex(tt.idx, tt.count)
+
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidOutcome) {
+					t.Fatalf("ValidateOutcomeIndex(%d, %d) = %v, want ErrInvalidOutcome", tt.idx, tt.count, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("ValidateOutcomeIndex(%d, %d): unexpected error: %v", tt.idx, tt.count, err)
+			}
+		})
+	}
+}
