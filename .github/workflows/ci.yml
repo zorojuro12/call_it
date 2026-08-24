@@ -12,14 +12,22 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
-          # No go.sum yet (zero external dependencies) — caching turns on
-          # automatically once one exists.
 
       - name: Vet
         run: go vet ./...
@@ -38,3 +46,5 @@ jobs:
 
       - name: Test
         run: go test ./... -race -cover
+        env:
+          REDIS_ADDR: localhost:6379
