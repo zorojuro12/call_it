@@ -20,6 +20,9 @@ local status = redis.call('HGET', roundKey, 'status')
 if status == 'resolved' or status == 'refunded' then
   return {'ALREADY_RESOLVED', status}
 end
+if status ~= 'locked' then
+  return {'NOT_LOCKED', status}
+end
 
 local wagers = redis.call('HGETALL', wagersKey)
 local total = 0
