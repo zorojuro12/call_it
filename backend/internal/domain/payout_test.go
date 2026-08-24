@@ -323,3 +323,100 @@ func TestSettle_EmptyRound(t *testing.T) {
 		t.Errorf("Settle dust = %d, want 0", got.Dust)
 	}
 }
+
+func TestSettle_EmptyWinningPoolRefundsEveryone(t *testing.T) {
+	// Outcome 2 wins; nobody backed it.
+	stakes := []Stake{
+		{UserID: "alice", Outcome: 0, Amount: 100},
+		{UserID: "bob", Outcome: 1, Amount: 300},
+		{UserID: "carol", Outcome: 1, Amount: 600},
+	}
+
+	got, err := Settle(stakes, 2, 3)
+
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+	if !got.Refunded {
+		t.Error("Settle marked the round resolved, want refunded")
+	}
+	want := []Payout{
+		{UserID: "alice", Amount: 100},
+		{UserID: "bob", Amount: 300},
+		{UserID: "carol", Amount: 600},
+	}
+	if !reflect.DeepEqual(got.Payouts, want) {
+		t.Errorf("Settle payouts = %+v, want every stake returned in full: %+v", got.Payouts, want)
+	}
+	if got.Dust != 0 {
+		t.Errorf("Settle dust = %d, want 0 — refunds are exact and strand nothing", got.Dust)
+	}
+}
+
+func TestSettle_RefundedPlayersBreakEven(t *testing.T) {
+	stakes := []Stake{
+		{UserID: "alice", Outcome: 0, Amount: 100},
+		{UserID: "bob", Outcome: 1, Amount: 300},
+	}
+
+	got, err := Settle(stakes, 2, 3)
+
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+	want := []PlayerResult{
+		{UserID: "alice", Staked: 100, Returned: 100, Net: 0},
+		{UserID: "bob", Staked: 300, Returned: 300, Net: 0},
+	}
+	if !reflect.DeepEqual(got.Results, want) {
+		t.Errorf("Settle results = %+v, want everyone at zero net: %+v", got.Results, want)
+	}
+}
+
+func TestSettle_ResolvedRoundIsNotMarkedRefunded(t *testing.T) {
+	stakes := []Stake{
+		{UserID: "alice", Outcome: 0, Amount: 100},
+		{UserID: "bob", Outcome: 1, Amount: 300},
+	}
+
+	got, err := Settle(stakes, 0, 2)
+
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+	if got.Refunded {
+		t.Error("Settle marked a round with a backed winner as refunded")
+	}
+}
+
+func TestSettle_RefundCoversEveryStakeOfAHedgingPlayer(t *testing.T) {
+	// alice backed two of the three losing outcomes; outcome 2 wins and
+	// nobody backed it. Both her stakes must come back. This guards
+	// against "optimising" the refund loop into one entry per player.
+	stakes := []Stake{
+		{UserID: "alice", Outcome: 0, Amount: 100},
+		{UserID: "alice", Outcome: 1, Amount: 250},
+		{UserID: "bob", Outcome: 1, Amount: 400},
+	}
+
+	got, err := Settle(stakes, 2, 3)
+
+	if err != nil {
+		t.Fatalf("Settle: unexpected error: %v", err)
+	}
+	wantPayouts := []Payout{
+		{UserID: "alice", Amount: 100},
+		{UserID: "alice", Amount: 250},
+		{UserID: "bob", Amount: 400},
+	}
+	if !reflect.DeepEqual(got.Payouts, wantPayouts) {
+		t.Errorf("Settle payouts = %+v, want %+v", got.Payouts, wantPayouts)
+	}
+	wantResults := []PlayerResult{
+		{UserID: "alice", Staked: 350, Returned: 350, Net: 0},
+		{UserID: "bob", Staked: 400, Returned: 400, Net: 0},
+	}
+	if !reflect.DeepEqual(got.Results, wantResults) {
+		t.Errorf("Settle results = %+v, want %+v", got.Results, wantResults)
+	}
+}

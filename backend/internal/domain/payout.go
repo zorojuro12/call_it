@@ -61,7 +61,9 @@ type Settlement struct {
 
 // Settle computes the pari-mutuel result of a round. Each backer of the
 // winning outcome receives floor(stake * total / winningPool); whatever
-// flooring leaves over becomes Dust.
+// flooring leaves over becomes Dust. If nobody backed the winning
+// outcome there is nothing to redistribute, so every stake is refunded
+// in full and Refunded is set (plan §5).
 //
 // outcomeCount is the round's declared number of outcomes, used to
 // reject a winning index the round never had.
@@ -86,7 +88,17 @@ func Settle(stakes []Stake, winningOutcome, outcomeCount int) (Settlement, error
 
 	payouts := make([]Payout, 0, len(stakes))
 	var paid Tokens
-	if winningPool > 0 {
+	refunded := winningPool == 0
+
+	if refunded {
+		// Nobody backed the winner, so there is nothing to redistribute.
+		// Every stake goes back to whoever placed it, exactly — which is
+		// why a refunded round strands no dust (plan §5).
+		for _, s := range stakes {
+			payouts = append(payouts, Payout{UserID: s.UserID, Amount: s.Amount})
+			paid += s.Amount
+		}
+	} else {
 		for _, s := range stakes {
 			if s.Outcome != winningOutcome {
 				continue
@@ -101,9 +113,10 @@ func Settle(stakes []Stake, winningOutcome, outcomeCount int) (Settlement, error
 	}
 
 	return Settlement{
-		Payouts: payouts,
-		Results: playerResults(stakes, payouts),
-		Dust:    total - paid,
+		Payouts:  payouts,
+		Results:  playerResults(stakes, payouts),
+		Dust:     total - paid,
+		Refunded: refunded,
 	}, nil
 }
 
