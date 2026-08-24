@@ -81,6 +81,44 @@ func TestCreateRoom(t *testing.T) {
 	}
 }
 
+func TestRoom_MalformedFields(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	t.Run("malformed buy_in", func(t *testing.T) {
+		roomID := testID(t, "room")
+		if err := store.client.HSet(ctx, RoomKey(roomID), "host_id", "host1", "buy_in", "not-a-number", "status", "open", "created_at", "1000").Err(); err != nil {
+			t.Fatalf("HSET: %v", err)
+		}
+		if _, err := store.Room(ctx, roomID); err == nil {
+			t.Errorf("Room() with malformed buy_in = nil error, want an error")
+		}
+	})
+
+	t.Run("malformed created_at", func(t *testing.T) {
+		roomID := testID(t, "room")
+		if err := store.client.HSet(ctx, RoomKey(roomID), "host_id", "host1", "buy_in", "500", "status", "open", "created_at", "not-a-number").Err(); err != nil {
+			t.Fatalf("HSET: %v", err)
+		}
+		if _, err := store.Room(ctx, roomID); err == nil {
+			t.Errorf("Room() with malformed created_at = nil error, want an error")
+		}
+	})
+}
+
+func TestBalance_Malformed(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+
+	if err := store.client.HSet(ctx, RoomWalletsKey(roomID), "u1", "not-a-number").Err(); err != nil {
+		t.Fatalf("HSET: %v", err)
+	}
+	if _, err := store.Balance(ctx, roomID, "u1"); err == nil {
+		t.Errorf("Balance() with malformed value = nil error, want an error")
+	}
+}
+
 func TestJoinRoom(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

@@ -103,6 +103,72 @@ func TestCreateRound(t *testing.T) {
 	}
 }
 
+func TestRound_MalformedFields(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	t.Run("malformed outcome_count", func(t *testing.T) {
+		roundID := testID(t, "round")
+		if err := store.client.HSet(ctx, RoundKey(roundID), "room_id", "r1", "status", "open", "outcome_count", "not-a-number", "lock_at_ms", "1000").Err(); err != nil {
+			t.Fatalf("HSET: %v", err)
+		}
+		if _, err := store.Round(ctx, roundID); err == nil {
+			t.Errorf("Round() with malformed outcome_count = nil error, want an error")
+		}
+	})
+
+	t.Run("malformed lock_at_ms", func(t *testing.T) {
+		roundID := testID(t, "round")
+		if err := store.client.HSet(ctx, RoundKey(roundID), "room_id", "r1", "status", "open", "outcome_count", "3", "lock_at_ms", "not-a-number").Err(); err != nil {
+			t.Fatalf("HSET: %v", err)
+		}
+		if _, err := store.Round(ctx, roundID); err == nil {
+			t.Errorf("Round() with malformed lock_at_ms = nil error, want an error")
+		}
+	})
+
+	t.Run("malformed resolved_outcome", func(t *testing.T) {
+		roundID := testID(t, "round")
+		if err := store.client.HSet(ctx, RoundKey(roundID), "room_id", "r1", "status", "resolved", "outcome_count", "3", "lock_at_ms", "1000", "resolved_outcome", "not-a-number").Err(); err != nil {
+			t.Fatalf("HSET: %v", err)
+		}
+		if _, err := store.Round(ctx, roundID); err == nil {
+			t.Errorf("Round() with malformed resolved_outcome = nil error, want an error")
+		}
+	})
+}
+
+func TestPools_Malformed(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	t.Run("malformed total", func(t *testing.T) {
+		roundID := testID(t, "round")
+		if err := store.client.HSet(ctx, RoundPoolsKey(roundID), "0", "0", "total", "not-a-number").Err(); err != nil {
+			t.Fatalf("HSET: %v", err)
+		}
+		if _, _, err := store.Pools(ctx, roundID); err == nil {
+			t.Errorf("Pools() with malformed total = nil error, want an error")
+		}
+	})
+
+	t.Run("malformed pool", func(t *testing.T) {
+		roundID := testID(t, "round")
+		if err := store.client.HSet(ctx, RoundPoolsKey(roundID), "0", "not-a-number", "total", "0").Err(); err != nil {
+			t.Fatalf("HSET: %v", err)
+		}
+		if _, _, err := store.Pools(ctx, roundID); err == nil {
+			t.Errorf("Pools() with malformed pool = nil error, want an error")
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		if _, _, err := store.Pools(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Pools() on missing round error = %v, want ErrNotFound", err)
+		}
+	})
+}
+
 func TestLockRound(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
