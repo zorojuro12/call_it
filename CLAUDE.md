@@ -103,7 +103,7 @@ backend/
 ├── cmd/ledger-worker/     # Kafka → PostgreSQL ledger writer (Phase 5)
 ├── internal/config/       # env config, fail-fast validation (exists)
 ├── internal/httpapi/      # REST handlers, mux (exists — /healthz only so far)
-├── internal/domain/       # odds, payout+dust, round FSM, wallet rules (Phase 1)
+├── internal/domain/       # odds, payout+dust, round FSM, wallet rules (exists, 100% coverage)
 ├── internal/auth/         # argon2id + JWT (Phase 3)
 ├── internal/room/         # room lifecycle, short-code generation (Phase 3)
 ├── internal/round/        # round orchestration, server-side timers (Phase 4)
@@ -128,11 +128,22 @@ Full rationale for this layout: plan §3.
 A checkpoint is one behavior/case with its own passing test — a feature
 covering 3 distinct behaviors gets 3 commits, not 1. (Phase 0 landed as a
 single commit; that was the mistake this convention exists to prevent.)
-**This checkpoint mechanism is new and unverified in practice** — adopted
-`ad1027a`, 2026-08-23, no phase has executed under it yet. Phase 1 is the
-first real test of whether checkpoints land where expected; adjust
-`.claude/skills/writing-plans/SKILL.md` if they don't. See
-`journal/2026-08-23_1544_ansh_workflow-tooling-and-git-granularity.md`.
+**Validated in Phase 1** — 22 checkpoint commits, one per behavior, on
+`phase-1-domain-core`. That run also surfaced a real defect (checkpoints
+whose test passed the moment it was written, because an earlier checkpoint's
+implementation already satisfied it) — `writing-plans` now requires a
+checkpoint to be a genuine RED→GREEN cycle, not just a labeled commit.
+
+`writing-plans` also moved from pre-writing full code per checkpoint to
+specifying exact input→output/error contracts (`ab190b9`) — adopted *after*
+Phase 1's plan was written, so Phase 1 ran under the old code-heavy format
+(one contributor to that plan hitting 3000+ lines). **Phase 2 is the first
+plan written under the new spec-driven format** — worth checking whether it
+actually lands shorter without losing precision.
+
+See `docs/dev-workflow-guide.md` §2a for the current Opus-plans/Sonnet-executes
+split across separate windows, and `journal/2026-08-23_1544_ansh_workflow-tooling-and-git-granularity.md`
+for the original decision.
 
 **Self-merge into `dev` once the phase's tests pass. No PR.** Solo project;
 PR ceremony doesn't add value with one developer. Revisit immediately if a
