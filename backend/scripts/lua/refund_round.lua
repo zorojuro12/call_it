@@ -16,6 +16,11 @@ local outboxKey = KEYS[4]
 local idempotencyKey = ARGV[1]
 local roundID = ARGV[2]
 
+local status = redis.call('HGET', roundKey, 'status')
+if status == 'resolved' or status == 'refunded' then
+  return {'ALREADY_RESOLVED', status}
+end
+
 local wagers = redis.call('HGETALL', wagersKey)
 local total = 0
 for i = 1, #wagers, 2 do

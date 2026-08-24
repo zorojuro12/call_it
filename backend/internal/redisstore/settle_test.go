@@ -453,6 +453,74 @@ func TestRefundRound(t *testing.T) {
 	}
 }
 
+func TestRefundRound_Idempotent(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	t.Run("refunding twice credits once", func(t *testing.T) {
+		roomID, roundID := setupSettleRound(t, store, "host1", 500, 3,
+			map[string]domain.Tokens{"u1": 500, "u2": 500},
+			[]domain.Stake{
+				{UserID: "u1", Outcome: 0, Amount: 100},
+				{UserID: "u2", Outcome: 1, Amount: 300},
+			})
+
+		if _, err := store.RefundRound(ctx, roundID, testID(t, "idem")); err != nil {
+			t.Fatalf("RefundRound() first = %v, want nil", err)
+		}
+
+		before := map[string]string{}
+		for _, userID := range []string{"u1", "u2"} {
+			v, err := store.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
+			if err != nil {
+				t.Fatalf("HGET wallets %s: %v", userID, err)
+			}
+			before[userID] = v
+		}
+		xlenBefore, err := store.client.XLen(ctx, store.outboxStream).Result()
+		if err != nil {
+			t.Fatalf("XLEN outbox before: %v", err)
+		}
+
+		_, err = store.RefundRound(ctx, roundID, testID(t, "idem"))
+		if !errors.Is(err, ErrAlreadySettled) {
+			t.Fatalf("RefundRound() second error = %v, want ErrAlreadySettled", err)
+		}
+
+		for _, userID := range []string{"u1", "u2"} {
+			v, err := store.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
+			if err != nil {
+				t.Fatalf("HGET wallets %s: %v", userID, err)
+			}
+			if v != before[userID] {
+				t.Errorf("wallet %s = %q after second refund, want unchanged %q", userID, v, before[userID])
+			}
+		}
+		xlenAfter, err := store.client.XLen(ctx, store.outboxStream).Result()
+		if err != nil {
+			t.Fatalf("XLEN outbox after: %v", err)
+		}
+		if xlenAfter != xlenBefore {
+			t.Errorf("XLEN outbox = %d after second refund, want unchanged %d", xlenAfter, xlenBefore)
+		}
+	})
+
+	t.Run("a resolved round rejects a refund", func(t *testing.T) {
+		_, roundID := setupSettleRound(t, store, "host1", 500, 3,
+			map[string]domain.Tokens{"u1": 500},
+			[]domain.Stake{{UserID: "u1", Outcome: 0, Amount: 100}})
+
+		if _, err := store.SettleRound(ctx, roundID, 0, testID(t, "idem")); err != nil {
+			t.Fatalf("SettleRound() = %v, want nil", err)
+		}
+
+		_, err := store.RefundRound(ctx, roundID, testID(t, "idem"))
+		if !errors.Is(err, ErrAlreadySettled) {
+			t.Fatalf("RefundRound() on resolved round error = %v, want ErrAlreadySettled", err)
+		}
+	})
+}
+
 func sumHashValues(ctx context.Context, store *Store, key string) (int64, error) {
 	fields, err := store.client.HGetAll(ctx, key).Result()
 	if err != nil {
