@@ -5,6 +5,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"github.com/zorojuro12/call_it/backend/internal/account"
+	"github.com/zorojuro12/call_it/backend/internal/auth"
+	"github.com/zorojuro12/call_it/backend/internal/redisstore"
+	"github.com/zorojuro12/call_it/backend/internal/room"
 )
 
 // HealthHandler reports that the process is up. It deliberately checks
@@ -19,9 +24,19 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Deps are the constructed dependencies every handler needs. cmd/api
+// builds these once at startup and passes them to NewMux.
+type Deps struct {
+	Accounts *account.Service
+	Rooms    *room.Service
+	Store    *redisstore.Store
+	Issuer   *auth.Issuer
+}
+
 // NewMux assembles the process's HTTP routes.
-func NewMux() *http.ServeMux {
+func NewMux(d Deps) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", HealthHandler)
+	registerAuthRoutes(mux, d)
 	return mux
 }

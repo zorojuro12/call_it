@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zorojuro12/call_it/backend/internal/auth"
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
@@ -41,6 +42,61 @@ type Service struct {
 // NewService constructs a Service bound to store and issuer.
 func NewService(store *redisstore.Store, issuer *auth.Issuer) *Service {
 	return &Service{store: store, issuer: issuer}
+}
+
+// Account is the caller-facing projection of a registered user —
+// deliberately narrower than redisstore.User, which also carries the
+// password hash.
+type Account struct {
+	ID          string
+	Email       string
+	DisplayName string
+	Balance     domain.Tokens
+}
+
+// Register creates a funded account and issues an account-scoped token.
+// Validation runs before hashing, so a request that cannot succeed never
+// pays argon2id's cost — that ordering also keeps registration from
+// being a cheap CPU-exhaustion lever.
+func (s *Service) Register(ctx context.Context, email, password, displayName string) (Account, string, error) {
+	normalizedEmail := auth.NormalizeEmail(email)
+	if err := auth.ValidateEmail(normalizedEmail); err != nil {
+		return Account{}, "", err
+	}
+	if err := auth.ValidatePassword(password); err != nil {
+		return Account{}, "", err
+	}
+	normalizedName := auth.NormalizeDisplayName(displayName)
+	if err := auth.ValidateDisplayName(normalizedName); err != nil {
+		return Account{}, "", err
+	}
+
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return Account{}, "", fmt.Errorf("account: register: %w", err)
+	}
+
+	userID := uuid.NewString()
+	u := redisstore.User{
+		ID:           userID,
+		Email:        normalizedEmail,
+		DisplayName:  normalizedName,
+		PasswordHash: hash,
+		Balance:      domain.StartingBalance,
+	}
+	if err := s.store.CreateUser(ctx, u); err != nil {
+		if errors.Is(err, redisstore.ErrAlreadyExists) {
+			return Account{}, "", fmt.Errorf("%w: %s", ErrEmailTaken, normalizedEmail)
+		}
+		return Account{}, "", fmt.Errorf("account: register: %w", err)
+	}
+
+	token, err := s.issuer.Issue(auth.Claims{UserID: userID, DisplayName: normalizedName})
+	if err != nil {
+		return Account{}, "", fmt.Errorf("account: register: %w", err)
+	}
+
+	return Account{ID: userID, Email: normalizedEmail, DisplayName: normalizedName, Balance: domain.StartingBalance}, token, nil
 }
 
 // RefillResult is what a successful ClaimRefill reports back.
