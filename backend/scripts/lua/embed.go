@@ -25,3 +25,6 @@ var ClaimUnique string
 
 //go:embed rate_limit.lua
 var RateLimit string
+
+//go:embed top_up_balance.lua
+var TopUpBalance string

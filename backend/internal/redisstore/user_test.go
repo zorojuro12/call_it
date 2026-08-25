@@ -83,3 +83,47 @@ func TestCreateUser_DuplicateEmail(t *testing.T) {
 		t.Errorf("User(B) err = %v, want ErrNotFound — B's hash must never have been written", err)
 	}
 }
+
+func TestTopUpBalance(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	id1 := testID(t, "user")
+	mustCreateUser(t, store, id1, 300)
+	credited, newBalance, err := store.TopUpBalance(ctx, id1, 1000)
+	if err != nil {
+		t.Fatalf("TopUpBalance(300->1000) = %v, want nil", err)
+	}
+	if credited != 700 || newBalance != 1000 {
+		t.Errorf("TopUpBalance(300->1000) = (%d, %d), want (700, 1000)", credited, newBalance)
+	}
+	got, err := store.User(ctx, id1)
+	if err != nil {
+		t.Fatalf("User() = %v, want nil", err)
+	}
+	if got.Balance != 1000 {
+		t.Errorf("User().Balance = %d, want 1000", got.Balance)
+	}
+
+	id2 := testID(t, "user")
+	mustCreateUser(t, store, id2, 0)
+	credited2, newBalance2, err := store.TopUpBalance(ctx, id2, 1000)
+	if err != nil {
+		t.Fatalf("TopUpBalance(0->1000) = %v, want nil", err)
+	}
+	if credited2 != 1000 || newBalance2 != 1000 {
+		t.Errorf("TopUpBalance(0->1000) = (%d, %d), want (1000, 1000)", credited2, newBalance2)
+	}
+
+	if _, _, err := store.TopUpBalance(ctx, "no-such-user", 1000); !errors.Is(err, ErrNotFound) {
+		t.Errorf("TopUpBalance(no-such-user) err = %v, want ErrNotFound", err)
+	}
+}
+
+func mustCreateUser(t *testing.T, store *Store, userID string, balance domain.Tokens) {
+	t.Helper()
+	u := User{ID: userID, Email: userID + "@example.com", DisplayName: "Test", PasswordHash: "hash", Balance: balance}
+	if err := store.CreateUser(context.Background(), u); err != nil {
+		t.Fatalf("mustCreateUser(%s): %v", userID, err)
+	}
+}

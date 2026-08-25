@@ -12,6 +12,7 @@ import (
 )
 
 var claimUniqueScript = redis.NewScript(lua.ClaimUnique)
+var topUpBalanceScript = redis.NewScript(lua.TopUpBalance)
 
 // User is the account hash's typed projection.
 type User struct {
@@ -101,4 +102,46 @@ func (s *Store) UserByEmail(ctx context.Context, normalizedEmail string) (User, 
 		return User{}, fmt.Errorf("redisstore: get email %s: %w", normalizedEmail, err)
 	}
 	return s.User(ctx, userID)
+}
+
+// TopUpBalance sets an account's persistent balance to target, unless it
+// is already at or above target — a refill is a floor, never a ceiling.
+// Setting to the target rather than incrementing by a Go-computed delta
+// is what makes a concurrent double-claim safe.
+func (s *Store) TopUpBalance(ctx context.Context, userID string, target domain.Tokens) (credited domain.Tokens, newBalance domain.Tokens, err error) {
+	res, err := topUpBalanceScript.Run(ctx, s.client,
+		[]string{UserKey(userID)},
+		strconv.FormatInt(int64(target), 10),
+	).Result()
+	if err != nil {
+		return 0, 0, fmt.Errorf("redisstore: top up balance for %s: %w", userID, err)
+	}
+
+	reply, err := toStringSlice(res)
+	if err != nil {
+		return 0, 0, fmt.Errorf("redisstore: top up balance for %s: %w", userID, err)
+	}
+	if len(reply) == 0 {
+		return 0, 0, fmt.Errorf("redisstore: top up balance for %s: empty reply", userID)
+	}
+
+	switch reply[0] {
+	case "OK":
+		if len(reply) < 3 {
+			return 0, 0, fmt.Errorf("redisstore: top up balance for %s: OK reply has %d elements, want 3", userID, len(reply))
+		}
+		c, err := strconv.ParseInt(reply[1], 10, 64)
+		if err != nil {
+			return 0, 0, fmt.Errorf("redisstore: top up balance for %s: malformed credited %q: %w", userID, reply[1], err)
+		}
+		nb, err := strconv.ParseInt(reply[2], 10, 64)
+		if err != nil {
+			return 0, 0, fmt.Errorf("redisstore: top up balance for %s: malformed new balance %q: %w", userID, reply[2], err)
+		}
+		return domain.Tokens(c), domain.Tokens(nb), nil
+	case "NOT_FOUND":
+		return 0, 0, fmt.Errorf("redisstore: top up balance: user %s: %w", userID, ErrNotFound)
+	default:
+		return 0, 0, fmt.Errorf("redisstore: top up balance for %s: unrecognized status %q", userID, reply[0])
+	}
 }
