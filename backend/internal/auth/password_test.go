@@ -2,9 +2,23 @@ package auth
 
 import (
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 )
+
+// fixtureHash is a package-level fixture: argon2id is deliberately slow,
+// so tests that only need *a* valid hash reuse this rather than calling
+// HashPassword per case.
+var fixtureHash string
+
+func init() {
+	h, err := HashPassword("correct horse battery staple")
+	if err != nil {
+		panic(err)
+	}
+	fixtureHash = h
+}
 
 func TestHashPassword(t *testing.T) {
 	const plain = "correct horse battery staple"
@@ -49,5 +63,27 @@ func TestHashPassword(t *testing.T) {
 	}
 	if got1 == got2 {
 		t.Fatalf("two HashPassword() calls on the same input produced identical strings; salt is not random")
+	}
+}
+
+func TestVerifyPassword(t *testing.T) {
+	if err := VerifyPassword(fixtureHash, "correct horse battery staple"); err != nil {
+		t.Errorf("VerifyPassword() with correct password: unexpected error: %v", err)
+	}
+
+	if err := VerifyPassword(fixtureHash, "Correct horse battery staple"); !errors.Is(err, ErrPasswordMismatch) {
+		t.Errorf("VerifyPassword() with wrong case: err = %v, want ErrPasswordMismatch", err)
+	}
+
+	if err := VerifyPassword(fixtureHash, ""); !errors.Is(err, ErrPasswordMismatch) {
+		t.Errorf("VerifyPassword() with empty password: err = %v, want ErrPasswordMismatch", err)
+	}
+
+	secondHash, err := HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatalf("HashPassword() unexpected error: %v", err)
+	}
+	if err := VerifyPassword(secondHash, "correct horse battery staple"); err != nil {
+		t.Errorf("VerifyPassword() against a second hash of the same password: unexpected error: %v", err)
 	}
 }
