@@ -24,6 +24,29 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 If the spec covers multiple independent subsystems, it should have been broken into sub-project specs during brainstorming. If it wasn't, suggest breaking this into separate plans — one per subsystem. Each plan should produce working, testable software on its own.
 
+**The test is "would someone want to ship this independently," not "is
+this one coherent theme."** Several deliverables can share a theme and
+still belong in separate plans — a phase named "Auth + REST" reads as
+one thing, but credentials, tokens, a rate limiter, and a REST surface
+over two different resources are four things that happen to depend on
+each other in sequence, not one. Bundling by theme rather than by
+independent-shippability is the failure mode this check exists to
+catch, and it's easy to miss precisely because the bundle *does* have a
+throughline.
+
+**A retroactive signal, if the check gets missed:** if this plan's own
+Self-Review ends up naming a point partway through where the work is
+already a coherent, shippable stopping point ("Tasks 1–N are usable on
+their own"), that is evidence the Scope Check should have split the
+plan before it was written — not just a note to record and move past.
+Treat it as feedback for how the *next* plan gets scoped. (Observed in
+`call_it`'s Phase 3, 2026-08-25: the parent implementation plan's phase
+table bundled four separable deliverables into one phase; the detailed
+plan's own self-review named Tasks 1–10 as a stopping point, after the
+plan had already been written at nearly double the length of the
+similarly-scoped previous phase. Full account:
+`docs/plans/2026-08-21-implementation-plan.md` §9, "Phase-sizing note.")
+
 ## File Structure
 
 Before defining tasks, map out which files will be created or modified and what each one is responsible for. This is where decomposition decisions get locked in.
