@@ -8,6 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/redis/go-redis/v9"
+	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 )
 
 func registerAndGetToken(t *testing.T, mux http.Handler, email string) string {
@@ -243,6 +246,160 @@ func TestJoinRoom_Guest(t *testing.T) {
 		rec := joinRaw(strings.ToLower(code), `{"display_name":"Bob"}`)
 		if rec.Code != 404 {
 			t.Errorf("status = %d, want 404 — codes are case-sensitive", rec.Code)
+		}
+	})
+}
+
+type joinAccountResponse struct {
+	Data struct {
+		SessionBalance int64  `json:"session_balance"`
+		PartialBuyIn   bool   `json:"partial_buy_in"`
+		Guest          bool   `json:"guest"`
+		Token          string `json:"token"`
+	} `json:"data"`
+}
+
+func joinWithToken(t *testing.T, mux http.Handler, code, token string) (int, joinAccountResponse) {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/v1/rooms/"+code+"/participants", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	var resp joinAccountResponse
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	return rec.Code, resp
+}
+
+// registerWithBalance registers a fresh account (seeded to
+// domain.StartingBalance=1000 by Register) then, when want differs, sets
+// its balance directly through the store — TopUpBalance only raises a
+// balance toward a target, so it can't lower one below 1000, and this
+// test needs to reach 900 and 200 as well as 10000.
+func registerWithBalance(t *testing.T, deps Deps, mux http.Handler, want int64) (token, userID string) {
+	t.Helper()
+	email := testID(t, "acct") + "@example.com"
+	regBody := `{"email":"` + email + `","password":"correct horse battery","display_name":"AcctHolder"}`
+	rec := registerRaw(mux, regBody)
+	if rec.Code != 201 {
+		t.Fatalf("register: status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Account struct {
+				ID string `json:"id"`
+			} `json:"account"`
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	userID = resp.Data.Account.ID
+
+	if want != 1000 {
+		setUserBalanceForTest(t, userID, want)
+	}
+	return resp.Data.Token, userID
+}
+
+// setUserBalanceForTest and setSessionBalanceForTest write directly
+// through a raw Redis client, bypassing the Store abstraction — there
+// is no production method for this, deliberately, since only a real
+// game session should ever move these balances.
+func setUserBalanceForTest(t *testing.T, userID string, balance int64) {
+	t.Helper()
+	client := redis.NewClient(&redis.Options{Addr: testRedisAddr, DB: testDB})
+	defer client.Close()
+	if err := client.HSet(context.Background(), redisstore.UserKey(userID), "balance", strconv.FormatInt(balance, 10)).Err(); err != nil {
+		t.Fatalf("setUserBalanceForTest(%s, %d): %v", userID, balance, err)
+	}
+}
+
+func setSessionBalanceForTest(t *testing.T, roomID, userID string, balance int64) {
+	t.Helper()
+	client := redis.NewClient(&redis.Options{Addr: testRedisAddr, DB: testDB})
+	defer client.Close()
+	if err := client.HSet(context.Background(), redisstore.RoomWalletsKey(roomID), userID, strconv.FormatInt(balance, 10)).Err(); err != nil {
+		t.Fatalf("setSessionBalanceForTest(%s, %s, %d): %v", roomID, userID, balance, err)
+	}
+}
+
+func TestJoinRoom_Account(t *testing.T) {
+	deps := testDeps(t)
+	mux := NewMux(deps)
+	hostToken := registerAndGetToken(t, mux, testID(t, "host")+"@example.com")
+	roomID, code := createRoomForTest(t, mux, hostToken, 500)
+
+	t.Run("balance 10000", func(t *testing.T) {
+		token, userID := registerWithBalance(t, deps, mux, 10000)
+		status, resp := joinWithToken(t, mux, code, token)
+		if status != 201 {
+			t.Fatalf("status = %d, want 201", status)
+		}
+		if resp.Data.SessionBalance != 1500 {
+			t.Errorf("session_balance = %d, want 1500 (3x500)", resp.Data.SessionBalance)
+		}
+		if resp.Data.PartialBuyIn {
+			t.Error("partial_buy_in = true, want false")
+		}
+		if resp.Data.Guest {
+			t.Error("guest = true, want false")
+		}
+
+		u, err := deps.Store.User(context.Background(), userID)
+		if err != nil || u.Balance != 10000 {
+			t.Errorf("persistent balance = (%d, %v), want (10000, nil) — joining must not debit it", u.Balance, err)
+		}
+
+		claims, err := deps.Issuer.Verify(resp.Data.Token)
+		if err != nil {
+			t.Fatalf("token does not verify: %v", err)
+		}
+		if claims.DisplayName != "AcctHolder" {
+			t.Errorf("claims.DisplayName = %q, want AcctHolder (from the stored account, not the body)", claims.DisplayName)
+		}
+	})
+
+	t.Run("balance 900", func(t *testing.T) {
+		token, _ := registerWithBalance(t, deps, mux, 900)
+		status, resp := joinWithToken(t, mux, code, token)
+		if status != 201 {
+			t.Fatalf("status = %d, want 201", status)
+		}
+		if resp.Data.SessionBalance != 900 {
+			t.Errorf("session_balance = %d, want 900", resp.Data.SessionBalance)
+		}
+		if resp.Data.PartialBuyIn {
+			t.Error("partial_buy_in = true, want false")
+		}
+	})
+
+	t.Run("balance 200", func(t *testing.T) {
+		token, _ := registerWithBalance(t, deps, mux, 200)
+		status, resp := joinWithToken(t, mux, code, token)
+		if status != 201 {
+			t.Fatalf("status = %d, want 201", status)
+		}
+		if resp.Data.SessionBalance != 200 {
+			t.Errorf("session_balance = %d, want 200", resp.Data.SessionBalance)
+		}
+		if !resp.Data.PartialBuyIn {
+			t.Error("partial_buy_in = false, want true")
+		}
+	})
+
+	t.Run("rejoin surviving balance", func(t *testing.T) {
+		token, userID := registerWithBalance(t, deps, mux, 10000)
+		status, _ := joinWithToken(t, mux, code, token)
+		if status != 201 {
+			t.Fatalf("first join: status = %d, want 201", status)
+		}
+		setSessionBalanceForTest(t, roomID, userID, 300)
+		status2, resp2 := joinWithToken(t, mux, code, token)
+		if status2 != 201 {
+			t.Fatalf("second join: status = %d, want 201", status2)
+		}
+		if resp2.Data.SessionBalance != 300 {
+			t.Errorf("second join session_balance = %d, want 300 (surviving balance)", resp2.Data.SessionBalance)
 		}
 	})
 }
