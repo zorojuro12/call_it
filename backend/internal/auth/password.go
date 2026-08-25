@@ -49,7 +49,7 @@ func HashPassword(plain string) (string, error) {
 func VerifyPassword(encoded, plain string) error {
 	p, salt, wantHash, err := parsePHC(encoded)
 	if err != nil {
-		return ErrPasswordMismatch
+		return fmt.Errorf("%w: %v", ErrMalformedHash, err)
 	}
 
 	gotHash := argon2.IDKey([]byte(plain), salt, p.time, p.memory, p.threads, uint32(len(wantHash)))

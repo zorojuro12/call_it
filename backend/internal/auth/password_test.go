@@ -87,3 +87,33 @@ func TestVerifyPassword(t *testing.T) {
 		t.Errorf("VerifyPassword() against a second hash of the same password: unexpected error: %v", err)
 	}
 }
+
+func TestVerifyPassword_Malformed(t *testing.T) {
+	cases := []string{
+		"",
+		"notahash",
+		"$argon2id$v=19$m=19456,t=2,p=1$onlyfourparts",
+		"$argon2i$v=19$m=19456,t=2,p=1$YWJjZGVmZ2hpamtsbW5vcA$YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY",
+		"$argon2id$v=16$m=19456,t=2,p=1$YWJjZGVmZ2hpamtsbW5vcA$YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY",
+		"$argon2id$v=19$m=notanumber,t=2,p=1$YWJjZGVmZ2hpamtsbW5vcA$YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY",
+		"$argon2id$v=19$m=19456,t=2,p=1$!!!notbase64!!!$YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY",
+	}
+
+	for _, encoded := range cases {
+		t.Run(encoded, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("VerifyPassword(%q, ...) panicked: %v", encoded, r)
+				}
+			}()
+
+			err := VerifyPassword(encoded, "anything")
+			if !errors.Is(err, ErrMalformedHash) {
+				t.Errorf("VerifyPassword(%q, ...) err = %v, want ErrMalformedHash", encoded, err)
+			}
+			if errors.Is(err, ErrPasswordMismatch) {
+				t.Errorf("VerifyPassword(%q, ...) err = %v, must not also satisfy ErrPasswordMismatch", encoded, err)
+			}
+		})
+	}
+}
