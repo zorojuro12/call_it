@@ -2,6 +2,8 @@ package auth
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -113,4 +115,83 @@ func TestVerifyExpired(t *testing.T) {
 	if errors.Is(err, ErrInvalidToken) {
 		t.Errorf("Verify() at T+2h: err = %v, must not also satisfy ErrInvalidToken", err)
 	}
+}
+
+func TestVerifyForged(t *testing.T) {
+	issuer, err := NewIssuer(validSecret(), time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer() unexpected error: %v", err)
+	}
+
+	genuine, err := issuer.Issue(Claims{UserID: "u1", DisplayName: "Alice"})
+	if err != nil {
+		t.Fatalf("Issue() unexpected error: %v", err)
+	}
+	genuineParts := strings.Split(genuine, ".")
+
+	otherSecret := bytes.Repeat([]byte("z"), 32)
+	otherIssuer, err := NewIssuer(otherSecret, time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer() unexpected error: %v", err)
+	}
+	differentIssuerToken, err := otherIssuer.Issue(Claims{UserID: "u1"})
+	if err != nil {
+		t.Fatalf("Issue() unexpected error: %v", err)
+	}
+
+	tamperedSig := genuineParts[0] + "." + genuineParts[1] + "." + flipLastChar(genuineParts[2])
+
+	algNoneHeader := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	algNoneToken := algNoneHeader + "." + genuineParts[1] + "."
+
+	hs512Token := hs512Sign(t, genuineParts[1], validSecret())
+
+	cases := map[string]string{
+		"different issuer's secret":   differentIssuerToken,
+		"tampered signature":          tamperedSig,
+		"alg none":                    algNoneToken,
+		"alg swapped to HS512":        hs512Token,
+		"empty string":                "",
+		"not a token":                 "notatoken",
+		"three garbage dot-separated": "a.b.c",
+	}
+
+	for name, token := range cases {
+		t.Run(name, func(t *testing.T) {
+			claims, err := issuer.Verify(token)
+			if !errors.Is(err, ErrInvalidToken) {
+				t.Errorf("Verify(%s) err = %v, want ErrInvalidToken", name, err)
+			}
+			if claims != (Claims{}) {
+				t.Errorf("Verify(%s) returned usable claims: %+v", name, claims)
+			}
+		})
+	}
+}
+
+func flipLastChar(s string) string {
+	if s == "" {
+		return "x"
+	}
+	b := []byte(s)
+	if b[len(b)-1] == 'a' {
+		b[len(b)-1] = 'b'
+	} else {
+		b[len(b)-1] = 'a'
+	}
+	return string(b)
+}
+
+// hs512Sign builds a token whose header claims HS512, signed with
+// secret under HS512, reusing genuine claims segment claimsB64.
+func hs512Sign(t *testing.T, claimsB64 string, secret []byte) string {
+	t.Helper()
+
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS512","typ":"JWT"}`))
+	signingInput := header + "." + claimsB64
+
+	h := hmac.New(sha512.New, secret)
+	h.Write([]byte(signingInput))
+	mac := h.Sum(nil)
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(mac)
 }

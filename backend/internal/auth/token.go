@@ -72,7 +72,7 @@ func (i *Issuer) Issue(c Claims) (string, error) {
 func (i *Issuer) Verify(tokenString string) (Claims, error) {
 	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (any, error) {
 		return i.secret, nil
-	}, jwt.WithTimeFunc(i.now))
+	}, jwt.WithTimeFunc(i.now), jwt.WithValidMethods([]string{"HS256"}))
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			return Claims{}, fmt.Errorf("%w: %v", ErrTokenExpired, err)
@@ -82,6 +82,10 @@ func (i *Issuer) Verify(tokenString string) (Claims, error) {
 
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok || !token.Valid {
+		return Claims{}, ErrInvalidToken
+	}
+
+	if iss, ok := claims["iss"].(string); !ok || iss != Issuer_ {
 		return Claims{}, ErrInvalidToken
 	}
 
