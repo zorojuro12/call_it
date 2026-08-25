@@ -1,6 +1,15 @@
 package auth
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
+
+// Length bounds for user-supplied credentials.
+const (
+	MinPasswordLen = 12
+	MaxPasswordLen = 128
+)
 
 // NormalizeEmail lowercases and trims raw so that the same address
 // always maps to the same email:{normalizedEmail} lookup key.
@@ -48,5 +57,18 @@ func ValidateEmail(normalized string) error {
 		}
 	}
 
+	return nil
+}
+
+// ValidatePassword bounds a plaintext password's byte length only — no
+// character-class rules. NIST SP 800-63B recommends length over
+// composition, since composition rules push users toward predictable
+// substitutions. The upper bound is a cost bound, not a security rule:
+// argon2id's work is proportional to input length, so an unbounded
+// password is a cheap way to make the server do expensive work.
+func ValidatePassword(plain string) error {
+	if len(plain) < MinPasswordLen || len(plain) > MaxPasswordLen {
+		return fmt.Errorf("%w: must be %d-%d bytes", ErrWeakPassword, MinPasswordLen, MaxPasswordLen)
+	}
 	return nil
 }

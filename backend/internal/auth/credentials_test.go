@@ -42,3 +42,23 @@ func TestEmail(t *testing.T) {
 		}
 	})
 }
+
+func TestValidatePassword(t *testing.T) {
+	valid := []string{strings.Repeat("a", 12), strings.Repeat("a", 128)}
+	for _, pw := range valid {
+		if err := ValidatePassword(pw); err != nil {
+			t.Errorf("ValidatePassword(len=%d) unexpected error: %v", len(pw), err)
+		}
+	}
+
+	invalid := []string{"", strings.Repeat("a", 11), strings.Repeat("a", 129)}
+	for _, pw := range invalid {
+		err := ValidatePassword(pw)
+		if !errors.Is(err, ErrWeakPassword) {
+			t.Errorf("ValidatePassword(len=%d) err = %v, want ErrWeakPassword", len(pw), err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "12") {
+			t.Errorf("ValidatePassword(len=%d) error %q does not name the permitted range", len(pw), err.Error())
+		}
+	}
+}
