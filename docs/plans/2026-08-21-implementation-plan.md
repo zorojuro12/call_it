@@ -342,6 +342,33 @@ credentials this note is about.
 
 **Import rule:** skills (Bucket 2/3) are cheap — one line in the availability listing until invoked — so pull each phase's skills in *before* that phase starts, no need to batch them all up front. Language-specific **rule dirs** (`.claude/rules/ecc/<language>/`) are different: they're always-loaded full text into every turn once installed, per `.claude/rules/ecc/common/agents.md`'s description of rules as passive/always-on. Install a rule dir only right before the phase that needs it, so irrelevant stack rules don't sit in every turn's context for phases that don't touch that stack yet.
 
+**Phase-sizing note (added at Phase 3 close-out).** Read this before
+scoping any future phase's task/checkpoint breakdown. Phase 3's plan
+landed at 2,904 lines / 38 checkpoints — close to Phase 1's old
+code-heavy-format length (2,999 lines) and nearly double Phase 2's
+(1,599 lines), despite using the same spec-driven contract format Phase
+2 introduced. Normalized per checkpoint the format held up reasonably
+(Phase 2: ~64 lines/checkpoint; Phase 3: ~76, a ~19% increase, not the
+~80% the raw totals suggest) — so this was **not** a regression in
+`writing-plans` itself. The actual cause: Phase 3 bundled four
+separable deliverables into one phase (credentials, tokens, the shared
+rate limiter, and the full REST surface over rooms/refills), which is
+also why it produced the most checkpoints of any phase so far (38, vs.
+Phase 2's 25). The plan's own self-review flagged this at write
+time — "Tasks 1–10 are a coherent stopping point" — meaning the phase
+boundary itself was drawn too wide, not that any one task was
+over-specified.
+
+**Recommendation:** when a phase's own draft self-review names a
+mid-phase stopping point like that, treat it as a signal to split the
+phase in the parent plan (here, §9's phase table) *before* writing the
+detailed task/checkpoint plan — not as an interesting note to leave in
+place. A phase should be one deliverable people would actually want to
+ship independently, not several bundled because they're thematically
+related. Check this before writing Phase 5's plan in particular — it
+touches Kafka, the ledger, and a reconciliation test, which risks the
+same bundling Phase 3 hit.
+
 Two sequencing choices are deliberate. **Phase 1 precedes all
 infrastructure** because the money math is where correctness bugs hide, and
 it is fully testable with nothing running — the cheapest possible place to
