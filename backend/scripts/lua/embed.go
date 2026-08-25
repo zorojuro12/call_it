@@ -22,3 +22,6 @@ var RefundRound string
 
 //go:embed claim_unique.lua
 var ClaimUnique string
+
+//go:embed rate_limit.lua
+var RateLimit string
