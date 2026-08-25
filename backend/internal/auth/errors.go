@@ -11,4 +11,7 @@ var (
 	ErrInvalidEmail       = errors.New("auth: invalid email address")
 	ErrWeakPassword       = errors.New("auth: password does not meet requirements")
 	ErrInvalidDisplayName = errors.New("auth: invalid display name")
+	ErrWeakSecret         = errors.New("auth: signing secret is too short")
+	ErrInvalidToken       = errors.New("auth: token is invalid")
+	ErrTokenExpired       = errors.New("auth: token has expired")
 )
