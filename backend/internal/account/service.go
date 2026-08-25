@@ -70,6 +70,19 @@ func (s *Service) ClaimRefill(ctx context.Context, userID string) (RefillResult,
 		return RefillResult{}, fmt.Errorf("account: claim refill: %w", err)
 	}
 
+	if credited == 0 {
+		// The eligibility pre-check above used a snapshot read; a
+		// concurrent claim can credit the balance to the target between
+		// that read and this one. The request was ineligible after all —
+		// it just couldn't be known until the atomic TopUpBalance ran.
+		// Hand the slot back so a doomed request doesn't permanently
+		// cost the caller a slot. A Revoke failure is ignored: the claim
+		// genuinely credited nothing, and failing the request over it
+		// would be a worse answer than a slightly conservative quota.
+		_ = s.store.Revoke(ctx, RefillScope, userID, decision.Member)
+		return RefillResult{}, domain.ErrRefillNotEligible
+	}
+
 	return RefillResult{
 		Credited:  credited,
 		Balance:   newBalance,
