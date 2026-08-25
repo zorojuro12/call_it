@@ -38,5 +38,6 @@ func NewMux(d Deps) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", HealthHandler)
 	registerAuthRoutes(mux, d)
+	registerRoomRoutes(mux, d)
 	return mux
 }

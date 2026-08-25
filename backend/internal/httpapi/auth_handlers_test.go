@@ -20,7 +20,7 @@ func testDeps(t *testing.T) Deps {
 	store := newTestStore(t)
 	issuer := testIssuer(t)
 	accounts := account.NewService(store, issuer)
-	rooms := &room.Service{}
+	rooms := room.NewService(store, issuer)
 	return Deps{Accounts: accounts, Rooms: rooms, Store: store, Issuer: issuer}
 }
 
