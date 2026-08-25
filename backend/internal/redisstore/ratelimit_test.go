@@ -141,3 +141,44 @@ func TestAllow_WindowSlides(t *testing.T) {
 		t.Errorf("ZCARD = %d, want 2 (member2 + this call's member) — member1 must have been evicted individually", card)
 	}
 }
+
+func TestRevoke(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	id := testID(t, "id")
+
+	var third Decision
+	for i := 0; i < 3; i++ {
+		d, err := store.Allow(ctx, "test", id, 3, time.Minute)
+		if err != nil {
+			t.Fatalf("Allow() call %d = %v, want nil", i+1, err)
+		}
+		if !d.Allowed {
+			t.Fatalf("Allow() call %d = %+v, want Allowed=true", i+1, d)
+		}
+		third = d
+	}
+
+	if err := store.Revoke(ctx, "test", id, third.Member); err != nil {
+		t.Fatalf("Revoke() = %v, want nil", err)
+	}
+
+	d4, err := store.Allow(ctx, "test", id, 3, time.Minute)
+	if err != nil {
+		t.Fatalf("Allow() 4th = %v, want nil", err)
+	}
+	if !d4.Allowed || d4.Remaining != 0 {
+		t.Errorf("Allow() 4th = %+v, want Allowed=true Remaining=0 — the revoked slot came back", d4)
+	}
+
+	if err := store.Revoke(ctx, "test", id, "never-recorded-member"); err != nil {
+		t.Errorf("Revoke() of an unrecorded member = %v, want nil (idempotent, not an error)", err)
+	}
+	card, err := store.client.ZCard(ctx, RateLimitKey("test", id)).Result()
+	if err != nil {
+		t.Fatalf("ZCARD: %v", err)
+	}
+	if card != 3 {
+		t.Errorf("ZCARD after revoking an unrecorded member = %d, want unchanged at 3", card)
+	}
+}

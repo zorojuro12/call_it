@@ -85,3 +85,15 @@ func (s *Store) Allow(ctx context.Context, scope, id string, limit int, window t
 		return Decision{}, fmt.Errorf("redisstore: rate limit %s:%s: unrecognized status %q", scope, id, reply[0])
 	}
 }
+
+// Revoke hands a recorded slot back — used when a request that consumed
+// quota turned out to credit nothing, so a doomed request doesn't
+// permanently cost the caller a slot. A single ZREM is already atomic,
+// so no script is needed. Revoking a member that was never recorded (or
+// already evicted) is a no-op, not an error.
+func (s *Store) Revoke(ctx context.Context, scope, id, member string) error {
+	if err := s.client.ZRem(ctx, RateLimitKey(scope, id), member).Err(); err != nil {
+		return fmt.Errorf("redisstore: revoke %s:%s member %s: %w", scope, id, member, err)
+	}
+	return nil
+}
