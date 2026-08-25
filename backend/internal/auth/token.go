@@ -3,6 +3,8 @@ package auth
 import (
 	"fmt"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // MinSecretLen is the floor on an HMAC signing key: HS256's key should
@@ -46,4 +48,52 @@ func NewIssuer(secret []byte, ttl time.Duration) (*Issuer, error) {
 	}
 
 	return &Issuer{secret: secret, ttl: ttl, now: time.Now}, nil
+}
+
+// Issue signs a token carrying c, with iat/exp/iss set from the
+// issuer's clock and TTL.
+func (i *Issuer) Issue(c Claims) (string, error) {
+	claims := jwt.MapClaims{
+		"sub":     c.UserID,
+		"name":    c.DisplayName,
+		"room_id": c.RoomID,
+		"guest":   c.Guest,
+		"iss":     Issuer_,
+		"iat":     jwt.NewNumericDate(i.now()),
+		"exp":     jwt.NewNumericDate(i.now().Add(i.ttl)),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(i.secret)
+}
+
+// Verify parses and validates a token, returning the Claims it carries.
+func (i *Issuer) Verify(tokenString string) (Claims, error) {
+	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (any, error) {
+		return i.secret, nil
+	})
+	if err != nil {
+		return Claims{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || !token.Valid {
+		return Claims{}, ErrInvalidToken
+	}
+
+	c := Claims{}
+	if v, ok := claims["sub"].(string); ok {
+		c.UserID = v
+	}
+	if v, ok := claims["name"].(string); ok {
+		c.DisplayName = v
+	}
+	if v, ok := claims["room_id"].(string); ok {
+		c.RoomID = v
+	}
+	if v, ok := claims["guest"].(bool); ok {
+		c.Guest = v
+	}
+
+	return c, nil
 }
