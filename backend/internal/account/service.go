@@ -6,6 +6,7 @@ package account
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,6 +14,15 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 )
+
+// ErrEmailTaken is returned by Register when the email is already
+// claimed by another account.
+var ErrEmailTaken = errors.New("account: email is already registered")
+
+// ErrInvalidCredentials is returned by Login for both an unknown email
+// and a wrong password — the two must be indistinguishable, so no
+// caller can tell which one it was from the error alone (Task 9 CP4).
+var ErrInvalidCredentials = errors.New("account: email or password is incorrect")
 
 // RefillScope and RefillWindow parameterize the shared rate limiter for
 // the refill quota — never inline literals at the call site, so the
