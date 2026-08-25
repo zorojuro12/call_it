@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -100,16 +101,27 @@ func (s *Service) Register(ctx context.Context, email, password, displayName str
 }
 
 // Login verifies credentials and issues an account-scoped token.
+//
+// An unknown email, a wrong password, and a malformed stored hash all
+// collapse into the single ErrInvalidCredentials — the real cause is
+// logged server-side, never surfaced. An endpoint that answers "no such
+// user" differently from "wrong password" is a free account-enumeration
+// oracle; a corrupted record must not become one either.
 func (s *Service) Login(ctx context.Context, email, password string) (Account, string, error) {
 	normalizedEmail := auth.NormalizeEmail(email)
 
 	u, err := s.store.UserByEmail(ctx, normalizedEmail)
 	if err != nil {
+		if errors.Is(err, redisstore.ErrNotFound) {
+			slog.Debug("account: login: unknown email", "email", normalizedEmail)
+			return Account{}, "", ErrInvalidCredentials
+		}
 		return Account{}, "", fmt.Errorf("account: login: %w", err)
 	}
 
 	if err := auth.VerifyPassword(u.PasswordHash, password); err != nil {
-		return Account{}, "", fmt.Errorf("account: login: %w", err)
+		slog.Debug("account: login: credential check failed", "user_id", u.ID, "error", err)
+		return Account{}, "", ErrInvalidCredentials
 	}
 
 	token, err := s.issuer.Issue(auth.Claims{UserID: u.ID, DisplayName: u.DisplayName})

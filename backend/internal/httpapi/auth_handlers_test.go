@@ -248,3 +248,71 @@ func TestLogin_Success(t *testing.T) {
 		loginAndVerify(t, "  "+strings.ToUpper(email)+" ")
 	})
 }
+
+func TestLogin_NoEnumeration(t *testing.T) {
+	deps := testDeps(t)
+	mux := NewMux(deps)
+
+	email := testID(t, "noenum") + "@example.com"
+	regBody := `{"email":"` + email + `","password":"correct horse battery","display_name":"Alice"}`
+	if rec := registerRaw(mux, regBody); rec.Code != 201 {
+		t.Fatalf("register: status = %d, want 201, body: %s", rec.Code, rec.Body.String())
+	}
+
+	loginRaw := func(loginEmail, password string) *httptest.ResponseRecorder {
+		body := `{"email":"` + loginEmail + `","password":"` + password + `"}`
+		req := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	wrongPassword := loginRaw(email, "totally wrong password")
+	unknownEmail := loginRaw(testID(t, "unknown")+"@example.com", "correct horse battery")
+
+	// Malformed-hash account: write directly through the store so a
+	// corrupted record is exercised, not just a wrong guess.
+	malformedID := testID(t, "malformed")
+	malformedEmail := strings.ToLower(malformedID) + "@example.com"
+	if err := deps.Store.CreateUser(context.Background(), redisstore.User{
+		ID: malformedID, Email: malformedEmail, DisplayName: "Bad", PasswordHash: "garbage", Balance: 1000,
+	}); err != nil {
+		t.Fatalf("CreateUser(malformed) = %v, want nil", err)
+	}
+	malformedHash := loginRaw(malformedEmail, "anything")
+
+	for _, rec := range []*httptest.ResponseRecorder{wrongPassword, unknownEmail, malformedHash} {
+		if rec.Code != 401 {
+			t.Errorf("status = %d, want 401, body: %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	normalize := func(rec *httptest.ResponseRecorder) string {
+		var v any
+		json.Unmarshal(rec.Body.Bytes(), &v)
+		out, _ := json.Marshal(v)
+		return string(out)
+	}
+
+	wpBody := normalize(wrongPassword)
+	ueBody := normalize(unknownEmail)
+	mhBody := normalize(malformedHash)
+
+	if wpBody != ueBody {
+		t.Errorf("wrong-password body %q != unknown-email body %q — response distinguishes them", wpBody, ueBody)
+	}
+	if wpBody != mhBody {
+		t.Errorf("wrong-password body %q != malformed-hash body %q — response distinguishes them", wpBody, mhBody)
+	}
+
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	json.Unmarshal(wrongPassword.Body.Bytes(), &body)
+	if body.Error.Code != "invalid_credentials" {
+		t.Errorf("error.code = %q, want invalid_credentials", body.Error.Code)
+	}
+}
