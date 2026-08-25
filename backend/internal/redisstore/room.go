@@ -103,17 +103,33 @@ func (s *Store) Room(ctx context.Context, roomID string) (Room, error) {
 }
 
 // JoinRoom materializes a session wallet for userID at the given
-// balance. The caller decides the balance — domain.GuestSessionBalance
-// or domain.AccountSessionBalance — this layer does not re-derive it.
-func (s *Store) JoinRoom(ctx context.Context, roomID, userID string, balance domain.Tokens) error {
+// balance on a first join. On a rejoin — a page refresh, a dropped
+// connection — the wallet is left exactly as it stands: HSETNX means an
+// existing field is never overwritten, so a participant who is losing
+// cannot reload the page to reset their wallet back to the full buy-in.
+// The caller decides the balance for a first join — domain.
+// GuestSessionBalance or domain.AccountSessionBalance — this layer does
+// not re-derive it. The returned effective balance is the newly seeded
+// one on a first join, or the surviving one on a rejoin.
+func (s *Store) JoinRoom(ctx context.Context, roomID, userID string, balance domain.Tokens) (effective domain.Tokens, err error) {
 	if balance <= 0 {
-		return fmt.Errorf("%w: balance %d must be positive", domain.ErrInvalidStake, balance)
+		return 0, fmt.Errorf("%w: balance %d must be positive", domain.ErrInvalidStake, balance)
 	}
 
-	if err := s.client.HSet(ctx, RoomWalletsKey(roomID), userID, strconv.FormatInt(int64(balance), 10)).Err(); err != nil {
-		return fmt.Errorf("redisstore: join room %s as %s: %w", roomID, userID, err)
+	if err := s.client.HSetNX(ctx, RoomWalletsKey(roomID), userID, strconv.FormatInt(int64(balance), 10)).Err(); err != nil {
+		return 0, fmt.Errorf("redisstore: join room %s as %s: %w", roomID, userID, err)
 	}
-	return nil
+
+	v, err := s.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: join room %s as %s: read back balance: %w", roomID, userID, err)
+	}
+	eff, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: join room %s as %s: malformed balance %q: %w", roomID, userID, v, err)
+	}
+
+	return domain.Tokens(eff), nil
 }
 
 // Balance reads a user's session balance in a room.

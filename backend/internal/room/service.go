@@ -74,7 +74,7 @@ func (s *Service) Create(ctx context.Context, hostID, hostName string, buyIn dom
 		return Created{}, err
 	}
 
-	if err := s.store.JoinRoom(ctx, roomID, hostID, buyIn); err != nil {
+	if _, err := s.store.JoinRoom(ctx, roomID, hostID, buyIn); err != nil {
 		return Created{}, fmt.Errorf("room: create: seed host wallet: %w", err)
 	}
 
