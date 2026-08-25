@@ -18,16 +18,13 @@ const testDB = 15
 
 var testRedisAddr string
 
-// TestMain deliberately does NOT FLUSHDB here, unlike redisstore's.
-// `go test ./...` runs different packages' test binaries in parallel by
-// default (Go's package-level -p parallelism), and this package now
-// shares DB 15 with internal/redisstore: two independent TestMains each
-// flushing the same live DB at startup can race, with one flush wiping
-// the other package's in-flight test data mid-run. Isolation instead
-// comes entirely from testID's t.Name()-derived uniqueness — the same
-// property that already made FlushDB redundant for correctness within
-// a single `go test` invocation, since every test's keys are unique by
-// construction and never collide with another test's leftovers.
+// TestMain mirrors redisstore's: DB 15, fail-not-skip on unreachable
+// Redis, FLUSHDB for a clean slate. Safe against internal/redisstore's
+// identical TestMain sharing DB 15 only because the Makefile's `go test`
+// invocations run with -p 1 — Go's default package-level parallelism
+// would otherwise let two independent TestMains race to flush the same
+// live DB, each capable of wiping the other package's in-flight test
+// data mid-run.
 func TestMain(m *testing.M) {
 	testRedisAddr = os.Getenv("REDIS_ADDR")
 	if testRedisAddr == "" {
@@ -41,6 +38,10 @@ func TestMain(m *testing.M) {
 
 	if err := client.Ping(context.Background()).Err(); err != nil {
 		log.Fatalf("account: cannot reach Redis at %s (db %d): %v — run `make up` and retry", testRedisAddr, testDB, err)
+	}
+
+	if err := client.FlushDB(context.Background()).Err(); err != nil {
+		log.Fatalf("account: FLUSHDB on db %d failed: %v", testDB, err)
 	}
 
 	if err := client.Close(); err != nil {
