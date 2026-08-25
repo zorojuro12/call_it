@@ -1,13 +1,17 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/zorojuro12/call_it/backend/internal/account"
 	"github.com/zorojuro12/call_it/backend/internal/auth"
+	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 	"github.com/zorojuro12/call_it/backend/internal/room"
 )
 
@@ -83,5 +87,104 @@ func TestRegister(t *testing.T) {
 	}
 	if err := auth.VerifyPassword(u.PasswordHash, "correct horse battery"); err != nil {
 		t.Errorf("stored password hash does not verify against the submitted password: %v", err)
+	}
+}
+
+func registerRaw(mux http.Handler, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api/v1/auth/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestRegister_Rejections(t *testing.T) {
+	deps := testDeps(t)
+	mux := NewMux(deps)
+
+	dupEmail := testID(t, "dup") + "@example.com"
+	dupBody := `{"email":"` + dupEmail + `","password":"correct horse battery","display_name":"First"}`
+	if rec := registerRaw(mux, dupBody); rec.Code != 201 {
+		t.Fatalf("first registration: status = %d, want 201, body: %s", rec.Code, rec.Body.String())
+	}
+
+	cases := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			"duplicate email",
+			`{"email":"` + dupEmail + `","password":"correct horse battery","display_name":"Second"}`,
+			409, "email_taken",
+		},
+		{
+			"duplicate email different case and spacing",
+			`{"email":"  ` + strings.ToUpper(dupEmail) + ` ","password":"correct horse battery","display_name":"Third"}`,
+			409, "email_taken",
+		},
+		{
+			"invalid email",
+			`{"email":"nope","password":"correct horse battery","display_name":"A"}`,
+			400, "validation_error",
+		},
+		{
+			"short password",
+			`{"email":"a@b.co","password":"short","display_name":"A"}`,
+			400, "validation_error",
+		},
+		{
+			"empty display name",
+			`{"email":"a@b.co","password":"correct horse battery","display_name":""}`,
+			400, "validation_error",
+		},
+		{
+			"not json at all",
+			`not json at all`,
+			400, "validation_error",
+		},
+		{
+			"unknown field rejected",
+			`{"email":"a@b.co","password":"correct horse battery","display_name":"A","admin":true}`,
+			400, "validation_error",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := registerRaw(mux, tt.body)
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d, body: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			var body struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("response body does not decode: %v", err)
+			}
+			if body.Error.Code != tt.wantCode {
+				t.Errorf("error.code = %q, want %q", body.Error.Code, tt.wantCode)
+			}
+		})
+	}
+
+	// None of the rejected cases created an account: the dup-email
+	// index still resolves to the original ("First"), and the
+	// well-formed-but-otherwise-rejected "a@b.co" cases never claimed it.
+	// UserByEmail takes an already-normalized address, same as the
+	// registration handler normalizes on the way in — testID's mixed
+	// case (from t.Name()) must be lowercased here too.
+	byDup, err := deps.Store.UserByEmail(context.Background(), strings.ToLower(dupEmail))
+	if err != nil {
+		t.Fatalf("store.UserByEmail(dup) = %v, want nil", err)
+	}
+	if byDup.DisplayName != "First" {
+		t.Errorf("store.UserByEmail(dup).DisplayName = %q, want First (unchanged)", byDup.DisplayName)
+	}
+	if _, err := deps.Store.UserByEmail(context.Background(), "a@b.co"); !errors.Is(err, redisstore.ErrNotFound) {
+		t.Errorf("store.UserByEmail(a@b.co) err = %v, want ErrNotFound — no rejected case should have created it", err)
 	}
 }
