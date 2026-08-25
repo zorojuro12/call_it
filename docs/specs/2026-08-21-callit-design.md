@@ -55,7 +55,19 @@ token gestures at each technology.
 - At session end, an account holder's **net profit/loss** for that session
   (not their final balance) is added to their persistent account total.
   Persistent balance floors at 0 — a session can never cost more than what
-  was staked into it.
+  was staked into it. Joining a room does **not** debit the persistent
+  balance up front — only the net delta at session end does, which is
+  what makes the 3x-cap-vs-actual-balance check at join time (this
+  section, above) and the floor-at-0 rule both apply to the same number
+  exactly once, not twice.
+- Persistent accounts (email + password, argon2id, JWT HS256) live in
+  **Redis** for now, not PostgreSQL — implemented Phase 3
+  (`docs/plans/2026-08-25-phase-3-auth-rest.md` Amendment B1). Phase 3's
+  dependency graph only reaches Phases 0 and 2, not 5, so storing
+  credentials in PostgreSQL would have pulled most of Phase 5's ledger
+  schema forward. Whether accounts migrate to PostgreSQL alongside the
+  ledger, or stay in Redis with the ledger holding only monetary
+  history, is an open question for Phase 5's planning pass.
 
 ### Refills
 
@@ -161,6 +173,12 @@ token gestures at each technology.
   participant's identity and room id.
 - The client presents this JWT when opening the WebSocket connection.
   Verified server-side without a per-message database hit.
+- The token carries the participant's display name as a claim (Amendment
+  B5, `docs/plans/2026-08-25-phase-3-auth-rest.md`), so no Redis key
+  holds it and no per-message lookup is needed for identity — Phase 4's
+  WebSocket handler reads it straight from the verified claims at
+  connection time. Guests, who have no `user:{id}` hash at all, are
+  covered by the same mechanism.
 
 ## 7. Performance & Scale Targets (unchanged from original brief)
 

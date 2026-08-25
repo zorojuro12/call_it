@@ -13,6 +13,11 @@ import (
 // to handle a not-found case.
 var ErrNotFound = errors.New("redisstore: key or field not found")
 
+// ErrAlreadyExists is returned when claim_unique.lua finds its index
+// key already claimed — a duplicate email at registration, or a
+// colliding room code at creation.
+var ErrAlreadyExists = errors.New("redisstore: unique index already claimed")
+
 // ErrPoolLocked is returned when a wager targets a round that is not
 // open — either its status has moved on, or the Redis clock has already
 // passed its lock instant.

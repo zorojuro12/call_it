@@ -72,7 +72,7 @@ func setupWagerRoom(t *testing.T, store *Store, hostID string, buyIn domain.Toke
 		t.Fatalf("CreateRound() = %v, want nil", err)
 	}
 	for userID, balance := range players {
-		if err := store.JoinRoom(ctx, roomID, userID, balance); err != nil {
+		if _, err := store.JoinRoom(ctx, roomID, userID, balance); err != nil {
 			t.Fatalf("JoinRoom(%s) = %v, want nil", userID, err)
 		}
 	}
@@ -205,7 +205,7 @@ func TestPlaceWager_Accept(t *testing.T) {
 	}
 
 	// A second player wagering moves BettorCount and Total.
-	if err := store.JoinRoom(ctx, roomID, "u2", 500); err != nil {
+	if _, err := store.JoinRoom(ctx, roomID, "u2", 500); err != nil {
 		t.Fatalf("JoinRoom(u2) = %v, want nil", err)
 	}
 	result3, err := store.PlaceWager(ctx, WagerRequest{

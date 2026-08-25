@@ -203,7 +203,7 @@ func TestLockRound(t *testing.T) {
 	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 500); err != nil {
 		t.Fatalf("CreateRoom() = %v, want nil", err)
 	}
-	if err := store.JoinRoom(ctx, roomID, "u1", 500); err != nil {
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 500); err != nil {
 		t.Fatalf("JoinRoom() = %v, want nil", err)
 	}
 	if _, err := store.PlaceWager(ctx, WagerRequest{

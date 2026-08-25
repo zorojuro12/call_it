@@ -17,6 +17,9 @@ func TestKeys(t *testing.T) {
 		{"RoundBettorsKey", RoundBettorsKey("n1"), "round:n1:bettors"},
 		{"IdemKey", IdemKey("abc"), "idem:abc"},
 		{"WagerField", WagerField("u1", 2), "u1:2"},
+		{"UserKey", UserKey("u1"), "user:u1"},
+		{"EmailKey", EmailKey("a@b.c"), "email:a@b.c"},
+		{"RateLimitKey", RateLimitKey("auth", "1.2.3.4"), "ratelimit:auth:1.2.3.4"},
 	}
 
 	for _, tt := range tests {

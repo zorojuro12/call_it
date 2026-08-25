@@ -19,9 +19,12 @@ type Room struct {
 	CreatedAt time.Time
 }
 
-// CreateRoom validates the buy-in, then writes the room hash and its
-// code lookup in a single transaction, so a room can never exist
-// without its code mapping.
+// CreateRoom validates the buy-in, then claims the room code as a
+// unique index and creates the room hash atomically via
+// claim_unique.lua. A colliding code returns ErrAlreadyExists instead
+// of silently repointing the existing room's code — the old
+// unconditional SET would send every subsequent joiner to the wrong
+// room while reporting success.
 func (s *Store) CreateRoom(ctx context.Context, roomID, code, hostID string, buyIn domain.Tokens) error {
 	if err := domain.ValidateBuyIn(buyIn); err != nil {
 		return err
@@ -29,21 +32,34 @@ func (s *Store) CreateRoom(ctx context.Context, roomID, code, hostID string, buy
 
 	createdAtMs := time.Now().UnixMilli()
 
-	_, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.HSet(ctx, RoomKey(roomID),
-			"host_id", hostID,
-			"buy_in", strconv.FormatInt(int64(buyIn), 10),
-			"status", "open",
-			"created_at", strconv.FormatInt(createdAtMs, 10),
-		)
-		pipe.Set(ctx, RoomCodeKey(code), roomID, 0)
-		return nil
-	})
+	res, err := claimUniqueScript.Run(ctx, s.client,
+		[]string{RoomCodeKey(code), RoomKey(roomID)},
+		roomID,
+		"host_id", hostID,
+		"buy_in", strconv.FormatInt(int64(buyIn), 10),
+		"status", "open",
+		"created_at", strconv.FormatInt(createdAtMs, 10),
+	).Result()
 	if err != nil {
 		return fmt.Errorf("redisstore: create room %s: %w", roomID, err)
 	}
 
-	return nil
+	reply, err := toStringSlice(res)
+	if err != nil {
+		return fmt.Errorf("redisstore: create room %s: %w", roomID, err)
+	}
+	if len(reply) == 0 {
+		return fmt.Errorf("redisstore: create room %s: empty reply", roomID)
+	}
+
+	switch reply[0] {
+	case "OK":
+		return nil
+	case "TAKEN":
+		return fmt.Errorf("redisstore: create room: code %s: %w", code, ErrAlreadyExists)
+	default:
+		return fmt.Errorf("redisstore: create room %s: unrecognized status %q", roomID, reply[0])
+	}
 }
 
 // RoomByCode resolves a room's short code to its room ID.
@@ -87,17 +103,33 @@ func (s *Store) Room(ctx context.Context, roomID string) (Room, error) {
 }
 
 // JoinRoom materializes a session wallet for userID at the given
-// balance. The caller decides the balance — domain.GuestSessionBalance
-// or domain.AccountSessionBalance — this layer does not re-derive it.
-func (s *Store) JoinRoom(ctx context.Context, roomID, userID string, balance domain.Tokens) error {
+// balance on a first join. On a rejoin — a page refresh, a dropped
+// connection — the wallet is left exactly as it stands: HSETNX means an
+// existing field is never overwritten, so a participant who is losing
+// cannot reload the page to reset their wallet back to the full buy-in.
+// The caller decides the balance for a first join — domain.
+// GuestSessionBalance or domain.AccountSessionBalance — this layer does
+// not re-derive it. The returned effective balance is the newly seeded
+// one on a first join, or the surviving one on a rejoin.
+func (s *Store) JoinRoom(ctx context.Context, roomID, userID string, balance domain.Tokens) (effective domain.Tokens, err error) {
 	if balance <= 0 {
-		return fmt.Errorf("%w: balance %d must be positive", domain.ErrInvalidStake, balance)
+		return 0, fmt.Errorf("%w: balance %d must be positive", domain.ErrInvalidStake, balance)
 	}
 
-	if err := s.client.HSet(ctx, RoomWalletsKey(roomID), userID, strconv.FormatInt(int64(balance), 10)).Err(); err != nil {
-		return fmt.Errorf("redisstore: join room %s as %s: %w", roomID, userID, err)
+	if err := s.client.HSetNX(ctx, RoomWalletsKey(roomID), userID, strconv.FormatInt(int64(balance), 10)).Err(); err != nil {
+		return 0, fmt.Errorf("redisstore: join room %s as %s: %w", roomID, userID, err)
 	}
-	return nil
+
+	v, err := s.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: join room %s as %s: read back balance: %w", roomID, userID, err)
+	}
+	eff, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: join room %s as %s: malformed balance %q: %w", roomID, userID, v, err)
+	}
+
+	return domain.Tokens(eff), nil
 }
 
 // Balance reads a user's session balance in a room.

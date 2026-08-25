@@ -79,7 +79,7 @@ func setupSettleRound(t *testing.T, store *Store, hostID string, buyIn domain.To
 		t.Fatalf("CreateRound() = %v, want nil", err)
 	}
 	for userID, balance := range players {
-		if err := store.JoinRoom(ctx, roomID, userID, balance); err != nil {
+		if _, err := store.JoinRoom(ctx, roomID, userID, balance); err != nil {
 			t.Fatalf("JoinRoom(%s) = %v, want nil", userID, err)
 		}
 	}
@@ -271,7 +271,7 @@ func TestSettleRound_RequiresLock(t *testing.T) {
 	if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
 		t.Fatalf("CreateRound() = %v, want nil", err)
 	}
-	if err := store.JoinRoom(ctx, roomID, "u1", 500); err != nil {
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 500); err != nil {
 		t.Fatalf("JoinRoom() = %v, want nil", err)
 	}
 	if _, err := store.PlaceWager(ctx, WagerRequest{
@@ -534,7 +534,7 @@ func TestRefundRound_RequiresLock(t *testing.T) {
 	if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
 		t.Fatalf("CreateRound() = %v, want nil", err)
 	}
-	if err := store.JoinRoom(ctx, roomID, "u1", 500); err != nil {
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 500); err != nil {
 		t.Fatalf("JoinRoom() = %v, want nil", err)
 	}
 	if _, err := store.PlaceWager(ctx, WagerRequest{

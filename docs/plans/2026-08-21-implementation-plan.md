@@ -62,7 +62,8 @@ call_it/
 │   ├── internal/
 │   │   ├── config/             # env load + fail-fast validation at startup
 │   │   ├── domain/             # PURE: odds, payout+dust, round FSM, wallet rules
-│   │   ├── auth/               # argon2id hashing, JWT issue/verify
+│   │   ├── auth/               # argon2id hashing, JWT issue/verify — pure, no I/O (Phase 3)
+│   │   ├── account/            # account lifecycle: register, login, refill claims (Phase 3)
 │   │   ├── room/               # room lifecycle, short-code generation
 │   │   ├── round/              # round orchestration + server-side timers
 │   │   ├── wager/              # wager service (validate → Lua → broadcast)
@@ -106,8 +107,21 @@ schema change, not a wrapper change.
 | `round:{roundID}:wagers` | HASH | `{userID}:{outcomeIdx}` → amount |
 | `round:{roundID}:bettors` | SET | distinct user IDs that have wagered |
 | `idem:{key}` | STRING | cached result, TTL 24h |
-| `ratelimit:{scope}:{id}` | ZSET | sliding window — wager throttle *and* refill quota |
+| `ratelimit:{scope}:{id}` | ZSET | sliding window — score is the hit's ms timestamp, member a per-attempt UUID |
 | `wager-outbox` | STREAM | outbox events awaiting relay to Kafka |
+| `user:{userID}` | HASH | `email`, `display_name`, `password_hash`, `balance`, `created_at` |
+| `email:{normalizedEmail}` | STRING | → `userID` (unique index, claimed via `claim_unique.lua`) |
+
+`user:{userID}`/`email:{normalizedEmail}` and `ratelimit:{scope}:{id}`'s
+actual implementation both landed in Phase 3 (Amendments B1, B6/B7,
+`docs/plans/2026-08-25-phase-3-auth-rest.md`). `ratelimit` scopes in use:
+`auth` (client IP, 10/1min, the register/login throttle), `api` (user ID,
+60/1min, the authenticated-route throttle), `refill` (user ID,
+`domain.RefillQuota`/7 days). Persistent accounts live in Redis rather
+than PostgreSQL for now (B1) — Phase 3's dependency table only lists 0
+and 2, not 5, so storing credentials in Postgres would have pulled most
+of Phase 5 forward. Whether they migrate to PostgreSQL alongside the
+ledger or stay in Redis is an open question for Phase 5's planning pass.
 
 `round:{roundID}:bettors` was added in Phase 2 (Amendment A2,
 `docs/plans/2026-08-24-phase-2-redis-layer.md`): the "N/M players have
@@ -194,6 +208,29 @@ settlement there is nothing to compute — refunding is the identity function
 on stakes — so this script reads the wagers hash inside its own atomic unit
 rather than taking amounts from Go.
 
+### Phase 3 additions (Amendment B6)
+
+Three more scripts, none on the wager path:
+
+- **`claim_unique.lua`** — `SETNX KEYS[1] ARGV[1]`; on success `HSET
+  KEYS[2]` with the remaining `ARGV` pairs and return `{'OK'}`; on
+  collision return `{'TAKEN', existingID}` without mutating anything.
+  One script serves both call sites — claiming an email at registration
+  and claiming a room code at creation are the same operation (claim a
+  unique secondary index and create the entity it points at,
+  atomically), so a second copy would be duplication, not clarity.
+- **`rate_limit.lua`** — the sliding-window limiter behind `Store.Allow`.
+  Evicts aged-out members (`ZREMRANGEBYSCORE`), then either `ZADD`s the
+  new attempt and returns `{'ALLOWED', remaining, member, resetAtMs}` or
+  returns `{'DENIED', '0', '', retryAfterMs, resetAtMs}` without
+  recording anything — a limiter that counted denied attempts would
+  extend its own window under sustained load.
+- **`top_up_balance.lua`** — sets a user's balance to a target only if it
+  is currently below the target, returning the credited delta. Setting
+  to the target rather than incrementing by a Go-computed delta is what
+  makes a concurrent double-claim safe: the second call reads the
+  already-topped balance and credits nothing.
+
 ---
 
 ## 6. PostgreSQL double-entry schema
@@ -265,7 +302,7 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 0 | **Foundations** | Monorepo skeleton, `docker-compose.yml` (Redis/PostgreSQL/Kafka-KRaft), Makefile, GitHub Actions CI, config loader with fail-fast validation, structured logging, `/healthz` | — | `golang-*` (patterns/testing/tdd/verification) rules + skills; `docker-patterns` skill — import *before* starting this phase, not after |
 | 1 | **Domain core (pure Go)** | Odds math, payout and dust distribution, round state machine, wallet rules (buy-in, 3× cap, partial buy-in, refill quota). No I/O; near-total unit coverage | 0 | None new — covered by Phase 0's Go tooling |
 | 2 | **Redis layer** | Key schema, four Lua scripts (`place_wager`, `lock_round`, `settle_round`, `refund_round`), Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 | `redis-patterns` skill |
-| 3 | **Auth + REST** | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 | `api-design` skill |
+| 3 | **Auth + REST** ✅ | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 | `api-design` skill |
 | 4 | **WebSocket hub + round lifecycle** | Per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, server-side lock timer and 60-second auto-refund fallback. Playable end to end from a CLI client | 3 | None new |
 | 5 | **Kafka + ledger** | Outbox relay, `wagers-placed` and `rounds-settled` producers, ledger-worker consumer, migrations, deferred constraint trigger, Redis↔PostgreSQL reconciliation test | 2, 4 | `postgres-patterns`, `database-migrations` skills |
 | 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4 | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
@@ -284,6 +321,24 @@ names (`ratelimit:{scope}:{id}`) was deferred to Phase 3 as well — nothing
 in Phase 2 calls it, so it landed next to its first caller (the refill
 endpoint and wager-placement middleware) instead of sitting unused for a
 full phase.
+
+**Phase 4 note (added at Phase 3 close-out).** `internal/room`'s
+`Service.Create`/`Service.Join`, `internal/account`'s `Service`, the
+shared rate limiter, and `internal/auth`'s token `Issuer` all already
+exist and are tested — Phase 4 wraps and calls them from the WebSocket
+handshake and round lifecycle, it does not reimplement any of them. In
+particular, the wager-placement throttle's call site (keyed how the
+WS handshake determines identity) is Phase 4's to wire; `rate_limit.lua`
+and `Store.Allow`/`Revoke` are already built and proven.
+
+**Phase 5 note (added at Phase 3 close-out, Amendment B1).** Persistent
+accounts (`user:{userID}`, `email:{normalizedEmail}`) live in Redis for
+now. Phase 5's planning pass has an open question to resolve: migrate
+them to PostgreSQL alongside the ledger, or keep them in Redis with the
+ledger holding only monetary history. Note PostgreSQL's `accounts` table
+(§6) already holds **ledger** accounts (`user_wallet`, `room_escrow`,
+`system_dust`) — a different, non-colliding sense of "account" from the
+credentials this note is about.
 
 **Import rule:** skills (Bucket 2/3) are cheap — one line in the availability listing until invoked — so pull each phase's skills in *before* that phase starts, no need to batch them all up front. Language-specific **rule dirs** (`.claude/rules/ecc/<language>/`) are different: they're always-loaded full text into every turn once installed, per `.claude/rules/ecc/common/agents.md`'s description of rules as passive/always-on. Install a rule dir only right before the phase that needs it, so irrelevant stack rules don't sit in every turn's context for phases that don't touch that stack yet.
 
