@@ -19,9 +19,12 @@ type Room struct {
 	CreatedAt time.Time
 }
 
-// CreateRoom validates the buy-in, then writes the room hash and its
-// code lookup in a single transaction, so a room can never exist
-// without its code mapping.
+// CreateRoom validates the buy-in, then claims the room code as a
+// unique index and creates the room hash atomically via
+// claim_unique.lua. A colliding code returns ErrAlreadyExists instead
+// of silently repointing the existing room's code — the old
+// unconditional SET would send every subsequent joiner to the wrong
+// room while reporting success.
 func (s *Store) CreateRoom(ctx context.Context, roomID, code, hostID string, buyIn domain.Tokens) error {
 	if err := domain.ValidateBuyIn(buyIn); err != nil {
 		return err
@@ -29,21 +32,34 @@ func (s *Store) CreateRoom(ctx context.Context, roomID, code, hostID string, buy
 
 	createdAtMs := time.Now().UnixMilli()
 
-	_, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.HSet(ctx, RoomKey(roomID),
-			"host_id", hostID,
-			"buy_in", strconv.FormatInt(int64(buyIn), 10),
-			"status", "open",
-			"created_at", strconv.FormatInt(createdAtMs, 10),
-		)
-		pipe.Set(ctx, RoomCodeKey(code), roomID, 0)
-		return nil
-	})
+	res, err := claimUniqueScript.Run(ctx, s.client,
+		[]string{RoomCodeKey(code), RoomKey(roomID)},
+		roomID,
+		"host_id", hostID,
+		"buy_in", strconv.FormatInt(int64(buyIn), 10),
+		"status", "open",
+		"created_at", strconv.FormatInt(createdAtMs, 10),
+	).Result()
 	if err != nil {
 		return fmt.Errorf("redisstore: create room %s: %w", roomID, err)
 	}
 
-	return nil
+	reply, err := toStringSlice(res)
+	if err != nil {
+		return fmt.Errorf("redisstore: create room %s: %w", roomID, err)
+	}
+	if len(reply) == 0 {
+		return fmt.Errorf("redisstore: create room %s: empty reply", roomID)
+	}
+
+	switch reply[0] {
+	case "OK":
+		return nil
+	case "TAKEN":
+		return fmt.Errorf("redisstore: create room: code %s: %w", code, ErrAlreadyExists)
+	default:
+		return fmt.Errorf("redisstore: create room %s: unrecognized status %q", roomID, reply[0])
+	}
 }
 
 // RoomByCode resolves a room's short code to its room ID.

@@ -81,6 +81,43 @@ func TestCreateRoom(t *testing.T) {
 	}
 }
 
+func TestCreateRoom_CodeCollision(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	code := testID(t, "code")
+	roomA := testID(t, "room")
+	roomB := testID(t, "room")
+
+	if err := store.CreateRoom(ctx, roomA, code, "hostA", 500); err != nil {
+		t.Fatalf("CreateRoom(A) = %v, want nil", err)
+	}
+
+	err := store.CreateRoom(ctx, roomB, code, "hostB", 900)
+	if !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("CreateRoom(B) err = %v, want ErrAlreadyExists", err)
+	}
+
+	gotID, err := store.RoomByCode(ctx, code)
+	if err != nil {
+		t.Fatalf("RoomByCode() = %v, want nil", err)
+	}
+	if gotID != roomA {
+		t.Errorf("RoomByCode() = %q, want %q (room A)", gotID, roomA)
+	}
+
+	roomAFields, err := store.Room(ctx, roomA)
+	if err != nil {
+		t.Fatalf("Room(A) = %v, want nil", err)
+	}
+	if roomAFields.HostID != "hostA" || roomAFields.BuyIn != domain.Tokens(500) {
+		t.Errorf("Room(A) = %+v, want HostID=hostA BuyIn=500 (untouched)", roomAFields)
+	}
+
+	if _, err := store.Room(ctx, roomB); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Room(B) err = %v, want ErrNotFound — B must never have been written", err)
+	}
+}
+
 func TestRoom_MalformedFields(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
