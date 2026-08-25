@@ -99,6 +99,27 @@ func (s *Service) Register(ctx context.Context, email, password, displayName str
 	return Account{ID: userID, Email: normalizedEmail, DisplayName: normalizedName, Balance: domain.StartingBalance}, token, nil
 }
 
+// Login verifies credentials and issues an account-scoped token.
+func (s *Service) Login(ctx context.Context, email, password string) (Account, string, error) {
+	normalizedEmail := auth.NormalizeEmail(email)
+
+	u, err := s.store.UserByEmail(ctx, normalizedEmail)
+	if err != nil {
+		return Account{}, "", fmt.Errorf("account: login: %w", err)
+	}
+
+	if err := auth.VerifyPassword(u.PasswordHash, password); err != nil {
+		return Account{}, "", fmt.Errorf("account: login: %w", err)
+	}
+
+	token, err := s.issuer.Issue(auth.Claims{UserID: u.ID, DisplayName: u.DisplayName})
+	if err != nil {
+		return Account{}, "", fmt.Errorf("account: login: %w", err)
+	}
+
+	return Account{ID: u.ID, Email: u.Email, DisplayName: u.DisplayName, Balance: u.Balance}, token, nil
+}
+
 // RefillResult is what a successful ClaimRefill reports back.
 type RefillResult struct {
 	Credited  domain.Tokens

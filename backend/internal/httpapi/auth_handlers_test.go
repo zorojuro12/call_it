@@ -188,3 +188,63 @@ func TestRegister_Rejections(t *testing.T) {
 		t.Errorf("store.UserByEmail(a@b.co) err = %v, want ErrNotFound — no rejected case should have created it", err)
 	}
 }
+
+func TestLogin_Success(t *testing.T) {
+	deps := testDeps(t)
+	mux := NewMux(deps)
+
+	email := testID(t, "login") + "@example.com"
+	regBody := `{"email":"` + email + `","password":"correct horse battery","display_name":"Alice"}`
+	if rec := registerRaw(mux, regBody); rec.Code != 201 {
+		t.Fatalf("register: status = %d, want 201, body: %s", rec.Code, rec.Body.String())
+	}
+
+	loginAndVerify := func(t *testing.T, loginEmail string) {
+		t.Helper()
+		body := `{"email":"` + loginEmail + `","password":"correct horse battery"}`
+		req := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != 200 {
+			t.Fatalf("status = %d, want 200, body: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp struct {
+			Data struct {
+				Account struct {
+					Balance int64 `json:"balance"`
+				} `json:"account"`
+				Token string `json:"token"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("response body does not decode: %v", err)
+		}
+		if resp.Data.Account.Balance != 1000 {
+			t.Errorf("account.balance = %d, want 1000", resp.Data.Account.Balance)
+		}
+		claims, err := deps.Issuer.Verify(resp.Data.Token)
+		if err != nil {
+			t.Fatalf("token does not verify: %v", err)
+		}
+		if claims.UserID == "" {
+			t.Error("claims.UserID is empty")
+		}
+
+		raw := rec.Body.String()
+		for _, s := range []string{"password", "correct horse"} {
+			if strings.Contains(raw, s) {
+				t.Errorf("response body leaks %q: %s", s, raw)
+			}
+		}
+	}
+
+	t.Run("normalized email", func(t *testing.T) {
+		loginAndVerify(t, email)
+	})
+	t.Run("differently-cased and spaced email", func(t *testing.T) {
+		loginAndVerify(t, "  "+strings.ToUpper(email)+" ")
+	})
+}

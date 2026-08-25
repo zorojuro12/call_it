@@ -9,6 +9,43 @@ import (
 // POST /api/v1/auth/login onto mux.
 func registerAuthRoutes(mux *http.ServeMux, d Deps) {
 	mux.HandleFunc("POST /api/v1/auth/register", handleRegister(d))
+	mux.HandleFunc("POST /api/v1/auth/login", handleLogin(d))
+}
+
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func handleLogin(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req loginRequest
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
+			WriteError(w, &APIError{Status: 400, Code: "validation_error", Message: "malformed request body"})
+			return
+		}
+
+		acct, token, err := d.Accounts.Login(r.Context(), req.Email, req.Password)
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+
+		WriteData(w, 200, struct {
+			Account accountResponse `json:"account"`
+			Token   string          `json:"token"`
+		}{
+			Account: accountResponse{
+				ID:          acct.ID,
+				Email:       acct.Email,
+				DisplayName: acct.DisplayName,
+				Balance:     int64(acct.Balance),
+			},
+			Token: token,
+		})
+	}
 }
 
 type registerRequest struct {
