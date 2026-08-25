@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -111,6 +113,136 @@ func TestCreateRoom(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 		if rec.Code != 400 {
 			t.Errorf("status = %d, want 400", rec.Code)
+		}
+	})
+}
+
+func createRoomForTest(t *testing.T, mux http.Handler, token string, buyIn int) (roomID, code string) {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/v1/rooms", strings.NewReader(`{"buy_in":`+strconv.Itoa(buyIn)+`}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != 201 {
+		t.Fatalf("create room: status = %d, want 201, body: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			RoomID string `json:"room_id"`
+			Code   string `json:"code"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("create room response does not decode: %v", err)
+	}
+	return resp.Data.RoomID, resp.Data.Code
+}
+
+func TestJoinRoom_Guest(t *testing.T) {
+	deps := testDeps(t)
+	mux := NewMux(deps)
+	hostToken := registerAndGetToken(t, mux, testID(t, "host")+"@example.com")
+	roomID, code := createRoomForTest(t, mux, hostToken, 500)
+
+	joinRaw := func(joinCode, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/v1/rooms/"+joinCode+"/participants", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("valid join", func(t *testing.T) {
+		rec := joinRaw(code, `{"display_name":"Bob"}`)
+		if rec.Code != 201 {
+			t.Fatalf("status = %d, want 201, body: %s", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Data struct {
+				RoomID         string `json:"room_id"`
+				Guest          bool   `json:"guest"`
+				SessionBalance int64  `json:"session_balance"`
+				PartialBuyIn   bool   `json:"partial_buy_in"`
+				Token          string `json:"token"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("response does not decode: %v", err)
+		}
+		if !resp.Data.Guest {
+			t.Error("data.guest = false, want true")
+		}
+		if resp.Data.SessionBalance != 500 {
+			t.Errorf("data.session_balance = %d, want 500", resp.Data.SessionBalance)
+		}
+		if resp.Data.PartialBuyIn {
+			t.Error("data.partial_buy_in = true, want false")
+		}
+		if resp.Data.RoomID != roomID {
+			t.Errorf("data.room_id = %q, want %q", resp.Data.RoomID, roomID)
+		}
+
+		claims, err := deps.Issuer.Verify(resp.Data.Token)
+		if err != nil {
+			t.Fatalf("token does not verify: %v", err)
+		}
+		if !claims.Guest || claims.DisplayName != "Bob" || claims.RoomID != roomID || claims.UserID == "" {
+			t.Errorf("claims = %+v, want Guest=true DisplayName=Bob RoomID=%s non-empty UserID", claims, roomID)
+		}
+
+		balance, err := deps.Store.Balance(context.Background(), roomID, claims.UserID)
+		if err != nil || balance != 500 {
+			t.Errorf("store.Balance() = (%d, %v), want (500, nil)", balance, err)
+		}
+		count, err := deps.Store.PlayerCount(context.Background(), roomID)
+		if err != nil || count != 1 {
+			t.Errorf("store.PlayerCount() = (%d, %v), want (1, nil) — host excluded", count, err)
+		}
+	})
+
+	t.Run("two guests get distinct user IDs", func(t *testing.T) {
+		rec1 := joinRaw(code, `{"display_name":"Carol"}`)
+		rec2 := joinRaw(code, `{"display_name":"Dave"}`)
+		var r1, r2 struct {
+			Data struct {
+				Token string `json:"token"`
+			} `json:"data"`
+		}
+		json.Unmarshal(rec1.Body.Bytes(), &r1)
+		json.Unmarshal(rec2.Body.Bytes(), &r2)
+		c1, _ := deps.Issuer.Verify(r1.Data.Token)
+		c2, _ := deps.Issuer.Verify(r2.Data.Token)
+		if c1.UserID == c2.UserID {
+			t.Errorf("two guest joins produced the same UserID %q", c1.UserID)
+		}
+	})
+
+	t.Run("unknown code", func(t *testing.T) {
+		rec := joinRaw("ZZZZZZ", `{"display_name":"Bob"}`)
+		if rec.Code != 404 {
+			t.Errorf("status = %d, want 404", rec.Code)
+		}
+	})
+
+	t.Run("missing display name", func(t *testing.T) {
+		rec := joinRaw(code, `{}`)
+		if rec.Code != 400 {
+			t.Errorf("status = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("display name too long", func(t *testing.T) {
+		rec := joinRaw(code, `{"display_name":"`+strings.Repeat("a", 33)+`"}`)
+		if rec.Code != 400 {
+			t.Errorf("status = %d, want 400", rec.Code)
+		}
+	})
+
+	t.Run("lowercase code for an uppercase room is not found", func(t *testing.T) {
+		rec := joinRaw(strings.ToLower(code), `{"display_name":"Bob"}`)
+		if rec.Code != 404 {
+			t.Errorf("status = %d, want 404 — codes are case-sensitive", rec.Code)
 		}
 	})
 }

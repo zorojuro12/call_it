@@ -85,3 +85,77 @@ func (s *Service) Create(ctx context.Context, hostID, hostName string, buyIn dom
 
 	return Created{RoomID: roomID, Code: code, BuyIn: buyIn, Token: token}, nil
 }
+
+// JoinRequest is what a caller supplies to Join. UserID is empty for a
+// guest — the service generates one. AccountBalance is ignored when
+// Guest is true.
+type JoinRequest struct {
+	UserID         string
+	DisplayName    string
+	Guest          bool
+	AccountBalance domain.Tokens
+}
+
+// Joined is what a successful Join reports back.
+type Joined struct {
+	RoomID         string
+	Code           string
+	BuyIn          domain.Tokens
+	SessionBalance domain.Tokens
+	PartialBuyIn   bool
+	Guest          bool
+	Token          string
+}
+
+// Join resolves code to a room, seeds or reads back the caller's
+// session wallet, and issues a room-scoped token.
+//
+// Guests hold no user:{id} hash at all — their whole identity is the
+// signed token, which is exactly what spec §3 describes as
+// session-scoped and wiped when the session ends.
+func (s *Service) Join(ctx context.Context, code string, c JoinRequest) (Joined, error) {
+	roomID, err := s.store.RoomByCode(ctx, code)
+	if err != nil {
+		return Joined{}, err
+	}
+
+	rm, err := s.store.Room(ctx, roomID)
+	if err != nil {
+		return Joined{}, err
+	}
+	if rm.Status != "open" {
+		return Joined{}, ErrNotJoinable
+	}
+
+	userID := c.UserID
+	if userID == "" {
+		userID = uuid.NewString()
+	}
+
+	sessionBalance := domain.GuestSessionBalance(rm.BuyIn)
+	partial := false
+	if !c.Guest {
+		sessionBalance = domain.AccountSessionBalance(c.AccountBalance, rm.BuyIn)
+		partial = domain.IsPartialBuyIn(c.AccountBalance, rm.BuyIn)
+	}
+
+	effective, err := s.store.JoinRoom(ctx, roomID, userID, sessionBalance)
+	if err != nil {
+		return Joined{}, err
+	}
+
+	token, err := s.issuer.Issue(auth.Claims{UserID: userID, DisplayName: c.DisplayName, RoomID: roomID, Guest: c.Guest})
+	if err != nil {
+		return Joined{}, fmt.Errorf("room: join: %w", err)
+	}
+
+	return Joined{
+		RoomID:         roomID,
+		Code:           code,
+		BuyIn:          rm.BuyIn,
+		SessionBalance: effective,
+		PartialBuyIn:   partial,
+		Guest:          c.Guest,
+		Token:          token,
+	}, nil
+}
