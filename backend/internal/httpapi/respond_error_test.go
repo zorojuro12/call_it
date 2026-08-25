@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zorojuro12/call_it/backend/internal/account"
@@ -73,6 +75,49 @@ func TestWriteError_Mapping(t *testing.T) {
 			}
 			if body.Error.Code != tt.wantCode {
 				t.Errorf("wrapped error.code = %q, want %q", body.Error.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestWriteError_Unmapped(t *testing.T) {
+	sensitive := []string{"dial tcp", "10.0.0.5", "6379", "connection refused"}
+
+	cases := []error{
+		errors.New("dial tcp 10.0.0.5:6379: connection refused"),
+		fmt.Errorf("redisstore: place wager: %w", errors.New("EOF")),
+	}
+
+	for _, err := range cases {
+		t.Run(err.Error(), func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			WriteError(rec, err)
+
+			if rec.Code != 500 {
+				t.Errorf("status = %d, want 500", rec.Code)
+			}
+
+			raw := rec.Body.String()
+			for _, s := range sensitive {
+				if strings.Contains(raw, s) {
+					t.Errorf("response body leaks internal detail %q: %s", s, raw)
+				}
+			}
+
+			var body struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("response body does not decode as JSON: %v", err)
+			}
+			if body.Error.Code != "internal_error" {
+				t.Errorf("error.code = %q, want internal_error", body.Error.Code)
+			}
+			if body.Error.Message != "an internal error occurred" {
+				t.Errorf("error.message = %q, want the fixed generic string", body.Error.Message)
 			}
 		})
 	}

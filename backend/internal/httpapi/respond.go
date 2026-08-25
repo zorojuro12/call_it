@@ -80,6 +80,9 @@ func apiErrorFor(err error) *APIError {
 // the error envelope {"error": {"code": ..., "message": ...}}.
 func WriteError(w http.ResponseWriter, err error) {
 	apiErr := apiErrorFor(err)
+	if apiErr.Code == "internal_error" {
+		slog.Error("httpapi: unmapped error", "error", err)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(apiErr.Status)
