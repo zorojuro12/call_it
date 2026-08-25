@@ -19,3 +19,6 @@ var SettleRound string
 
 //go:embed refund_round.lua
 var RefundRound string
+
+//go:embed claim_unique.lua
+var ClaimUnique string

@@ -50,6 +50,18 @@ func IdemKey(key string) string {
 	return "idem:" + key
 }
 
+func UserKey(userID string) string {
+	return "user:" + userID
+}
+
+func EmailKey(normalizedEmail string) string {
+	return "email:" + normalizedEmail
+}
+
+func RateLimitKey(scope, id string) string {
+	return "ratelimit:" + scope + ":" + id
+}
+
 // WagerField builds a field name for the round:{roundID}:wagers hash.
 func WagerField(userID string, outcome int) string {
 	return userID + ":" + strconv.Itoa(outcome)
