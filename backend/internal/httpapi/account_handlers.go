@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/zorojuro12/call_it/backend/internal/account"
 )
 
 // registerAccountRoutes wires the account routes onto mux.
@@ -39,6 +42,14 @@ func handleClaimRefill(d Deps) http.HandlerFunc {
 
 		result, err := d.Accounts.ClaimRefill(r.Context(), claims.UserID)
 		if err != nil {
+			var quotaErr *account.QuotaError
+			if errors.As(err, &quotaErr) {
+				retryAfterSec := int(math.Ceil(quotaErr.RetryAfter.Seconds()))
+				if retryAfterSec < 1 {
+					retryAfterSec = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSec))
+			}
 			WriteError(w, err)
 			return
 		}

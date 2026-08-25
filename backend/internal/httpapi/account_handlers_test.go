@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -93,6 +96,97 @@ func TestClaimRefill(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 		if rec.Code != 400 {
 			t.Errorf("status = %d, want 400 (unknown field rejected), body: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func claimRefillRaw(mux http.Handler, token string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api/v1/accounts/me/refills", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestClaimRefill_Rejections(t *testing.T) {
+	deps := testDeps(t)
+	mux := NewMux(deps)
+
+	registerAt := func(t *testing.T, balance int64) (token, userID string) {
+		t.Helper()
+		email := testID(t, "rej") + "@example.com"
+		regBody := `{"email":"` + email + `","password":"correct horse battery","display_name":"Alice"}`
+		rec := registerRaw(mux, regBody)
+		if rec.Code != 201 {
+			t.Fatalf("register: status = %d, body: %s", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Data struct {
+				Account struct {
+					ID string `json:"id"`
+				} `json:"account"`
+				Token string `json:"token"`
+			} `json:"data"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+		if balance != 1000 {
+			setUserBalanceForTest(t, resp.Data.Account.ID, balance)
+		}
+		return resp.Data.Token, resp.Data.Account.ID
+	}
+
+	t.Run("already at target", func(t *testing.T) {
+		token, userID := registerAt(t, 1000)
+		rec := claimRefillRaw(mux, token)
+		if rec.Code != 409 {
+			t.Fatalf("status = %d, want 409, body: %s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &body)
+		if body.Error.Code != "refill_not_eligible" {
+			t.Errorf("error.code = %q, want refill_not_eligible", body.Error.Code)
+		}
+
+		u, err := deps.Store.User(context.Background(), userID)
+		if err != nil || u.Balance != 1000 {
+			t.Errorf("balance = (%d, %v), want (1000, nil) — unchanged", u.Balance, err)
+		}
+
+		// The 409 must not have consumed quota: a genuine claim from a
+		// lowered balance still succeeds afterward.
+		setUserBalanceForTest(t, userID, 100)
+		rec2 := claimRefillRaw(mux, token)
+		if rec2.Code != 201 {
+			t.Errorf("genuine claim after a 409: status = %d, want 201, body: %s", rec2.Code, rec2.Body.String())
+		}
+	})
+
+	t.Run("quota exhausted", func(t *testing.T) {
+		token, userID := registerAt(t, 100)
+		for i := 0; i < 3; i++ {
+			rec := claimRefillRaw(mux, token)
+			if rec.Code != 201 {
+				t.Fatalf("claim %d: status = %d, want 201, body: %s", i+1, rec.Code, rec.Body.String())
+			}
+			setUserBalanceForTest(t, userID, 100)
+		}
+
+		rec := claimRefillRaw(mux, token)
+		if rec.Code != 429 {
+			t.Fatalf("4th claim: status = %d, want 429, body: %s", rec.Code, rec.Body.String())
+		}
+		retryAfter := rec.Header().Get("Retry-After")
+		if n, err := strconv.Atoi(retryAfter); err != nil || n <= 0 {
+			t.Errorf("Retry-After = %q, want a positive integer", retryAfter)
+		}
+
+		u, err := deps.Store.User(context.Background(), userID)
+		if err != nil || u.Balance != 100 {
+			t.Errorf("balance = (%d, %v), want (100, nil) — the refused claim must credit nothing", u.Balance, err)
 		}
 	})
 }

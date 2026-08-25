@@ -132,6 +132,17 @@ func (s *Service) Login(ctx context.Context, email, password string) (Account, s
 	return Account{ID: u.ID, Email: u.Email, DisplayName: u.DisplayName, Balance: u.Balance}, token, nil
 }
 
+// QuotaError wraps domain.ErrRefillQuotaExhausted with the retry hint
+// the HTTP layer needs to set Retry-After. errors.Is still matches the
+// wrapped sentinel; errors.As retrieves this type for the hint.
+type QuotaError struct {
+	RetryAfter time.Duration
+}
+
+func (e *QuotaError) Error() string { return domain.ErrRefillQuotaExhausted.Error() }
+
+func (e *QuotaError) Unwrap() error { return domain.ErrRefillQuotaExhausted }
+
 // RefillResult is what a successful ClaimRefill reports back.
 type RefillResult struct {
 	Credited  domain.Tokens
@@ -161,7 +172,7 @@ func (s *Service) ClaimRefill(ctx context.Context, userID string) (RefillResult,
 		return RefillResult{}, fmt.Errorf("account: claim refill: %w", err)
 	}
 	if !decision.Allowed {
-		return RefillResult{}, domain.ErrRefillQuotaExhausted
+		return RefillResult{}, &QuotaError{RetryAfter: decision.RetryAfter}
 	}
 
 	credited, newBalance, err := s.store.TopUpBalance(ctx, userID, domain.RefillTarget)
