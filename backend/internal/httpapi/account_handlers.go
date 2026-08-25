@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zorojuro12/call_it/backend/internal/account"
+	"github.com/zorojuro12/call_it/backend/internal/domain"
 )
 
 // registerAccountRoutes wires the account routes onto mux.
@@ -54,7 +55,7 @@ func handleClaimRefill(d Deps) http.HandlerFunc {
 			return
 		}
 
-		w.Header().Set("X-RateLimit-Limit", "3")
+		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(domain.RefillQuota))
 		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))
 		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(result.ResetAt.Unix(), 10))
 
