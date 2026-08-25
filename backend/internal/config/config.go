@@ -6,17 +6,31 @@ package config
 import (
 	"fmt"
 	"strconv"
+	"time"
+)
+
+// minJWTSecretLen is the floor on the HMAC signing key. HS256's key
+// should be at least as long as the hash output it produces, or the
+// signature's effective strength drops below the algorithm's.
+const minJWTSecretLen = 32
+
+const (
+	defaultJWTTTL = 2 * time.Hour
+	minJWTTTL     = time.Minute
+	maxJWTTTL     = 24 * time.Hour
 )
 
 // Config holds Phase 0's configuration surface. Fields for services this
-// binary doesn't talk to yet (Redis, Postgres, Kafka, JWT) are added in
-// the phase that introduces that integration, not speculatively here.
+// binary doesn't talk to yet (Postgres, Kafka) are added in the phase
+// that introduces that integration, not speculatively here.
 type Config struct {
 	Port      int
 	Env       string
 	LogLevel  string
 	RedisAddr string
 	RedisDB   int
+	JWTSecret string        // REQUIRED — no default, min 32 bytes
+	JWTTTL    time.Duration // default 2h, valid 1m..24h
 }
 
 var validEnvs = map[string]bool{
@@ -45,6 +59,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		LogLevel:  "info",
 		RedisAddr: "localhost:6379",
 		RedisDB:   0,
+		JWTTTL:    defaultJWTTTL,
 	}
 
 	if v, ok := lookup("PORT"); ok {
@@ -88,6 +103,26 @@ func Load(lookup LookupFunc) (Config, error) {
 			return Config{}, fmt.Errorf("config: REDIS_DB %d out of valid range 0-15", db)
 		}
 		cfg.RedisDB = db
+	}
+
+	v, ok := lookup("JWT_SECRET")
+	if !ok || v == "" {
+		return Config{}, fmt.Errorf("config: JWT_SECRET is required")
+	}
+	if len(v) < minJWTSecretLen {
+		return Config{}, fmt.Errorf("config: JWT_SECRET must be at least %d bytes, got %d", minJWTSecretLen, len(v))
+	}
+	cfg.JWTSecret = v
+
+	if v, ok := lookup("JWT_TTL"); ok {
+		ttl, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: JWT_TTL %q is not a valid duration: %w", v, err)
+		}
+		if ttl < minJWTTTL || ttl > maxJWTTTL {
+			return Config{}, fmt.Errorf("config: JWT_TTL %s out of valid range 1m-24h", ttl)
+		}
+		cfg.JWTTTL = ttl
 	}
 
 	return cfg, nil
