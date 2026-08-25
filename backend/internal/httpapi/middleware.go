@@ -106,6 +106,32 @@ func RateLimit(store *redisstore.Store, p LimitPolicy) func(http.Handler) http.H
 	}
 }
 
+// authThrottle limits unauthenticated auth endpoints (register, login)
+// by client IP — there is no user identity yet to key on.
+func authThrottle(store *redisstore.Store) func(http.Handler) http.Handler {
+	return RateLimit(store, LimitPolicy{
+		Scope:  "auth",
+		Limit:  10,
+		Window: time.Minute,
+		KeyFn:  ClientIP,
+	})
+}
+
+// apiThrottle limits authenticated endpoints by the caller's user ID.
+// It must run after RequireAuth in the chain, so claims are already in
+// the request context by the time KeyFn reads them.
+func apiThrottle(store *redisstore.Store) func(http.Handler) http.Handler {
+	return RateLimit(store, LimitPolicy{
+		Scope:  "api",
+		Limit:  60,
+		Window: time.Minute,
+		KeyFn: func(r *http.Request) string {
+			claims, _ := ClaimsFrom(r.Context())
+			return claims.UserID
+		},
+	})
+}
+
 // ClientIP reads the caller's address from r.RemoteAddr only.
 // X-Forwarded-For is deliberately not consulted: it is caller-supplied,
 // so trusting it here would let any client mint unlimited fresh

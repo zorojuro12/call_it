@@ -6,10 +6,11 @@ import (
 )
 
 // registerAuthRoutes wires POST /api/v1/auth/register and
-// POST /api/v1/auth/login onto mux.
+// POST /api/v1/auth/login onto mux, throttled by client IP.
 func registerAuthRoutes(mux *http.ServeMux, d Deps) {
-	mux.HandleFunc("POST /api/v1/auth/register", handleRegister(d))
-	mux.HandleFunc("POST /api/v1/auth/login", handleLogin(d))
+	throttle := authThrottle(d.Store)
+	mux.Handle("POST /api/v1/auth/register", throttle(http.HandlerFunc(handleRegister(d))))
+	mux.Handle("POST /api/v1/auth/login", throttle(http.HandlerFunc(handleLogin(d))))
 }
 
 type loginRequest struct {

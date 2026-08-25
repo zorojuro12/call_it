@@ -14,7 +14,7 @@ import (
 
 // registerAccountRoutes wires the account routes onto mux.
 func registerAccountRoutes(mux *http.ServeMux, d Deps) {
-	mux.Handle("POST /api/v1/accounts/me/refills", RequireAuth(d.Issuer)(http.HandlerFunc(handleClaimRefill(d))))
+	mux.Handle("POST /api/v1/accounts/me/refills", RequireAuth(d.Issuer)(apiThrottle(d.Store)(http.HandlerFunc(handleClaimRefill(d)))))
 }
 
 type refillResponse struct {

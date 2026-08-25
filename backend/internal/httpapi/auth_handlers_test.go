@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/zorojuro12/call_it/backend/internal/account"
@@ -14,6 +16,20 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 	"github.com/zorojuro12/call_it/backend/internal/room"
 )
+
+// uniqueRemoteAddrCounter backs uniqueRemoteAddr.
+var uniqueRemoteAddrCounter atomic.Uint32
+
+// uniqueRemoteAddr returns a fresh loopback address on every call. The
+// "auth" scope throttle (Task 11) keys on client IP, and
+// httptest.NewRequest gives every request the same synthetic address by
+// default — without this, every register/login test in this package
+// would share one rate-limit bucket and start colliding once the
+// package's total call count crosses the throttle's limit.
+func uniqueRemoteAddr() string {
+	n := uniqueRemoteAddrCounter.Add(1)
+	return fmt.Sprintf("192.0.2.%d:1234", n%254+1)
+}
 
 func testDeps(t *testing.T) Deps {
 	t.Helper()
@@ -31,6 +47,7 @@ func TestRegister(t *testing.T) {
 	body := `{"email":"  Alice@Example.COM  ","password":"correct horse battery","display_name":"  Alice  "}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = uniqueRemoteAddr()
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -93,6 +110,7 @@ func TestRegister(t *testing.T) {
 func registerRaw(mux http.Handler, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("POST", "/api/v1/auth/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = uniqueRemoteAddr()
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
@@ -204,6 +222,7 @@ func TestLogin_Success(t *testing.T) {
 		body := `{"email":"` + loginEmail + `","password":"correct horse battery"}`
 		req := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = uniqueRemoteAddr()
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -263,6 +282,7 @@ func TestLogin_NoEnumeration(t *testing.T) {
 		body := `{"email":"` + loginEmail + `","password":"` + password + `"}`
 		req := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = uniqueRemoteAddr()
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		return rec

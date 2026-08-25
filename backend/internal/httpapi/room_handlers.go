@@ -9,9 +9,12 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/room"
 )
 
-// registerRoomRoutes wires the room creation and joining routes onto mux.
+// registerRoomRoutes wires the room creation and joining routes onto
+// mux. Creation is behind RequireAuth and the "api" throttle; joining is
+// behind OptionalAuth (guests allowed) and untethered from the api
+// throttle, since a guest has no stable user ID to key it on.
 func registerRoomRoutes(mux *http.ServeMux, d Deps) {
-	mux.Handle("POST /api/v1/rooms", RequireAuth(d.Issuer)(http.HandlerFunc(handleCreateRoom(d))))
+	mux.Handle("POST /api/v1/rooms", RequireAuth(d.Issuer)(apiThrottle(d.Store)(http.HandlerFunc(handleCreateRoom(d)))))
 	mux.Handle("POST /api/v1/rooms/{code}/participants", OptionalAuth(d.Issuer)(http.HandlerFunc(handleJoinRoom(d))))
 }
 
