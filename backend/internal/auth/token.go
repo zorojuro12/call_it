@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -71,8 +72,11 @@ func (i *Issuer) Issue(c Claims) (string, error) {
 func (i *Issuer) Verify(tokenString string) (Claims, error) {
 	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (any, error) {
 		return i.secret, nil
-	})
+	}, jwt.WithTimeFunc(i.now))
 	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return Claims{}, fmt.Errorf("%w: %v", ErrTokenExpired, err)
+		}
 		return Claims{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
 

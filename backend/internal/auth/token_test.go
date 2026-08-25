@@ -85,3 +85,32 @@ func TestIssueVerifyRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyExpired(t *testing.T) {
+	issuer, err := NewIssuer(validSecret(), time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer() unexpected error: %v", err)
+	}
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	issuer.now = func() time.Time { return base }
+
+	token, err := issuer.Issue(Claims{UserID: "u1"})
+	if err != nil {
+		t.Fatalf("Issue() unexpected error: %v", err)
+	}
+
+	issuer.now = func() time.Time { return base.Add(59 * time.Minute) }
+	if _, err := issuer.Verify(token); err != nil {
+		t.Errorf("Verify() at T+59m: unexpected error: %v", err)
+	}
+
+	issuer.now = func() time.Time { return base.Add(2 * time.Hour) }
+	_, err = issuer.Verify(token)
+	if !errors.Is(err, ErrTokenExpired) {
+		t.Errorf("Verify() at T+2h: err = %v, want ErrTokenExpired", err)
+	}
+	if errors.Is(err, ErrInvalidToken) {
+		t.Errorf("Verify() at T+2h: err = %v, must not also satisfy ErrInvalidToken", err)
+	}
+}
