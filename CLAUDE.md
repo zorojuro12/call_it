@@ -219,12 +219,12 @@ on `main.go`.
 
 `golang-patterns`, `golang-testing`, `docker-patterns` — installed ahead of
 Phase 0 since it writes `go.mod` and `docker-compose.yml`. `redis-patterns`
-is now in use, installed ahead of Phase 2. `postgres-patterns`/
-`database-migrations` (Phase 5) and `api-design` (Phase 3) are **not yet
-installed** — staggered per-phase per the plan's "Tooling to import" column
-(plan §9), since rule dirs are always-loaded into every turn and shouldn't
-sit in context for a stack this project isn't touching yet. Check that
-column before starting a new phase.
+is now in use, installed ahead of Phase 2. `api-design` is installed ahead
+of Phase 3. `postgres-patterns`/`database-migrations` (Phase 5) are **not
+yet installed** — staggered per-phase per the plan's "Tooling to import"
+column (plan §9), since rule dirs are always-loaded into every turn and
+shouldn't sit in context for a stack this project isn't touching yet. Check
+that column before starting a new phase.
 
 `continuous-learning-v2` is present under `.claude/skills/` (from the bulk
 ECC tooling install) but **intentionally dormant** — `observer.enabled:
