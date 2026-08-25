@@ -54,3 +54,32 @@ func TestCreateUser(t *testing.T) {
 		t.Errorf("UserByEmail(nobody) err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestCreateUser_DuplicateEmail(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	email := testID(t, "user") + "@example.com"
+
+	aID := testID(t, "userA")
+	if err := store.CreateUser(ctx, User{ID: aID, Email: email, DisplayName: "First", Balance: domain.StartingBalance}); err != nil {
+		t.Fatalf("CreateUser(A) = %v, want nil", err)
+	}
+
+	bID := testID(t, "userB")
+	err := store.CreateUser(ctx, User{ID: bID, Email: email, DisplayName: "Second", Balance: 42})
+	if !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("CreateUser(B) err = %v, want ErrAlreadyExists", err)
+	}
+
+	byEmail, err := store.UserByEmail(ctx, email)
+	if err != nil {
+		t.Fatalf("UserByEmail() = %v, want nil", err)
+	}
+	if byEmail.ID != aID || byEmail.DisplayName != "First" || byEmail.Balance != domain.StartingBalance {
+		t.Errorf("UserByEmail() = %+v, want A's untouched fields", byEmail)
+	}
+
+	if _, err := store.User(ctx, bID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("User(B) err = %v, want ErrNotFound — B's hash must never have been written", err)
+	}
+}
