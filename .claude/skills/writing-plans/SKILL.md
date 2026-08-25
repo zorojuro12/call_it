@@ -75,6 +75,30 @@ it fails. (Observed in the Phase 1 plan, 2026-08-23: four such checkpoints —
 regression pins for behavior an earlier checkpoint's implementation already
 satisfied.)
 
+**Name the observable signal, at the interface the test actually calls.** A
+checkpoint can also fail to RED for a second, unrelated reason: the behavior it
+specifies is real, but the tested interface can't *see* it. Before writing a
+checkpoint, answer — what value, error, or side effect changes at the public
+surface this checkpoint's test calls? Not "the script sets status X internally,"
+but "the wrapper returns `ErrAlreadyLocked`." If no such signal can be named,
+the checkpoint is unfalsifiable by construction, and no reordering fixes it.
+
+Two ways out, both decided while writing the plan rather than discovered
+mid-execution:
+
+1. **The distinction doesn't matter to callers** → merge the checkpoint into a
+   neighbor that does have an observable delta.
+2. **The distinction does matter** → make "extend the interface to surface this
+   case" its own earlier checkpoint, then checkpoint the behavior against it.
+
+This is the failure mode of any layer whose lower level has more states than its
+wrapper exposes — a wrapper over a script, a client over a protocol, an ORM over
+a stored procedure. (Observed in Phase 2, 2026-08-24: `lock_round.lua`'s
+`ALREADY_LOCKED` case was black-box indistinguishable from its unconditional-OK
+predecessor at the Go wrapper's return type. Cost a full unwind — revert the
+script, re-run the test to prove it still passed, then recombine three planned
+checkpoints into one commit.)
+
 ## Plan Document Header
 
 **Every plan MUST start with this header:**
@@ -255,3 +279,19 @@ or spec. See `docs/dev-workflow-guide.md` for this project's two-model loop.
 two-stage review. That skill isn't installed in this project; inline execution
 is the deliberate default. Install `subagent-driven-development` from the
 superpowers checkout if that changes.)
+
+## Relationship to the portable copy
+
+This file is the CallIt-adapted copy. A generalized version lives in the
+skills library at `~/projects/claude-skills/writing-plans/` — same rules, with
+the project-specific parts (plan location, `docs/dev-workflow-guide.md` links,
+`dev` branch, CallIt examples) stripped, and the spec-driven-vs-code-driven
+choice stated as a fork rather than a decision already made.
+
+**When a rule here changes, decide which copy it belongs to.** The test: did you
+invent a rule, or set a value? Rules go to the library too; values stay here.
+See `docs/dev-workflow-guide.md` §9 for the full split and why the library isn't
+live-loaded from `~/.claude/skills/`.
+
+Upstream is `obra/superpowers`, cloned read-only at `~/projects/superpowers` —
+don't edit that checkout.

@@ -276,6 +276,47 @@ many client repos, the calculus genuinely flips — cross-project detection and
 export/import are solving real problems there that don't exist for one solo
 project.
 
+### Carrying adapted skills to other projects — decided 2026-08-25
+
+Of the 22 skills in `.claude/skills/`, **18 are byte-identical to their
+sources** (14 from the ECC marketplace, 4 from the `obra/superpowers` clone at
+`~/projects/superpowers`). Only four diverge, and only one of those is worth
+carrying anywhere:
+
+| Skill | Divergence | Portable? |
+|---|---|---|
+| `writing-plans` | +130 lines | **Yes** — real methodology (see below) |
+| `executing-plans` | +18 lines | No — pure config: `dev` branch, no-PR, `--no-ff`, skill path prefixes |
+| `brainstorming` | +2 lines | No — spec directory path only |
+| `journal` | written from scratch | Already generalized to `~/.claude/skills/journal-global/` |
+
+The test applied: **did we invent a rule, or set a value?** Rules travel; values
+don't. `executing-plans`' additions all encode *this* repo's branch names and
+merge policy — a new project needs different values, not these ones.
+
+`writing-plans`' additions are rules: multi-checkpoint task granularity, the
+RED→GREEN reality test for a checkpoint (Phase 1), the observable-signal rule
+(Phase 2's `lock_round.lua` `ALREADY_LOCKED` case), "a plan stops at green,
+never merges", the two-implementers specificity bar, and committing the plan
+before handoff. None of them mention wagering, Redis, or Go.
+
+**Where the portable copy lives:** `~/projects/claude-skills/` — a git repo you
+install *from*, not a live-loaded directory. It is deliberately **not** in
+`~/.claude/skills/`, for two reasons: a live-loaded global copy would need an
+awkward `-global` suffix to stay distinguishable from the project copy in a flat
+skill listing, and an auto-loaded adapted skill can carry this project's
+assumptions into an unrelated repo with no explicit step where you'd notice.
+Copy-and-adapt is the same model ECC and superpowers already use — one mental
+model, not two.
+
+**One thing that stays project-specific and must be re-decided per project:**
+the spec-driven-vs-code-driven plan format. It's contingent on execution mode
+(inline here; subagent-driven wants pre-written code), so the library version
+states it as a fork to choose, not a default to inherit.
+
+**Don't edit `~/projects/superpowers/`** — it's a clean clone of upstream, not a
+fork. Edits get clobbered by `git pull` and can't be pushed.
+
 ### Other tradeoffs decided here
 
 | Decision | Verdict | Revisit when |
@@ -285,6 +326,7 @@ project.
 | `writing-plans` vs `orch-*` (§4) | `writing-plans` default; `orch-fix-defect`/`orch-refine-code` for their narrow shapes | Never really — they coexist; just don't use both for the same job |
 | Skills vs rules import timing (§3) | Skills eagerly (cheap, listing-only until invoked); rule dirs staggered per-phase (always-loaded full text) | If a rule pack turns out small enough that staggering costs more attention than it saves |
 | `journal` local vs `journal-global` | Project-local copy wins here (ADRs at `docs/decisions/`, not the global `docs/adr/`) | Starting a new project — use `journal-global` unless it needs project-specific tailoring |
+| Portable skills: global live-load vs install-from library | Library at `~/projects/claude-skills/`, copied in per project | A skill turns out to need zero per-project adaptation — then live-loading it globally costs nothing |
 | `CLAUDE.md` timing (§3) | After Phase 0, not from the spec | Never — writing it before real code exists means documenting guesses |
 
 ---
