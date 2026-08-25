@@ -63,6 +63,24 @@ func (s *Store) Allow(ctx context.Context, scope, id string, limit int, window t
 			Member:    reply[2],
 			ResetAt:   time.UnixMilli(resetAtMs),
 		}, nil
+	case "DENIED":
+		if len(reply) < 5 {
+			return Decision{}, fmt.Errorf("redisstore: rate limit %s:%s: DENIED reply has %d elements, want 5", scope, id, len(reply))
+		}
+		retryAfterMs, err := strconv.ParseInt(reply[3], 10, 64)
+		if err != nil {
+			return Decision{}, fmt.Errorf("redisstore: rate limit %s:%s: malformed retryAfter %q: %w", scope, id, reply[3], err)
+		}
+		resetAtMs, err := strconv.ParseInt(reply[4], 10, 64)
+		if err != nil {
+			return Decision{}, fmt.Errorf("redisstore: rate limit %s:%s: malformed resetAt %q: %w", scope, id, reply[4], err)
+		}
+		return Decision{
+			Allowed:    false,
+			Remaining:  0,
+			RetryAfter: time.Duration(retryAfterMs) * time.Millisecond,
+			ResetAt:    time.UnixMilli(resetAtMs),
+		}, nil
 	default:
 		return Decision{}, fmt.Errorf("redisstore: rate limit %s:%s: unrecognized status %q", scope, id, reply[0])
 	}

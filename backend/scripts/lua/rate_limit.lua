@@ -20,6 +20,21 @@ redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
 
 local count = redis.call('ZCARD', key)
 
+if count >= limit then
+  local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+  local resetAt = now + window
+  local retryAfter = window
+  if #oldest > 0 then
+    local oldestScore = tonumber(oldest[2])
+    resetAt = oldestScore + window
+    retryAfter = resetAt - now
+    if retryAfter < 1 then
+      retryAfter = 1
+    end
+  end
+  return {'DENIED', '0', '', tostring(retryAfter), tostring(resetAt)}
+end
+
 redis.call('ZADD', key, now, member)
 redis.call('PEXPIRE', key, window)
 
