@@ -12,8 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zorojuro12/call_it/backend/internal/account"
+	"github.com/zorojuro12/call_it/backend/internal/auth"
 	"github.com/zorojuro12/call_it/backend/internal/config"
 	"github.com/zorojuro12/call_it/backend/internal/httpapi"
+	"github.com/zorojuro12/call_it/backend/internal/redisstore"
+	"github.com/zorojuro12/call_it/backend/internal/room"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -34,9 +38,32 @@ func run() error {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 
+	store, err := redisstore.New(cfg.RedisAddr, cfg.RedisDB)
+	if err != nil {
+		return fmt.Errorf("connecting to redis: %w", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			logger.Error("closing redis store", "error", err)
+		}
+	}()
+
+	issuer, err := auth.NewIssuer([]byte(cfg.JWTSecret), cfg.JWTTTL)
+	if err != nil {
+		return fmt.Errorf("constructing token issuer: %w", err)
+	}
+
+	accounts := account.NewService(store, issuer)
+	rooms := room.NewService(store, issuer)
+
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: httpapi.NewMux(),
+		Addr: fmt.Sprintf(":%d", cfg.Port),
+		Handler: httpapi.NewMux(httpapi.Deps{
+			Accounts: accounts,
+			Rooms:    rooms,
+			Store:    store,
+			Issuer:   issuer,
+		}),
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
