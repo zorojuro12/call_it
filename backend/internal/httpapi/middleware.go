@@ -2,10 +2,15 @@ package httpapi
 
 import (
 	"context"
+	"math"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zorojuro12/call_it/backend/internal/auth"
+	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 )
 
 // claimsContextKey is an unexported type so this package's context key
@@ -57,6 +62,62 @@ func RequireAuth(issuer *auth.Issuer) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// LimitPolicy parameterizes one RateLimit middleware instance: the
+// limiter scope and window, and how to derive the per-request key.
+type LimitPolicy struct {
+	Scope  string
+	Limit  int
+	Window time.Duration
+	KeyFn  func(*http.Request) string
+}
+
+// RateLimit throttles requests through the shared sliding-window
+// limiter, annotating every response with X-RateLimit-* headers and
+// denying over-limit requests with 429 and Retry-After. A store error
+// is a 500 — a limiter that cannot reach Redis must fail closed, never
+// wave traffic through.
+func RateLimit(store *redisstore.Store, p LimitPolicy) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			decision, err := store.Allow(r.Context(), p.Scope, p.KeyFn(r), p.Limit, p.Window)
+			if err != nil {
+				WriteError(w, err)
+				return
+			}
+
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(p.Limit))
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(decision.Remaining))
+			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(decision.ResetAt.Unix(), 10))
+
+			if !decision.Allowed {
+				retryAfterSec := int(math.Ceil(decision.RetryAfter.Seconds()))
+				if retryAfterSec < 1 {
+					retryAfterSec = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSec))
+				WriteError(w, &APIError{Status: 429, Code: "rate_limit_exceeded", Message: "rate limit exceeded"})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// ClientIP reads the caller's address from r.RemoteAddr only.
+// X-Forwarded-For is deliberately not consulted: it is caller-supplied,
+// so trusting it here would let any client mint unlimited fresh
+// rate-limit buckets by varying a header. When a real proxy sits in
+// front of this service, the trusted-proxy configuration to parse it
+// correctly gets designed then.
+func ClientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // OptionalAuth proceeds without claims when no Authorization header is
