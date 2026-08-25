@@ -120,6 +120,31 @@ func TestTopUpBalance(t *testing.T) {
 	}
 }
 
+func TestTopUpBalance_AtOrAboveTarget(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	idAt := testID(t, "user")
+	mustCreateUser(t, store, idAt, 1000)
+	credited, newBalance, err := store.TopUpBalance(ctx, idAt, 1000)
+	if err != nil {
+		t.Fatalf("TopUpBalance(at target) = %v, want nil", err)
+	}
+	if credited != 0 || newBalance != 1000 {
+		t.Errorf("TopUpBalance(at target) = (%d, %d), want (0, 1000)", credited, newBalance)
+	}
+
+	idAbove := testID(t, "user")
+	mustCreateUser(t, store, idAbove, 2500)
+	credited2, newBalance2, err := store.TopUpBalance(ctx, idAbove, 1000)
+	if err != nil {
+		t.Fatalf("TopUpBalance(above target) = %v, want nil", err)
+	}
+	if credited2 != 0 || newBalance2 != 2500 {
+		t.Errorf("TopUpBalance(above target) = (%d, %d), want (0, 2500) — must not be reduced to the target", credited2, newBalance2)
+	}
+}
+
 func mustCreateUser(t *testing.T, store *Store, userID string, balance domain.Tokens) {
 	t.Helper()
 	u := User{ID: userID, Email: userID + "@example.com", DisplayName: "Test", PasswordHash: "hash", Balance: balance}
