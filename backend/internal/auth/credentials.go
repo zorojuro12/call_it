@@ -3,12 +3,15 @@ package auth
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Length bounds for user-supplied credentials.
 const (
-	MinPasswordLen = 12
-	MaxPasswordLen = 128
+	MinPasswordLen    = 12
+	MaxPasswordLen    = 128
+	MaxDisplayNameLen = 32
 )
 
 // NormalizeEmail lowercases and trims raw so that the same address
@@ -70,5 +73,31 @@ func ValidatePassword(plain string) error {
 	if len(plain) < MinPasswordLen || len(plain) > MaxPasswordLen {
 		return fmt.Errorf("%w: must be %d-%d bytes", ErrWeakPassword, MinPasswordLen, MaxPasswordLen)
 	}
+	return nil
+}
+
+// NormalizeDisplayName trims surrounding whitespace.
+func NormalizeDisplayName(raw string) string {
+	return strings.TrimSpace(raw)
+}
+
+// ValidateDisplayName bounds an already-normalized name by rune count —
+// not byte count, since the bound is what a person sees in a
+// participant list — and rejects control characters. The name is
+// echoed into WebSocket payloads (Phase 4) and rendered client-side
+// (Phase 6); a newline is a formatting break at best and a
+// log-injection vector at worst.
+func ValidateDisplayName(normalized string) error {
+	n := utf8.RuneCountInString(normalized)
+	if n < 1 || n > MaxDisplayNameLen {
+		return fmt.Errorf("%w: must be 1-%d characters", ErrInvalidDisplayName, MaxDisplayNameLen)
+	}
+
+	for _, r := range normalized {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("%w: must not contain control characters", ErrInvalidDisplayName)
+		}
+	}
+
 	return nil
 }

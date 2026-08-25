@@ -62,3 +62,29 @@ func TestValidatePassword(t *testing.T) {
 		}
 	}
 }
+
+func TestDisplayName(t *testing.T) {
+	t.Run("normalize", func(t *testing.T) {
+		if got := NormalizeDisplayName("  Alice  "); got != "Alice" {
+			t.Errorf("NormalizeDisplayName(%q) = %q, want %q", "  Alice  ", got, "Alice")
+		}
+	})
+
+	t.Run("valid", func(t *testing.T) {
+		valid := []string{"Alice", "J", strings.Repeat("a", 32), "あかり"}
+		for _, name := range valid {
+			if err := ValidateDisplayName(name); err != nil {
+				t.Errorf("ValidateDisplayName(%q) unexpected error: %v", name, err)
+			}
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		invalid := []string{"", strings.Repeat("a", 33), "Alice\nBob", "Alice\x00"}
+		for _, name := range invalid {
+			if err := ValidateDisplayName(name); !errors.Is(err, ErrInvalidDisplayName) {
+				t.Errorf("ValidateDisplayName(%q) err = %v, want ErrInvalidDisplayName", name, err)
+			}
+		}
+	})
+}
