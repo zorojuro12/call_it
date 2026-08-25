@@ -8,4 +8,5 @@ import "errors"
 var (
 	ErrPasswordMismatch = errors.New("auth: password does not match")
 	ErrMalformedHash    = errors.New("auth: malformed password hash")
+	ErrInvalidEmail     = errors.New("auth: invalid email address")
 )
