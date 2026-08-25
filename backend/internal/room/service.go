@@ -3,7 +3,9 @@ package room
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
+	"io"
 
 	"github.com/google/uuid"
 	"github.com/zorojuro12/call_it/backend/internal/auth"
@@ -11,16 +13,23 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 )
 
+// maxCodeAttempts bounds the code-collision retry loop. Five attempts
+// against a 31^6 ~= 887-million-code space is far beyond what live room
+// counts need; the bound exists so a pathological rand cannot spin
+// forever.
+const maxCodeAttempts = 5
+
 // Service orchestrates room lifecycle: creation with a generated code,
 // and joining by code as a guest or account holder.
 type Service struct {
 	store  *redisstore.Store
 	issuer *auth.Issuer
+	rand   io.Reader
 }
 
 // NewService constructs a Service bound to store and issuer.
 func NewService(store *redisstore.Store, issuer *auth.Issuer) *Service {
-	return &Service{store: store, issuer: issuer}
+	return &Service{store: store, issuer: issuer, rand: rand.Reader}
 }
 
 // Created is what a successful Create reports back.
@@ -43,12 +52,25 @@ type Created struct {
 func (s *Service) Create(ctx context.Context, hostID, hostName string, buyIn domain.Tokens) (Created, error) {
 	roomID := uuid.NewString()
 
-	code, err := GenerateCode(rand.Reader)
-	if err != nil {
-		return Created{}, fmt.Errorf("room: create: %w", err)
-	}
+	var code string
+	for attempt := 0; ; attempt++ {
+		if attempt >= maxCodeAttempts {
+			return Created{}, ErrCodeExhausted
+		}
 
-	if err := s.store.CreateRoom(ctx, roomID, code, hostID, buyIn); err != nil {
+		c, err := GenerateCode(s.rand)
+		if err != nil {
+			return Created{}, fmt.Errorf("room: create: %w", err)
+		}
+
+		err = s.store.CreateRoom(ctx, roomID, c, hostID, buyIn)
+		if err == nil {
+			code = c
+			break
+		}
+		if errors.Is(err, redisstore.ErrAlreadyExists) {
+			continue
+		}
 		return Created{}, err
 	}
 

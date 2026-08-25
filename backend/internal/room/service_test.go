@@ -1,6 +1,7 @@
 package room
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -78,4 +79,75 @@ func TestCreate(t *testing.T) {
 	if _, err := svc.Create(ctx, hostID, "Host", 20000); !errors.Is(err, domain.ErrInvalidBuyIn) {
 		t.Errorf("Create() with buy-in 20000: err = %v, want ErrInvalidBuyIn", err)
 	}
+}
+
+// sequenceReader returns each byte slice in sequence, then repeats the
+// last one forever — used to drive GenerateCode deterministically.
+type sequenceReader struct {
+	seqs [][]byte
+	idx  int
+}
+
+func (r *sequenceReader) Read(p []byte) (int, error) {
+	seq := r.seqs[r.idx]
+	if r.idx < len(r.seqs)-1 {
+		r.idx++
+	}
+	return copy(p, seq), nil
+}
+
+func TestCreate_CodeCollision(t *testing.T) {
+	store := newTestStore(t)
+	issuer := testIssuer(t)
+
+	t.Run("collision is retried", func(t *testing.T) {
+		svc := NewService(store, issuer)
+		svc.rand = &sequenceReader{seqs: [][]byte{
+			bytes.Repeat([]byte{0x00}, CodeLen),
+			bytes.Repeat([]byte{0x01}, CodeLen),
+		}}
+
+		hostA := testID(t, "hostA")
+		createdA, err := svc.Create(context.Background(), hostA, "A", 500)
+		if err != nil {
+			t.Fatalf("Create(A) = %v, want nil", err)
+		}
+
+		hostB := testID(t, "hostB")
+		createdB, err := svc.Create(context.Background(), hostB, "B", 500)
+		if err != nil {
+			t.Fatalf("Create(B) = %v, want nil", err)
+		}
+
+		if createdA.Code == createdB.Code {
+			t.Fatalf("Create(A).Code == Create(B).Code == %q, want distinct codes", createdA.Code)
+		}
+
+		gotA, err := store.RoomByCode(context.Background(), createdA.Code)
+		if err != nil || gotA != createdA.RoomID {
+			t.Errorf("RoomByCode(A) = (%q, %v), want (%q, nil)", gotA, err, createdA.RoomID)
+		}
+		gotB, err := store.RoomByCode(context.Background(), createdB.Code)
+		if err != nil || gotB != createdB.RoomID {
+			t.Errorf("RoomByCode(B) = (%q, %v), want (%q, nil)", gotB, err, createdB.RoomID)
+		}
+	})
+
+	t.Run("exhaustion", func(t *testing.T) {
+		svc := NewService(store, issuer)
+		// 0x02, not 0x00/0x01: those were already claimed by the
+		// "collision is retried" subtest sharing this same store.
+		svc.rand = &sequenceReader{seqs: [][]byte{bytes.Repeat([]byte{0x02}, CodeLen)}}
+
+		host1 := testID(t, "host1")
+		if _, err := svc.Create(context.Background(), host1, "First", 500); err != nil {
+			t.Fatalf("Create(first) = %v, want nil", err)
+		}
+
+		host2 := testID(t, "host2")
+		_, err := svc.Create(context.Background(), host2, "Second", 500)
+		if !errors.Is(err, ErrCodeExhausted) {
+			t.Fatalf("Create(second) err = %v, want ErrCodeExhausted", err)
+		}
+	})
 }
