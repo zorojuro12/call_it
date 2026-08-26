@@ -40,6 +40,7 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 
 		ident := Identity{UserID: claims.UserID, DisplayName: claims.DisplayName, Guest: claims.Guest}
 		c := NewClient(conn, ident, cfg)
+		c.RoomID = claims.RoomID
 		room := hub.Join(claims.RoomID, c)
 
 		c.Send(mustEncode(TypeConnected, ConnectedEvent{

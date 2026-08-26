@@ -27,12 +27,16 @@ type Identity struct {
 }
 
 // Client is one connected socket: its identity, its underlying
-// connection, and the buffered channel its write pump drains.
+// connection, and the buffered channel its write pump drains. RoomID is
+// the room its token is scoped to — set by Handler from the verified
+// claims, so a message router can trust it over anything a message
+// payload claims.
 type Client struct {
 	Identity
-	conn Conn
-	cfg  ClientConfig
-	send chan []byte
+	RoomID string
+	conn   Conn
+	cfg    ClientConfig
+	send   chan []byte
 }
 
 // newClient constructs a Client with a send buffer of the given size.
