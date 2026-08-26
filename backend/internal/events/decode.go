@@ -2,9 +2,16 @@ package events
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 )
+
+// ErrUnknownEventType is returned when an outbox entry's type field is
+// missing or not one Decode recognizes. A relay that silently dropped
+// such an entry would lose a money movement without signalling, so this
+// must always surface as an error rather than a skip.
+var ErrUnknownEventType = errors.New("events: unknown event type")
 
 // Decode turns a Redis Stream entry's field map into a typed Event,
 // switching on fields["type"]. A missing required field is an error,
@@ -19,7 +26,7 @@ func Decode(fields map[string]string) (Event, error) {
 	case "round_refunded":
 		return decodeRoundSettled(fields, true)
 	default:
-		return nil, fmt.Errorf("events: unrecognized type %q", fields["type"])
+		return nil, fmt.Errorf("%w: %q", ErrUnknownEventType, fields["type"])
 	}
 }
 

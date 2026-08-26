@@ -1,6 +1,7 @@
 package events
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -252,5 +253,28 @@ func TestDecodeRoundRefunded_ContradictoryWinningOutcome(t *testing.T) {
 
 	if _, err := Decode(fields); err == nil {
 		t.Errorf("Decode() error = nil, want an error for a refund carrying a winning_outcome")
+	}
+}
+
+func TestDecodeUnknownType(t *testing.T) {
+	tests := []struct {
+		name   string
+		fields map[string]string
+	}{
+		{"nonsense type", map[string]string{"type": "nonsense"}},
+		{"type absent entirely", map[string]string{"user": "u1"}},
+		{"empty field map", map[string]string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev, err := Decode(tt.fields)
+			if !errors.Is(err, ErrUnknownEventType) {
+				t.Errorf("Decode() error = %v, want errors.Is(err, ErrUnknownEventType)", err)
+			}
+			if ev != nil {
+				t.Errorf("Decode() event = %v, want nil", ev)
+			}
+		})
 	}
 }
