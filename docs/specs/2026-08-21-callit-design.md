@@ -83,6 +83,17 @@ token gestures at each technology.
 
 ## 4. Gameplay & Round Lifecycle
 
+- **Round control travels over the WebSocket, not REST** (Phase 4b
+  Amendment D1). Room creation and joining stay on REST — they happen
+  before any socket exists — but opening a round, wagering, and
+  resolving are all socket messages (`create_round`, `place_wager`,
+  `resolve_round`), for three reasons: the wager path's <15 ms p99
+  target (§7) works against a fresh HTTP request per wager; the host's
+  identity is already verified on the socket via the room-scoped JWT,
+  so a REST route would re-verify the same claim to reach the same
+  room; and every one of these actions produces a broadcast, so
+  handling them where the room's connected clients already live avoids
+  a REST handler reaching into the WebSocket hub to publish.
 - The host manually types each round's question and defines **2-4 custom
   outcome options** (not fixed to binary Yes/No) — there is no external
   data feed to consult, since these are live, in-the-moment events on
@@ -134,6 +145,14 @@ token gestures at each technology.
   rule guarantees is that the host never has a systematic, complete view
   of the board before resolving — not that no individual stake can ever
   be guessed.
+
+- **Known limitation: no reconnect-with-session-resume (Phase 4b Task
+  8 CP2).** `EndSession` — folding a session's net result into an
+  account holder's persistent balance — fires on socket disconnect. A
+  player who drops and reconnects therefore ends their session and
+  starts a new one at the room's buy-in, losing any in-room profit or
+  loss accrued before the drop. Fixing this needs a grace window before
+  a disconnect is treated as final, deferred to Phase 7 hardening.
 
 ## 5. Write Path / Data Flow
 

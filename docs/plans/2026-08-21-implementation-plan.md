@@ -102,7 +102,9 @@ schema change, not a wrapper change.
 | `code:{roomCode}` | STRING | → `roomID` (join lookup) |
 | `room:{roomID}` | HASH | `host_id`, `buy_in`, `status`, `created_at` |
 | `room:{roomID}:wallets` | HASH | `userID` → session balance |
-| `round:{roundID}` | HASH | `room_id`, `status`, `lock_at_ms`, `outcome_count`, `resolved_outcome` |
+| `room:{roomID}:round` | STRING | → current `roundID`, set when a round opens and deleted at a terminal state (Phase 4b Amendment D2) |
+| `room:{roomID}:opening` | HASH | `userID` → the effective balance granted at join, fixed for the session (Phase 4b Amendment D3) |
+| `round:{roundID}` | HASH | `room_id`, `question`, `outcomes` (JSON array), `status`, `lock_at_ms`, `outcome_count`, `resolved_outcome` — `question`/`outcomes` added Phase 4b (Amendment D4) |
 | `round:{roundID}:pools` | HASH | `0..n` → pool amount, `total` → sum |
 | `round:{roundID}:wagers` | HASH | `{userID}:{outcomeIdx}` → amount |
 | `round:{roundID}:bettors` | SET | distinct user IDs that have wagered |
@@ -304,7 +306,7 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 2 | **Redis layer** | Key schema, four Lua scripts (`place_wager`, `lock_round`, `settle_round`, `refund_round`), Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 | `redis-patterns` skill |
 | 3 | **Auth + REST** ✅ | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 | `api-design` skill |
 | 4a | **WebSocket transport** ✅ | Authenticated room socket (JWT verified at handshake, no per-message lookup), per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, join/leave presence broadcast | 3 | None new |
-| 4b | **Round lifecycle** | Rounds, wagers, live odds, server-side lock timer and 60-second auto-refund fallback, host-resolve settlement reveal, session-end persistence, playable end to end from a CLI client | 4a | None new |
+| 4b | **Round lifecycle** ✅ | Rounds, wagers, live odds, server-side lock timer and 60-second auto-refund fallback, host-resolve settlement reveal, session-end persistence, playable end to end from a CLI client | 4a | None new |
 | 5 | **Kafka + ledger** | Outbox relay, `wagers-placed` and `rounds-settled` producers, ledger-worker consumer, migrations, deferred constraint trigger, Redis↔PostgreSQL reconciliation test | 2, 4b | `postgres-patterns`, `database-migrations` skills |
 | 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
 | 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5, 6 | None new — spec already names k6 directly |
@@ -418,7 +420,7 @@ reliably take longer than they appear.
 
 ## 12. Acceptance
 
-- [ ] Phases 0–4 complete, producing an end-to-end playable round
+- [x] Phases 0–4 complete, producing an end-to-end playable round — `internal/ws.TestEndToEndRound` (Phase 4b Task 10 CP1) is the evidence: a host and two players register/join over REST, open a round, wager, lock, and resolve over the real socket transport, with token conservation (`wallets + dust == combined opening stakes`) asserted at the end.
 - [ ] Concurrency suite proves zero double-spend under contention
 - [ ] Redis↔PostgreSQL reconciliation test passes after a load run
 - [ ] Test coverage meets the project's 80% minimum

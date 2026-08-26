@@ -347,6 +347,30 @@ deferred to Phase 7 hardening) and the room-code generator's slight
 modulo bias (accepted — the code is a lookup handle, not a secret;
 authorization rests on the JWT).
 
+**Phase 4b's security review** (`security-reviewer` agent, run against
+`internal/round`, `internal/wager`, and `internal/ws` before close-out)
+found one HIGH, fixed on the spot: the socket router's error-code table
+had no case for a throttled wager (`wager.ErrRateLimited`), so it fell
+through to the generic `internal_error` code instead of `rate_limited`,
+giving a rate-limited client no signal to back off — now mapped, with
+the retry-after duration folded into the message. Every invariant the
+plan called out to confirm held (host-cannot-wager enforced in Lua and
+mirrored in the router's error table, wager anonymity — the
+`odds_updated` payload's key set asserted directly, not just assumed,
+lockout via Redis `TIME` not Go, UUIDv4 idempotency keys validated,
+settlement math computed once in `internal/domain` and never
+recomputed, room ID always taken from the verified token claim rather
+than the message payload, the one shared rate limiter, no hardcoded
+secrets). One MEDIUM was raised — a session ending twice on a rapid
+disconnect/reconnect within the same window, since `EndSession` folds
+a delta into the persistent balance without clearing the session's
+opening-stake marker — but this is exactly the known limitation Task 8
+CP2 already documented and this file already named above (under "A
+session's opening stake..."): reconnect-with-session-resume needs a
+grace window this phase doesn't have, deferred to Phase 7 hardening
+alongside login timing. Not a new gap this review found, its known
+mechanism.
+
 `continuous-learning-v2` is present under `.claude/skills/` (from the bulk
 ECC tooling install) but **intentionally dormant** — `observer.enabled:
 false`, no hooks wired in `~/.claude/settings.json`. Don't enable it without
