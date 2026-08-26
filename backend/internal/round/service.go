@@ -98,3 +98,78 @@ func (s *Service) Open(ctx context.Context, roomID, callerID string, spec Spec) 
 
 	return opened, nil
 }
+
+// Resolve settles roomID's current round on callerID's (the host's)
+// behalf, then reveals every player's result to the room. This is the
+// first and only moment a per-player stake is disclosed (CLAUDE.md) —
+// settlement math itself lives entirely in domain.Settle, reached only
+// through store.SettleRound; nothing here recomputes a payout.
+func (s *Service) Resolve(ctx context.Context, roomID, callerID string, winningOutcome int) (domain.Settlement, error) {
+	rm, err := s.store.Room(ctx, roomID)
+	if err != nil {
+		return domain.Settlement{}, err
+	}
+	if rm.HostID != callerID {
+		return domain.Settlement{}, ErrNotHost
+	}
+
+	roundID, err := s.store.CurrentRound(ctx, roomID)
+	if errors.Is(err, redisstore.ErrNotFound) {
+		return domain.Settlement{}, ErrNoActiveRound
+	}
+	if err != nil {
+		return domain.Settlement{}, err
+	}
+
+	rd, err := s.store.Round(ctx, roundID)
+	if err != nil {
+		return domain.Settlement{}, err
+	}
+	if err := domain.ValidateOutcomeIndex(winningOutcome, rd.OutcomeCount); err != nil {
+		return domain.Settlement{}, err
+	}
+
+	// On any error past this point, the current-round index is left
+	// alone — a failed resolve must leave the round resolvable again.
+	settlement, err := s.store.SettleRound(ctx, roundID, winningOutcome, uuid.NewString())
+	if err != nil {
+		return domain.Settlement{}, err
+	}
+
+	if err := s.store.ClearCurrentRound(ctx, roomID); err != nil {
+		return domain.Settlement{}, err
+	}
+
+	names := s.broadcaster.Names(roomID)
+	results := make([]ResultRow, len(settlement.Results))
+	for i, r := range settlement.Results {
+		name := names[r.UserID]
+		if name == "" {
+			// A player who disconnected before resolution has no name
+			// available — their payout is still real, so the row
+			// falls back to their user ID rather than being dropped.
+			name = r.UserID
+		}
+		results[i] = ResultRow{
+			UserID:      r.UserID,
+			DisplayName: name,
+			Staked:      int64(r.Staked),
+			Returned:    int64(r.Returned),
+			Net:         int64(r.Net),
+		}
+	}
+
+	payload, err := EncodeEnvelope("round_resolved", ResolvedEvent{
+		RoundID:        roundID,
+		WinningOutcome: winningOutcome,
+		Results:        results,
+		Dust:           int64(settlement.Dust),
+		Refunded:       settlement.Refunded,
+	})
+	if err != nil {
+		return domain.Settlement{}, err
+	}
+	s.broadcaster.Broadcast(roomID, payload)
+
+	return settlement, nil
+}

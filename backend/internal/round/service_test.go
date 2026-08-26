@@ -14,10 +14,13 @@ import (
 )
 
 // stubBroadcaster records every Broadcast call, so tests can assert
-// exactly what was announced to a room (or that nothing was).
+// exactly what was announced to a room (or that nothing was). names
+// lets a test stand in for connected clients' display names, read by
+// Names.
 type stubBroadcaster struct {
 	mu    sync.Mutex
 	calls []broadcastCall
+	names map[string]string
 }
 
 type broadcastCall struct {
@@ -29,6 +32,19 @@ func (b *stubBroadcaster) Broadcast(roomID string, payload []byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.calls = append(b.calls, broadcastCall{roomID: roomID, payload: payload})
+}
+
+func (b *stubBroadcaster) Names(roomID string) map[string]string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.names == nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(b.names))
+	for k, v := range b.names {
+		out[k] = v
+	}
+	return out
 }
 
 func (b *stubBroadcaster) Calls() []broadcastCall {
@@ -218,5 +234,111 @@ func TestOpenConcurrent(t *testing.T) {
 	}
 	if current != first.RoundID {
 		t.Errorf("CurrentRound() = %q, want %q (the first round)", current, first.RoundID)
+	}
+}
+
+func TestResolve(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
+		t.Fatalf("JoinRoom(u1) = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, "u2", 1000); err != nil {
+		t.Fatalf("JoinRoom(u2) = %v, want nil", err)
+	}
+
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+
+	spec := Spec{Question: "Q?", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}
+	opened, err := svc.Open(ctx, roomID, "host1", spec)
+	if err != nil {
+		t.Fatalf("Open() = %v, want nil", err)
+	}
+
+	if _, err := store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: opened.RoundID, UserID: "u1",
+		Outcome: 0, Amount: 100, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager(u1) = %v, want nil", err)
+	}
+	if _, err := store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: opened.RoundID, UserID: "u2",
+		Outcome: 1, Amount: 100, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager(u2) = %v, want nil", err)
+	}
+
+	if err := store.LockRound(ctx, opened.RoundID); err != nil {
+		t.Fatalf("LockRound() = %v, want nil", err)
+	}
+
+	settlement, err := svc.Resolve(ctx, roomID, "host1", 0)
+	if err != nil {
+		t.Fatalf("Resolve() = %v, want nil", err)
+	}
+
+	var u1Result, u2Result *domain.PlayerResult
+	for i := range settlement.Results {
+		switch settlement.Results[i].UserID {
+		case "u1":
+			u1Result = &settlement.Results[i]
+		case "u2":
+			u2Result = &settlement.Results[i]
+		}
+	}
+	if u1Result == nil || u1Result.Returned != 200 {
+		t.Errorf("u1 result = %+v, want Returned 200", u1Result)
+	}
+	if u2Result == nil || u2Result.Returned != 0 {
+		t.Errorf("u2 result = %+v, want Returned 0", u2Result)
+	}
+	if settlement.Dust != 0 {
+		t.Errorf("Settlement.Dust = %d, want 0", settlement.Dust)
+	}
+
+	if _, err := store.CurrentRound(ctx, roomID); !errors.Is(err, redisstore.ErrNotFound) {
+		t.Errorf("CurrentRound() after Resolve error = %v, want ErrNotFound", err)
+	}
+
+	calls := bc.Calls()
+	var resolvedCall *broadcastCall
+	for i := range calls {
+		env := decodeEnvelope(t, calls[i].payload)
+		if env.Type == "round_resolved" {
+			resolvedCall = &calls[i]
+		}
+	}
+	if resolvedCall == nil {
+		t.Fatalf("no round_resolved broadcast found in %+v", calls)
+	}
+	env := decodeEnvelope(t, resolvedCall.payload)
+	var data ResolvedEvent
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatalf("decode round_resolved data: %v", err)
+	}
+	if len(data.Results) != 2 {
+		t.Fatalf("ResolvedEvent.Results has %d rows, want 2", len(data.Results))
+	}
+	var u1Row, u2Row *ResultRow
+	for i := range data.Results {
+		switch data.Results[i].UserID {
+		case "u1":
+			u1Row = &data.Results[i]
+		case "u2":
+			u2Row = &data.Results[i]
+		}
+	}
+	if u1Row == nil || u1Row.Staked != 100 || u1Row.Returned != 200 || u1Row.Net != 100 {
+		t.Errorf("u1 row = %+v, want Staked 100, Returned 200, Net 100", u1Row)
+	}
+	// The loser appears too — this event is the first and only moment
+	// per-player stakes are revealed.
+	if u2Row == nil || u2Row.Staked != 100 || u2Row.Returned != 0 || u2Row.Net != -100 {
+		t.Errorf("u2 row = %+v, want Staked 100, Returned 0, Net -100", u2Row)
 	}
 }

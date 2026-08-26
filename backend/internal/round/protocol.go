@@ -38,6 +38,30 @@ type LockedEvent struct {
 // cycle. internal/ws.Hub satisfies this interface.
 type Broadcaster interface {
 	Broadcast(roomID string, payload []byte)
+
+	// Names resolves connected clients' display names by user ID, for
+	// the round_resolved reveal (a player who disconnected before
+	// resolution has no name available here).
+	Names(roomID string) map[string]string
+}
+
+// ResultRow is one player's revealed result — the first and only
+// moment a per-player stake is disclosed (CLAUDE.md).
+type ResultRow struct {
+	UserID      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	Staked      int64  `json:"staked"`
+	Returned    int64  `json:"returned"`
+	Net         int64  `json:"net"`
+}
+
+// ResolvedEvent is the round_resolved broadcast payload.
+type ResolvedEvent struct {
+	RoundID        string      `json:"round_id"`
+	WinningOutcome int         `json:"winning_outcome"`
+	Results        []ResultRow `json:"results"`
+	Dust           int64       `json:"dust"`
+	Refunded       bool        `json:"refunded"`
 }
 
 // envelope mirrors internal/ws.Envelope's wire format ({"type":...,
