@@ -1,6 +1,6 @@
 # 2026-08-26 — ansh — Phase 5 split, B1 resolved, and the 5a plan
 
-**Status:** Phase 5 split into 5a/5b in the parent plan; `docs/plans/2026-08-26-phase-5a-outbox-kafka.md` written (6 tasks, 22 checkpoints) and committed to `dev`. Phase 5's two skills imported. **No code written** — 5a is planned, not started. Three commits on `dev`, unpushed.
+**Status:** Phase 5 split into 5a/5b in the parent plan; `docs/plans/2026-08-26-phase-5a-outbox-kafka.md` written (6 tasks, 25 checkpoints) and committed to `dev`. Phase 5's two skills imported. **No code written** — 5a is planned, not started. Five commits on `dev`, unpushed.
 **Decided:** Split at the durability boundary (5a = events reach Kafka + schema exists; 5b = events become ledger rows that reconcile). Amendment B1 resolved — persistent accounts **stay in Redis permanently**. Three new amendments (E1–E3) resolved in the 5a plan document rather than left to execution. Delegation experiment **deferred** — 5a executes inline.
 **Spec:** No change. Parent plan (`docs/plans/2026-08-21-implementation-plan.md`) §4, §9 amended.
 **Next:** Execute 5a with `executing-plans` in a Sonnet window — inline, not delegated. Point it at the plan path; don't create the branch by hand.
@@ -88,12 +88,17 @@ open questions parked from earlier phases.
   dependency first had to be made to work. A result between 4.6M and 6.0M is
   ambiguous, not a win. Since 5a now runs inline, this figure becomes the
   baseline any future delegated phase is measured against.
-- **Task 2 CP2 may not go RED.** The Go-side locked-status guard could be
-  black-box indistinguishable from `refund_round.lua`'s existing `NOT_LOCKED`
-  mapping at the wrapper's return type — structurally the same failure as
-  Phase 2's `ALREADY_LOCKED` incident, which cost a full unwind. Called out
-  inline in the plan with a concrete fallback so it's hit as a decision, not a
-  surprise.
+- **~~Task 2 CP2 may not go RED.~~ Resolved — the checkpoint was removed.**
+  Checked against the code rather than left as a risk: `mapSettleStatus`
+  (`internal/redisstore/errors.go:53-63`) is shared by both scripts and already
+  maps `NOT_LOCKED` → `ErrNotLocked` for refunds, so a Go-side guard returning
+  the same sentinel against the same untouched Redis state has **no** observable
+  delta — unfalsifiable by construction, not merely at risk. Folded into the
+  refund-payload checkpoint and enforced structurally instead: `ReadStakes` is
+  called inside the `locked` branch of the status switch, with a comment
+  carrying the reason. No test can catch a refactor that hoists it out, so the
+  comment is the guard, and the plan says so plainly rather than implying test
+  coverage that doesn't exist.
 - **CI's Kafka step is the least-verified part of the plan.** Task 6 CP3 brings
   Kafka up via `docker compose --profile full up -d kafka` in a workflow step
   rather than a `services:` block, because KRaft's listener configuration is
@@ -115,11 +120,39 @@ open questions parked from earlier phases.
   Task 6 CP4 verify it via `-coverpkg=./...` before close-out, explicitly
   forbidding padding with tests that re-exercise covered lines.
 
+## Auditing the plan against the standing rules found three gaps
+
+Asked whether the plan was actually enough for a cold Sonnet window —
+`dev-workflow-guide` §2a's bar is *"if a plan can only be executed by someone
+who watched it being written, it isn't finished."* Auditing it against
+`CLAUDE.md`'s binding rules (a separate pass from checking it against the spec,
+and it found things the spec pass did not) surfaced three:
+
+1. **`make test` would have failed from Task 1 onward.** It starts only Redis
+   and waits on that one container; the new `internal/migrate` and
+   `internal/events` suites need PostgreSQL and Kafka and **fail rather than
+   skip** by design. `CLAUDE.md`'s Build & Test section documents the
+   Redis-only behavior, and its Known Environment Gotchas still frame Kafka as
+   "gated behind `make up-full` ... rather than running by default through
+   Phases 0-4" — now historical. Task 6 CP3 updates all three files.
+2. **No security review.** `CLAUDE.md` makes the `security-reviewer` agent
+   mandatory before closing any phase touching auth, money movement, or a
+   network surface. 5a touches two: every outbox event is a money movement, and
+   Kafka is a new outbound surface. Added as Task 6 CP4, scoped to four
+   specific surfaces so it doesn't re-review Phases 0–4.
+3. **The unfalsifiable guard checkpoint** — see Open Questions.
+
+Net checkpoint count is unchanged at 25 (one merged out, one added). The
+earlier "22 checkpoints" figure in commit `a7b9517`'s message was simply an
+arithmetic slip; the plan and this entry now both read 25.
+
 ## Relevant Commits
 
 - `5c4b831` — split Phase 5 into 5a/5b, resolve Amendment B1, log the dependency pins
 - `a7b9517` — add the Phase 5a outbox-to-Kafka and ledger schema plan
 - `c787cdb` — record that 5a executes inline unless the delegation skill exists
+- `62e5645` — journal this session
+- *(this entry amended in the follow-up commit below, after the rules audit)*
 
 ## Next Step
 

@@ -510,48 +510,37 @@ export PATH=$PATH:$HOME/.local/go/bin:$HOME/go/bin && cd backend && \
 
 Expected: PASS, then one commit.
 
-**Checkpoint 2: `RefundRound` refuses a round that is not locked**
+### The Go-side locked check is not its own checkpoint — and why
 
-- [ ] **Step 1: Write the failing test, then run it**
+An earlier draft made E2's guard a standalone checkpoint. It cannot be one, and
+this was confirmed against the code rather than guessed: `mapSettleStatus`
+(`internal/redisstore/errors.go:53-63`) is shared by both scripts and **already**
+maps `NOT_LOCKED` → `ErrNotLocked` and `ALREADY_RESOLVED` → `ErrAlreadySettled`
+for refunds. A Go-side guard returning those same sentinels is therefore
+black-box indistinguishable from the script's existing behavior — same error,
+same untouched Redis state. There is no observable signal at the wrapper's
+surface, so no test can go RED for it, and no reordering fixes that. This is
+structurally the same trap as Phase 2's `ALREADY_LOCKED` incident, which cost a
+full unwind; it is resolved here at plan time instead.
 
-Spec: `TestRefundRoundRequiresLockedStatus`, table-driven over the non-locked
-statuses. Arrange: a round left `open`; a second round already `resolved`. Act:
-`RefundRound` on each. Assert: the `open` round returns an error satisfying
-`errors.Is(err, ErrNotLocked)`; the `resolved` round returns
-`errors.Is(err, ErrAlreadySettled)`. In both cases assert no outbox entry was
-added and no wallet balance moved.
+**Resolution — enforce it by construction, not by assertion.** The guard folds
+into Checkpoint 2's implementation, where `RefundRound` gains a status switch
+shaped exactly like `SettleRound`'s (`settle.go:69-76`) and **the `ReadStakes`
+call lives inside the `case domain.RoundLocked:` branch**. Ordering is then a
+property a reviewer can see in the control flow rather than one a test asserts.
+Checkpoint 2's test still covers the non-locked cases as behavior — correct
+sentinel, nothing mutated — it simply cannot attribute them to the guard versus
+the script, and does not claim to.
 
-This is the guard E2's safety argument rests on, and it must exist **before**
-the refund path starts reading stakes in Go.
+**State this honestly in the code.** The safety argument in Amendment E2 is
+real but is only exercised under a race that no deterministic test reproduces.
+Put a comment above the switch in `RefundRound` recording *why* stakes are read
+inside the locked branch — that a read on an open round could be applied to a
+since-locked round and silently drop the wagers placed in the gap. Without that
+comment, a future refactor that hoists `ReadStakes` out of the switch looks
+harmless and passes every test.
 
-Run: `export PATH=$PATH:$HOME/.local/go/bin:$HOME/go/bin && cd backend && go test ./internal/redisstore/ -run TestRefundRoundRequiresLockedStatus -count=1 -race`
-Expected: FAIL — the `open` case currently reaches the script, which returns
-`NOT_LOCKED`, so the mapped error is produced by the script rather than by the
-Go guard. Confirm the failure is the *absence of the Go-side guard* by
-asserting, in this test, that the error is returned without the script running
-— assert `XLEN` of the outbox is unchanged **and** that the round's status
-field was not read-modified. If the existing script mapping already produces
-`ErrNotLocked` for the `open` case, that single assertion cannot RED: in that
-event, keep only the `resolved` case here and move the guard's proof to
-Checkpoint 3, where a stale-snapshot test can observe it.
-
-- [ ] **Step 2: Implement, then verify-and-commit in one command**
-
-Contract: in `Store.RefundRound`, after the existing `s.Round` read, switch on
-`round.Status` exactly as `SettleRound` does at `settle.go:69-76` — `resolved`
-or `refunded` → `ErrAlreadySettled`; `locked` → proceed; anything else →
-`ErrNotLocked`.
-
-```bash
-export PATH=$PATH:$HOME/.local/go/bin:$HOME/go/bin && cd backend && \
-  go test ./internal/redisstore/ -count=1 -race && \
-  git add internal/redisstore/settle.go internal/redisstore/settle_test.go && \
-  git commit -m "fix: reject refunds on non-locked rounds before reading stakes"
-```
-
-Expected: PASS, then one commit.
-
-**Checkpoint 3: the refund event carries `room_id`, `total`, and `payouts`**
+**Checkpoint 2: the refund event carries `room_id`, `total`, and `payouts`**
 
 - [ ] **Step 1: Write the failing test, then run it**
 
@@ -565,21 +554,40 @@ payout entry**, because a ledger credit line is per account, not per stake.
 Assert the returned `domain.Tokens` total is still `350` and that both wallets
 were credited by their aggregate.
 
+Second, third and fourth cases in the same table, covering the non-locked
+statuses as behavior (see the note above on why these cannot be their own
+checkpoint): a round left `open` → `errors.Is(err, ErrNotLocked)`; a round
+already `resolved` → `errors.Is(err, ErrAlreadySettled)`; a round already
+`refunded` → `errors.Is(err, ErrAlreadySettled)`. In all three assert no outbox
+entry was added and no wallet balance moved.
+
 Run: `export PATH=$PATH:$HOME/.local/go/bin:$HOME/go/bin && cd backend && go test ./internal/redisstore/ -run TestRefundEventCarriesPayoutDetail -count=1 -race`
-Expected: FAIL — the entry has no `room_id`, `total`, or `payouts` field.
+Expected: FAIL on the first case — the entry has no `room_id`, `total`, or
+`payouts` field. The three non-locked cases will already pass, since the script
+maps those statuses today; they are regression coverage riding along, not the
+RED signal.
 
 - [ ] **Step 2: Implement, then verify-and-commit in one command**
 
-Contract: `Store.RefundRound` calls `ReadStakes`, aggregates amounts per
-`UserID` into a deterministic slice ordered by ascending user ID (matching
-`ReadStakes`'s existing sort rationale — the same round refunded twice must
-produce identical output), marshals it with the same JSON helper Checkpoint 1
-introduced, and passes `roomID`, `total`, the JSON, and the alternating
-`userID, amount` tail. `refund_round.lua` drops its `HGETALL` loop, its
-colon-scan parser, and `KEYS[3]`; it becomes an apply-only script that credits
-from ARGV, `HSET`s status `refunded`, and `XADD`s the enriched payload. Keep
-its status CAS unchanged. Update its header comment to record that amounts now
-come from Go, citing Amendment E2.
+Contract: `Store.RefundRound` gains a status switch shaped exactly like
+`SettleRound`'s (`settle.go:69-76`) — `resolved`/`refunded` →
+`ErrAlreadySettled`, `locked` → proceed, anything else → `ErrNotLocked` —
+and **`ReadStakes` is called inside the `locked` branch, never before the
+switch**. Add a comment above the switch recording why: a stakes read on an
+open round could be applied to a since-locked round and silently drop every
+wager placed in the gap (Amendment E2). No test can catch a later refactor
+that hoists the read out, so the comment is the guard.
+
+It then aggregates amounts per `UserID` into a deterministic slice ordered by
+ascending user ID (matching `ReadStakes`'s existing sort rationale — the same
+round refunded twice must produce identical output), marshals it with the same
+JSON helper Checkpoint 1 introduced, and passes `roomID`, `total`, the JSON,
+and the alternating `userID, amount` tail. `refund_round.lua` drops its
+`HGETALL` loop, its colon-scan parser, and `KEYS[3]`; it becomes an apply-only
+script that credits from ARGV, `HSET`s status `refunded`, and `XADD`s the
+enriched payload. Keep its status CAS unchanged — the Go read is not atomic
+with the script, so the script remains the authority. Update its header comment
+to record that amounts now come from Go, citing Amendment E2.
 
 ```bash
 export PATH=$PATH:$HOME/.local/go/bin:$HOME/go/bin && cd backend && \
@@ -1166,13 +1174,29 @@ Expected: FAIL — `internal/migrate` cannot reach PostgreSQL and
 
 - [ ] **Step 2: Implement, then verify-and-commit in one command**
 
-Contract: add a `postgres:16-alpine` service to `.github/workflows/ci.yml`
-matching `docker-compose.yml`'s credentials and health check, and bring Kafka
-up with a workflow step running `docker compose --profile full up -d kafka`
-followed by a wait on its health status — GitHub Actions' `services:` block
-makes KRaft's listener configuration awkward, and reusing the compose file
-keeps CI and local dev on one definition. Add `POSTGRES_DSN` and
-`KAFKA_BROKERS` to the test step's `env`.
+Contract, three files:
+
+1. `.github/workflows/ci.yml` — add a `postgres:16-alpine` service matching
+   `docker-compose.yml`'s credentials and health check, and bring Kafka up with
+   a workflow step running `docker compose --profile full up -d kafka` followed
+   by a wait on its health status. GitHub Actions' `services:` block makes
+   KRaft's listener configuration awkward, and reusing the compose file keeps
+   CI and local dev on one definition. Add `POSTGRES_DSN` and `KAFKA_BROKERS`
+   to the test step's `env`.
+2. `Makefile` — **`make test` currently starts only Redis and would now fail.**
+   It brings up `redis` and waits on its health before running Go; the new
+   `internal/migrate` suite needs PostgreSQL and `internal/events` needs Kafka,
+   and both fail rather than skip by design. Extend the target to
+   `docker compose --profile full up -d` and wait on all three containers'
+   health status using the same `docker inspect` loop already there. Leave
+   `test-unit` as the no-Docker escape hatch it already is.
+3. `CLAUDE.md` — its **Build & Test** section documents `make test` as
+   "starts Redis and waits for it to report healthy" and lists `make up-full`
+   as Phase-5-onward. Update both: `make test` now starts the full stack, and
+   the Kafka-gated-behind-a-profile framing in **Known Environment Gotchas**
+   ("which is why it's gated behind `make up-full` ... rather than running by
+   default through Phases 0-4") is now historical — say so rather than leaving
+   it reading as current.
 
 ```bash
 export PATH=$PATH:$HOME/.local/go/bin:$HOME/go/bin && \
@@ -1185,7 +1209,51 @@ export PATH=$PATH:$HOME/.local/go/bin:$HOME/go/bin && \
 
 Expected: PASS, then one commit.
 
-**Checkpoint 4: record the amendments and close the phase**
+**Checkpoint 4: security review**
+
+- [ ] **Step 1: Run the review**
+
+`CLAUDE.md` makes this mandatory: *"Run the `security-reviewer` agent before
+closing any phase that touches auth, money movement, or a network surface."*
+Phase 5a touches two of the three — every event on the outbox is a money
+movement, and Kafka is a new outbound network surface.
+
+Dispatch the `security-reviewer` agent scoped to this phase's diff:
+`git diff dev...HEAD`. Direct it specifically at the surfaces this phase adds,
+so it doesn't re-review Phases 0–4:
+- **Event payloads as an exfiltration path.** The wager-anonymity invariant
+  says no per-user wager data may leave the server before a round is terminal.
+  Settlement and refund events are terminal-only and never reach a client, but
+  confirm nothing added here broadcasts or logs them pre-resolution.
+- **`payouts` JSON decoding** — untrusted-shaped input parsed with
+  `encoding/json`; check for unbounded allocation on a hostile `payouts` value
+  and for integer overflow on `amount`.
+- **The PostgreSQL DSN** — a credential now in config and in CI. Confirm it is
+  never logged, never in an error string returned to a caller, and not
+  defaulted to a production-shaped value.
+- **Kafka connection** — PLAINTEXT to a local broker is the accepted local-dev
+  posture (see `docker-compose.yml`); confirm that choice is recorded rather
+  than silently inherited, and that no auth material is hardcoded.
+
+Fix every CRITICAL and HIGH before proceeding. Record findings — including
+anything accepted rather than fixed, with its reason — in
+`docs/project-history.md` under **Security reviews**, matching the existing
+Phase 3 and Phase 4b subsections' format.
+
+- [ ] **Step 2: Commit the findings**
+
+```bash
+export PATH=$PATH:$HOME/.local/go/bin:$HOME/go/bin && \
+  docker compose --profile full up -d && cd backend && \
+  go test ./... -race -cover -p 1 -count=1 && \
+  git add ../docs/project-history.md && \
+  git commit -m "docs: record the Phase 5a security review"
+```
+
+Expected: PASS, then one commit. If the review produced code fixes, each lands
+as its own `fix:` commit before this one.
+
+**Checkpoint 5: record the amendments and close the phase**
 
 - [ ] **Step 1: Write the failing test, then run it**
 
@@ -1245,14 +1313,20 @@ recover-before-new-work ordering are the two places a plausible implementation
 loses or reorders money events; both now have their own checkpoints.
 
 **3. Checkpoint falsifiability.** Every checkpoint names an observable signal
-at the interface its test calls. Task 2 CP2 is the one place where the RED may
-not materialise — the existing script already maps `NOT_LOCKED`, so a Go-side
-guard could be black-box indistinguishable at the wrapper's return type. That
-risk is called out inline with a concrete fallback (keep the `resolved` case,
-move the guard's proof to CP3) rather than left to be discovered mid-execution,
-which is the Phase 2 `ALREADY_LOCKED` failure mode this plan is written to
-avoid. Task 6 CP3 and CP4 are documentation/CI checkpoints whose RED is a real
-failing command, not a test.
+at the interface its test calls. One candidate checkpoint was **removed** for
+failing this test: E2's Go-side locked guard. `mapSettleStatus`
+(`errors.go:53-63`) already maps `NOT_LOCKED` → `ErrNotLocked` for refunds, so
+a Go guard returning the same sentinel against the same untouched Redis state
+has no observable delta at the wrapper's surface — unfalsifiable by
+construction, the Phase 2 `ALREADY_LOCKED` failure mode exactly. It is folded
+into Task 2 CP2 and enforced structurally (the `ReadStakes` call sits inside
+the `locked` branch) with a comment carrying the reason, since no test can
+catch a refactor that hoists it out. Verified against the code, not assumed.
+
+Task 6 CP3–CP5 are CI, review, and documentation checkpoints whose RED is a
+real failing command or a review finding rather than a unit test — CP3's RED is
+the migrate and events suites failing with only Redis up, which is also the
+evidence they are genuinely wired into CI's signal.
 
 **4. Type consistency.** `events.Payout` is the wire type throughout;
 `domain.Payout` is never JSON-tagged. `RoundSettled` serves both terminal event
@@ -1262,10 +1336,22 @@ sentinel in Task 3 CP3 and nowhere contradicted. `Producer` is declared in
 `internal/events` does not import `internal/relay` and no cycle exists — the
 `round`↔`ws` cycle that cost Phase 4b real time.
 
-**5. Sizing.** 6 tasks, 22 checkpoints — against Phase 4b's 31 and Phase 3's
-38. Task 1 is the largest at 6 checkpoints because a schema's constraints are
-each independently falsifiable; none of its neighbours could be rejected
-without rejecting it.
+**5. Sizing.** 6 tasks, **25 checkpoints** — against Phase 4b's 31 and Phase
+3's 38. Task 1 is the largest at 6 because a schema's constraints are each
+independently falsifiable; none of its neighbours could be rejected without
+rejecting it. Task 2 and Task 5 sit at 2 apiece and were left there rather than
+padded — a task with two real behaviors is complete at two checkpoints.
+
+**6. Gaps found in a second pass over `CLAUDE.md`'s binding rules**, all three
+now closed. (i) `make test` starts only Redis and would have failed from Task 1
+onward, since the new suites fail rather than skip by design — Task 6 CP3 now
+updates the Makefile and the two `CLAUDE.md` sections that document it. (ii) No
+security review, which `CLAUDE.md` makes **mandatory** for any phase touching
+money movement or a network surface; 5a touches both — now Task 6 CP4. (iii)
+The unfalsifiable guard checkpoint, above. Worth noting the pattern: all three
+came from checking the plan against the project's standing rules rather than
+against the spec, which is a separate pass and found things the spec-coverage
+pass did not.
 
 ---
 
