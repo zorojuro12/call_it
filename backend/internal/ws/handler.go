@@ -16,7 +16,7 @@ var upgrader = websocket.Upgrader{}
 // makes every inbound message an unknown-type error reply.
 func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token := extractToken(r)
+		token := ExtractToken(r)
 		if token == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -66,10 +66,13 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 	}
 }
 
-// extractToken reads a bearer token from the Authorization header
+// ExtractToken reads a bearer token from the Authorization header
 // first, else the token query parameter — browsers cannot set headers
 // on a WebSocket handshake, so the query form is required for Phase 6.
-func extractToken(r *http.Request) string {
+// Exported so other packages (a connection-rate-limiting middleware in
+// internal/httpapi) can key on the same identity this handler verifies,
+// without duplicating the extraction logic.
+func ExtractToken(r *http.Request) string {
 	if auth := r.Header.Get("Authorization"); auth != "" {
 		if rest, ok := strings.CutPrefix(auth, "Bearer "); ok {
 			return rest
