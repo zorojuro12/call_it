@@ -120,10 +120,11 @@ actual implementation both landed in Phase 3 (Amendments B1, B6/B7,
 `auth` (client IP, 10/1min, the register/login throttle), `api` (user ID,
 60/1min, the authenticated-route throttle), `refill` (user ID,
 `domain.RefillQuota`/7 days). Persistent accounts live in Redis rather
-than PostgreSQL for now (B1) — Phase 3's dependency table only lists 0
-and 2, not 5, so storing credentials in Postgres would have pulled most
-of Phase 5 forward. Whether they migrate to PostgreSQL alongside the
-ledger or stay in Redis is an open question for Phase 5's planning pass.
+than PostgreSQL (B1) — Phase 3's dependency table only lists 0 and 2, not
+5, so storing credentials in Postgres would have pulled most of Phase 5
+forward. Phase 5's planning pass **resolved this in favour of keeping
+them in Redis permanently**, with PostgreSQL holding monetary history
+only; see §9's Phase 5 note for the reasoning and the Phase 7 revisit.
 
 `round:{roundID}:bettors` was added in Phase 2 (Amendment A2,
 `docs/plans/2026-08-24-phase-2-redis-layer.md`): the "N/M players have
@@ -307,10 +308,32 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 3 | **Auth + REST** ✅ | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 | `api-design` skill |
 | 4a | **WebSocket transport** ✅ | Authenticated room socket (JWT verified at handshake, no per-message lookup), per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, join/leave presence broadcast | 3 | None new |
 | 4b | **Round lifecycle** ✅ | Rounds, wagers, live odds, server-side lock timer and 60-second auto-refund fallback, host-resolve settlement reveal, session-end persistence, playable end to end from a CLI client | 4a | None new |
-| 5 | **Kafka + ledger** | Outbox relay, `wagers-placed` and `rounds-settled` producers, ledger-worker consumer, migrations, deferred constraint trigger, Redis↔PostgreSQL reconciliation test | 2, 4b | `postgres-patterns`, `database-migrations` skills |
+| 5a | **Outbox → Kafka + ledger schema** | Outbox relay binary (`cmd/relay`), `wagers-placed`/`rounds-settled` producers, `internal/events` schemas, PostgreSQL migrations, ledger schema, deferred constraint trigger | 2, 4b | `postgres-patterns`, `database-migrations` skills |
+| 5b | **Double-entry ledger** | `cmd/ledger-worker` consumer, `internal/ledger` repository, idempotent replay on the `idempotency_key` unique constraint, Redis↔PostgreSQL reconciliation test | 5a | None new |
 | 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
-| 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5, 6 | None new — spec already names k6 directly |
+| 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5b, 6 | None new — spec already names k6 directly |
 | 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7 | Decide when unblocked |
+
+**Phase 5 split into 5a/5b (added at Phase 5's planning pass).** Done
+*before* writing the detailed task breakdown, which is what the
+Phase-sizing note below prescribes and what Phase 3 failed to do. The
+original Phase 5 row bundled four separable deliverables — a relay, Kafka
+producers, a schema with migrations, and a ledger consumer with a
+reconciliation test — the same shape that made Phase 3 the most expensive
+phase measured. Split at the **durability boundary**: 5a ends when events
+reach Kafka durably and an empty-but-correct ledger schema rejects an
+unbalanced transaction; 5b ends when those events have become ledger rows
+that reconcile against Redis.
+
+The boundary is drawn there rather than at "all Postgres work in one
+phase" for two reasons. It puts the migrations and the deferred
+constraint trigger next to the two skills that serve them
+(`database-migrations`, `postgres-patterns`) instead of stranding them a
+phase away from their tooling. And it isolates the flagship correctness
+work — the ledger writer and the reconciliation test §6 calls "the
+evidence behind the 0.00% double-spend claim" — into 5b alone, so 5a is
+plumbing that can be verified structurally while 5b keeps the
+cross-cutting attention that kind of proof needs.
 
 **Phase 4 split into 4a/4b (added at Phase 4a close-out).** Scoping Phase 4
 as written above produced ~13 tasks / ~38 checkpoints — the shape this
@@ -347,14 +370,23 @@ particular, the wager-placement throttle's call site (keyed how the
 WS handshake determines identity) is Phase 4's to wire; `rate_limit.lua`
 and `Store.Allow`/`Revoke` are already built and proven.
 
-**Phase 5 note (added at Phase 3 close-out, Amendment B1).** Persistent
-accounts (`user:{userID}`, `email:{normalizedEmail}`) live in Redis for
-now. Phase 5's planning pass has an open question to resolve: migrate
-them to PostgreSQL alongside the ledger, or keep them in Redis with the
-ledger holding only monetary history. Note PostgreSQL's `accounts` table
-(§6) already holds **ledger** accounts (`user_wallet`, `room_escrow`,
-`system_dust`) — a different, non-colliding sense of "account" from the
-credentials this note is about.
+**Phase 5 note (added at Phase 3 close-out, Amendment B1) — RESOLVED at
+Phase 5's planning pass.** Persistent accounts (`user:{userID}`,
+`email:{normalizedEmail}`) **stay in Redis.** PostgreSQL holds monetary
+history only. Credentials are not monetary history, and nothing in the
+double-entry design needs the user row co-located: the ledger references
+`user_id` as an opaque identifier, never joining to it. Migrating would
+have pulled `internal/account`, `claim_unique.lua`'s email path,
+`top_up_balance.lua`, and a live-data migration into the phase already
+carrying the most risk, for no benefit the ledger can actually use. The
+one thing that might have forced the issue is not a conflict: §6's
+`accounts` table holds **ledger** accounts (`user_wallet`, `room_escrow`,
+`system_dust`), a different and non-colliding sense of the word.
+
+Revisit at Phase 7, not before. The real long-term argument for migrating
+is foreign-key integrity between ledger accounts and users, which is a
+hardening concern — it buys nothing while the ledger is being built and
+would obscure the reconciliation test's result if introduced alongside it.
 
 **Import rule:** skills (Bucket 2/3) are cheap — one line in the availability listing until invoked — so pull each phase's skills in *before* that phase starts, no need to batch them all up front. Language-specific **rule dirs** (`.claude/rules/ecc/<language>/`) are different: they're always-loaded full text into every turn once installed, per `.claude/rules/ecc/common/agents.md`'s description of rules as passive/always-on. Install a rule dir only right before the phase that needs it, so irrelevant stack rules don't sit in every turn's context for phases that don't touch that stack yet.
 
@@ -384,6 +416,11 @@ ship independently, not several bundled because they're thematically
 related. Check this before writing Phase 5's plan in particular — it
 touches Kafka, the ledger, and a reconciliation test, which risks the
 same bundling Phase 3 hit.
+
+**Checked, and it did.** Phase 5 was split into 5a/5b at its planning
+pass, before the task breakdown was written — see the split note above.
+This is the first time the recommendation was applied as intended rather
+than noted after the fact.
 
 Two sequencing choices are deliberate. **Phase 1 precedes all
 infrastructure** because the money math is where correctness bugs hide, and

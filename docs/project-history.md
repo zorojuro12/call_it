@@ -175,6 +175,31 @@ in `CLAUDE.md`'s Known Environment Gotchas.
   will silently rewrite this module's `go` directive to accept it. Checked
   across go-redis v9.18.0 through v9.22.0. `gorilla/websocket` v1.5.3 declares
   `go 1.12` — safe (verified 2026-08-26).
+- **Phase 5 dependency pins** (verified 2026-08-26, at Phase 5's planning
+  pass): every *current* release of all three Phase 5 dependencies declares
+  `go >= 1.23` and would rewrite this module's directive. A compatible set
+  exists and was proven by building a probe module against
+  `go 1.22.10` — `go build` clean with `pgxpool`, migrate's `postgres`
+  driver, and `kafka.Writer` all imported, directive unchanged:
+
+  | Module | Pin | First incompatible release |
+  |---|---|---|
+  | `github.com/jackc/pgx/v5` | **v5.7.4** | v5.7.5 (`go 1.23.0`) |
+  | `github.com/segmentio/kafka-go` | **v0.4.48** | v0.4.49 (`go 1.23`) |
+  | `github.com/golang-migrate/migrate/v4` | **v4.18.2** | v4.18.3 (`go 1.23.0`) |
+
+  Rejected alternatives, both walled off at the same boundary:
+  `twmb/franz-go` (v1.19.0+ needs `go 1.23.8`; last compatible v1.18.1) and
+  `IBM/sarama` (v1.45.2 needs `go 1.23.0`). `kafka-go` was preferred anyway —
+  its last four releases all declare `go 1.15`, so it has the most headroom
+  before the next wall.
+
+  **This is the phase where the 1.22.10 pin started costing something.** It
+  was free through Phase 4; here it constrains three of three new
+  dependencies. Go 1.22 is past upstream EOL, so each future phase's
+  dependency search gets narrower. Raising the toolchain is not required for
+  Phase 5 and was deliberately not bundled into it, but it is now a real
+  candidate for Phase 7 hardening rather than a theoretical one.
 - **Docker/WSL2** (verified 2026-08-23): with per-distro WSL integration on,
   `docker compose up -d` brings up Redis and PostgreSQL, both reporting
   `healthy` (`redis-cli ping` → `PONG`, `pg_isready` → accepting connections).

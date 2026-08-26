@@ -271,8 +271,8 @@ yet. Check the parent plan §9's "Tooling to import" column before starting a
 phase.
 
 Installed: `golang-patterns`, `golang-testing`, `docker-patterns`,
-`redis-patterns`, `api-design`. Not yet installed: `postgres-patterns`,
-`database-migrations` (Phase 5). `continuous-learning-v2` is present but
+`redis-patterns`, `api-design`, `postgres-patterns`, `database-migrations`
+(the last two ahead of Phase 5). `continuous-learning-v2` is present but
 **deliberately dormant** — don't enable it without re-reading
 `dev-workflow-guide.md` §9.
 
