@@ -27,6 +27,11 @@ type Opened struct {
 	LockAtMS int64    `json:"lock_at_ms"`
 }
 
+// LockedEvent is the round_locked broadcast payload.
+type LockedEvent struct {
+	RoundID string `json:"round_id"`
+}
+
 // Broadcaster is how this package reaches a room's connected clients
 // without importing internal/ws — internal/ws imports round (for the
 // message router, Task 9), so round cannot import ws without a build

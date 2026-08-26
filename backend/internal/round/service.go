@@ -22,11 +22,12 @@ const (
 type Service struct {
 	store       *redisstore.Store
 	broadcaster Broadcaster
+	refundGrace time.Duration
 }
 
 // NewService constructs a Service bound to store and b.
 func NewService(store *redisstore.Store, b Broadcaster) *Service {
-	return &Service{store: store, broadcaster: b}
+	return &Service{store: store, broadcaster: b, refundGrace: RefundGrace}
 }
 
 // Open opens a round in roomID on callerID's behalf, persists it, then
@@ -92,6 +93,8 @@ func (s *Service) Open(ctx context.Context, roomID, callerID string, spec Spec) 
 		return Opened{}, err
 	}
 	s.broadcaster.Broadcast(roomID, payload)
+
+	go s.watch(context.Background(), roomID, roundID, lockAt)
 
 	return opened, nil
 }
