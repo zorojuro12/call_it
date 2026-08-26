@@ -42,7 +42,7 @@ func (r *Room) run(onEmpty func(roomID string)) {
 		case joinCmd:
 			clients[c.c] = struct{}{}
 		case leaveCmd:
-			remove(clients, c.c)
+			removeAndNotify(clients, c.c, r.ID, onEmpty)
 		case broadcastCmd:
 			var evicted []*Client
 			for client := range clients {
@@ -53,7 +53,7 @@ func (r *Room) run(onEmpty func(roomID string)) {
 				}
 			}
 			for _, client := range evicted {
-				remove(clients, client)
+				removeAndNotify(clients, client, r.ID, onEmpty)
 			}
 		case membersCmd:
 			c.reply <- membersOf(clients)
@@ -63,15 +63,21 @@ func (r *Room) run(onEmpty func(roomID string)) {
 	}
 }
 
-// remove deletes c from clients and closes its send channel, but only
-// if c is actually present — a non-member removal is a no-op, which is
-// what makes closing send here safe from a double-close panic.
-func remove(clients map[*Client]struct{}, c *Client) {
+// removeAndNotify deletes c from clients and closes its send channel,
+// but only if c is actually present — a non-member removal is a no-op,
+// which is what makes closing send here safe from a double-close
+// panic. On a transition to zero members it calls onEmpty(roomID) in
+// its own goroutine: a synchronous call would deadlock this room's own
+// run() goroutine against the hub's reply command (Task 5).
+func removeAndNotify(clients map[*Client]struct{}, c *Client, roomID string, onEmpty func(string)) {
 	if _, ok := clients[c]; !ok {
 		return
 	}
 	delete(clients, c)
 	close(c.send)
+	if len(clients) == 0 && onEmpty != nil {
+		go onEmpty(roomID)
+	}
 }
 
 func membersOf(clients map[*Client]struct{}) []Identity {
