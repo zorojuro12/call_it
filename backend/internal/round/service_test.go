@@ -151,3 +151,72 @@ func TestOpenNotHost(t *testing.T) {
 		t.Errorf("Broadcast call count = %d, want 0", len(bc.Calls()))
 	}
 }
+
+func TestOpenInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		spec Spec
+	}{
+		{"empty question", Spec{Question: "   ", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}},
+		{"too few outcomes", Spec{Question: "Q?", Outcomes: []string{"Yes"}, LockIn: 10 * time.Second}},
+		{"too many outcomes", Spec{Question: "Q?", Outcomes: []string{"A", "B", "C", "D", "E"}, LockIn: 10 * time.Second}},
+		{"blank outcome label", Spec{Question: "Q?", Outcomes: []string{"Yes", "  "}, LockIn: 10 * time.Second}},
+		{"lock window too short", Spec{Question: "Q?", Outcomes: []string{"Yes", "No"}, LockIn: 1 * time.Second}},
+		{"lock window too long", Spec{Question: "Q?", Outcomes: []string{"Yes", "No"}, LockIn: 5 * time.Minute}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestStore(t)
+			ctx := context.Background()
+			roomID := testID(t, "room")
+			if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+				t.Fatalf("CreateRoom() = %v, want nil", err)
+			}
+			bc := &stubBroadcaster{}
+			svc := NewService(store, bc)
+
+			_, err := svc.Open(ctx, roomID, "host1", tt.spec)
+			if !errors.Is(err, ErrInvalidSpec) {
+				t.Fatalf("Open() error = %v, want ErrInvalidSpec", err)
+			}
+			if _, err := store.CurrentRound(ctx, roomID); !errors.Is(err, redisstore.ErrNotFound) {
+				t.Errorf("CurrentRound() error = %v, want ErrNotFound", err)
+			}
+			if len(bc.Calls()) != 0 {
+				t.Errorf("Broadcast call count = %d, want 0", len(bc.Calls()))
+			}
+		})
+	}
+}
+
+func TestOpenConcurrent(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+
+	spec := Spec{Question: "First?", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}
+	first, err := svc.Open(ctx, roomID, "host1", spec)
+	if err != nil {
+		t.Fatalf("Open() first = %v, want nil", err)
+	}
+
+	spec2 := Spec{Question: "Second?", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}
+	_, err = svc.Open(ctx, roomID, "host1", spec2)
+	if !errors.Is(err, ErrRoundInProgress) {
+		t.Fatalf("Open() second error = %v, want ErrRoundInProgress", err)
+	}
+
+	current, err := store.CurrentRound(ctx, roomID)
+	if err != nil {
+		t.Fatalf("CurrentRound() = %v, want nil", err)
+	}
+	if current != first.RoundID {
+		t.Errorf("CurrentRound() = %q, want %q (the first round)", current, first.RoundID)
+	}
+}

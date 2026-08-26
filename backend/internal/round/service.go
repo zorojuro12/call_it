@@ -2,10 +2,19 @@ package round
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zorojuro12/call_it/backend/internal/domain"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
+)
+
+// MinLockIn and MaxLockIn bound the host's chosen lock window.
+const (
+	MinLockIn = 3 * time.Second
+	MaxLockIn = 120 * time.Second
 )
 
 // Service opens and resolves rounds, and owns each round's server-side
@@ -31,6 +40,37 @@ func (s *Service) Open(ctx context.Context, roomID, callerID string, spec Spec) 
 	}
 	if rm.HostID != callerID {
 		return Opened{}, ErrNotHost
+	}
+
+	spec.Question = strings.TrimSpace(spec.Question)
+	if spec.Question == "" {
+		return Opened{}, ErrInvalidSpec
+	}
+	if err := domain.ValidateOutcomeCount(len(spec.Outcomes)); err != nil {
+		return Opened{}, ErrInvalidSpec
+	}
+	outcomes := make([]string, len(spec.Outcomes))
+	for i, o := range spec.Outcomes {
+		outcomes[i] = strings.TrimSpace(o)
+		if outcomes[i] == "" {
+			return Opened{}, ErrInvalidSpec
+		}
+	}
+	spec.Outcomes = outcomes
+	if spec.LockIn < MinLockIn || spec.LockIn > MaxLockIn {
+		return Opened{}, ErrInvalidSpec
+	}
+
+	if currentID, err := s.store.CurrentRound(ctx, roomID); err == nil {
+		current, err := s.store.Round(ctx, currentID)
+		if err != nil {
+			return Opened{}, err
+		}
+		if !current.Status.IsTerminal() {
+			return Opened{}, ErrRoundInProgress
+		}
+	} else if !errors.Is(err, redisstore.ErrNotFound) {
+		return Opened{}, err
 	}
 
 	roundID := uuid.NewString()
