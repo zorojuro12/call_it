@@ -44,11 +44,16 @@ func (r *Room) run(onEmpty func(roomID string)) {
 		case leaveCmd:
 			remove(clients, c.c)
 		case broadcastCmd:
+			var evicted []*Client
 			for client := range clients {
 				select {
 				case client.send <- c.payload:
 				default:
+					evicted = append(evicted, client)
 				}
+			}
+			for _, client := range evicted {
+				remove(clients, client)
 			}
 		case membersCmd:
 			c.reply <- membersOf(clients)

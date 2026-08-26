@@ -97,3 +97,42 @@ func TestRoomBroadcast(t *testing.T) {
 		}
 	}
 }
+
+func TestRoomEvicts(t *testing.T) {
+	// Arrange
+	room := NewRoom("r1", nil)
+	slow := newClient(nil, Identity{UserID: "slow"}, 1)
+	fast := newClient(nil, Identity{UserID: "fast"}, 8)
+	room.Join(slow)
+	room.Join(fast)
+
+	// Act: first broadcast fills slow's single slot
+	room.Broadcast([]byte("one"))
+	// Act: second broadcast finds slow full and evicts it
+	room.Broadcast([]byte("two"))
+
+	// Assert: slow was evicted
+	if got := room.Count(); got != 1 {
+		t.Fatalf("Count() after eviction = %d, want 1", got)
+	}
+	members := room.Members()
+	if len(members) != 1 || members[0] != fast.Identity {
+		t.Fatalf("Members() after eviction = %+v, want only %+v", members, fast.Identity)
+	}
+
+	// Assert: slow's send channel is closed, after draining its one buffered payload
+	buffered := <-slow.send
+	if string(buffered) != "one" {
+		t.Fatalf("slow buffered payload = %q, want \"one\"", buffered)
+	}
+	if _, ok := <-slow.send; ok {
+		t.Fatalf("slow.send should be closed after eviction")
+	}
+
+	// Assert: fast received both payloads — the broadcast was never blocked by slow
+	first := <-fast.send
+	second := <-fast.send
+	if string(first) != "one" || string(second) != "two" {
+		t.Fatalf("fast got [%q, %q], want [\"one\", \"two\"]", first, second)
+	}
+}
