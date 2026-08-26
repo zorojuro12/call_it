@@ -13,10 +13,24 @@ directory.
 
 | session | plan lines | CPs | tok/CP | turns/CP | tools/CP | commits/CP | plan ln/CP |
 |---|---|---|---|---|---|---|---|
-| Phase 2 exec (`7f3db1c0`) | 1,599 | 25 | **5.2M** | **22.8** | **12.3** | 1.12 | 64 |
-| Phase 3 exec (`3d03b560`) | 2,904 | 38 | 12.7M | 31.0 | 16.2 | 1.29 | 76 |
+| Phase 2 exec (`7f3db1c0`) | 1,599 | 25 | **5.17M** | **22.1** | **12.0** | 1.12 | 64 |
+| Phase 3 exec (`3d03b560`) | 2,904 | 38 | 12.67M | 30.4 | 15.9 | 1.29 | 76 |
 | Phase 4a exec | 899 | 25 | ? | ? | ? | ? | 36 |
 | Phase 4b exec | 1,150 | 31 | ? | ? | ? | ? | 37 |
+
+**Session identification is verified, not inferred.** `7f3db1c0` opens with
+*"okay we have a written plan for phase 2 down in the plan folder. can we
+start working on executing the plan /executing-plans"*; `3d03b560` with
+*"/executing-plans … we can go ahead with the phase 3 execution"*.
+
+**Figures are execution-only.** Neither session was purely execution — both
+opened with `/journal` and discussion, and Phase 2's also merged and pushed
+Phase 1. Tokens are summed from the `/executing-plans` invocation forward
+(`2026-08-24T08:36:19` and `2026-08-25T08:58:52`). The preamble was 1.0M of
+130.4M and 1.4M of 482.8M — 0.8% and 0.3%, negligible, but measure the same
+way for 4a/4b so the comparison stays like-for-like. Note also that
+`7f3db1c0`'s 22-hour wall-clock span is idle time, not work; duration is not
+a usable metric here.
 
 `tok` = `input + output + cache_creation + cache_read` (raw volume, not
 billed cost — cache reads bill at a large discount, but they still track
@@ -52,8 +66,8 @@ Phase 2 control:
 | checkpoints un-batched | n/a | **0** | Override A holds or it doesn't |
 | commits with a failing test | n/a | **0** | the `&&` chain makes it unreachable |
 | commits/CP | 1.12 | **≤1.10** | template preserves 1 CP = 1 commit |
-| turns/CP | 22.8 | **<20** | one fewer call/CP, plus fewer exploratory reads |
-| tok/CP | 5.2M | **<4.0M** | fewer turns × smaller base context (36 vs 64 ln/CP) |
+| turns/CP | 22.1 | **<20** | one fewer call/CP, plus fewer exploratory reads |
+| tok/CP | 5.17M | **<4.0M** | fewer turns × smaller base context (36 vs 64 ln/CP) |
 
 **A result that fails these is a real result.** If tok/CP lands near or
 above 5.2M, the overrides did not pay for themselves and the skill should
