@@ -20,14 +20,19 @@ const (
 // Service opens and resolves rounds, and owns each round's server-side
 // clock.
 type Service struct {
+	ctx         context.Context
 	store       *redisstore.Store
 	broadcaster Broadcaster
 	refundGrace time.Duration
 }
 
-// NewService constructs a Service bound to store and b.
-func NewService(store *redisstore.Store, b Broadcaster) *Service {
-	return &Service{store: store, broadcaster: b, refundGrace: RefundGrace}
+// NewService constructs a Service bound to store and b. ctx is the
+// base context every round's server-side timer runs against — not a
+// per-request one, so a disconnecting host or a finished HTTP/WS
+// request never cancels a round's clock. Cancel ctx to stop every
+// in-flight timer, e.g. on process shutdown.
+func NewService(ctx context.Context, store *redisstore.Store, b Broadcaster) *Service {
+	return &Service{ctx: ctx, store: store, broadcaster: b, refundGrace: RefundGrace}
 }
 
 // Open opens a round in roomID on callerID's behalf, persists it, then
@@ -94,7 +99,7 @@ func (s *Service) Open(ctx context.Context, roomID, callerID string, spec Spec) 
 	}
 	s.broadcaster.Broadcast(roomID, payload)
 
-	go s.watch(context.Background(), roomID, roundID, lockAt)
+	go s.watch(s.ctx, roomID, roundID, lockAt)
 
 	return opened, nil
 }

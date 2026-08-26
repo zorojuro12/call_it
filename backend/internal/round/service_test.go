@@ -81,7 +81,7 @@ func TestOpen(t *testing.T) {
 	}
 
 	bc := &stubBroadcaster{}
-	svc := NewService(store, bc)
+	svc := NewService(context.Background(), store, bc)
 
 	spec := Spec{Question: "Clutch?", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}
 	before := time.Now()
@@ -152,7 +152,7 @@ func TestOpenNotHost(t *testing.T) {
 	}
 
 	bc := &stubBroadcaster{}
-	svc := NewService(store, bc)
+	svc := NewService(context.Background(), store, bc)
 
 	spec := Spec{Question: "Clutch?", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}
 	_, err := svc.Open(ctx, roomID, "u2", spec)
@@ -190,7 +190,7 @@ func TestOpenInvalid(t *testing.T) {
 				t.Fatalf("CreateRoom() = %v, want nil", err)
 			}
 			bc := &stubBroadcaster{}
-			svc := NewService(store, bc)
+			svc := NewService(context.Background(), store, bc)
 
 			_, err := svc.Open(ctx, roomID, "host1", tt.spec)
 			if !errors.Is(err, ErrInvalidSpec) {
@@ -214,7 +214,7 @@ func TestOpenConcurrent(t *testing.T) {
 		t.Fatalf("CreateRoom() = %v, want nil", err)
 	}
 	bc := &stubBroadcaster{}
-	svc := NewService(store, bc)
+	svc := NewService(context.Background(), store, bc)
 
 	spec := Spec{Question: "First?", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}
 	first, err := svc.Open(ctx, roomID, "host1", spec)
@@ -252,7 +252,7 @@ func TestResolve(t *testing.T) {
 	}
 
 	bc := &stubBroadcaster{}
-	svc := NewService(store, bc)
+	svc := NewService(context.Background(), store, bc)
 
 	spec := Spec{Question: "Q?", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}
 	opened, err := svc.Open(ctx, roomID, "host1", spec)
@@ -407,7 +407,7 @@ func TestResolveRejects(t *testing.T) {
 			}
 
 			bc := &stubBroadcaster{}
-			svc := NewService(store, bc)
+			svc := NewService(context.Background(), store, bc)
 			spec := Spec{Question: "Q?", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}
 			opened, err := svc.Open(ctx, roomID, "host1", spec)
 			if err != nil {
@@ -452,7 +452,7 @@ func TestResolveNobodyWon(t *testing.T) {
 	}
 
 	bc := &stubBroadcaster{}
-	svc := NewService(store, bc)
+	svc := NewService(context.Background(), store, bc)
 	spec := Spec{Question: "Q?", Outcomes: []string{"A", "B", "C"}, LockIn: 10 * time.Second}
 	opened, err := svc.Open(ctx, roomID, "host1", spec)
 	if err != nil {

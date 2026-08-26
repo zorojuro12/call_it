@@ -52,7 +52,7 @@ func TestTimerLocks(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	bc := &stubBroadcaster{}
-	svc := NewService(store, bc)
+	svc := NewService(context.Background(), store, bc)
 
 	_, roundID, _ := openAndWatch(t, store, svc, "host1", 1000, 100*time.Millisecond)
 
@@ -98,7 +98,7 @@ func TestLockedRejectsWagers(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	bc := &stubBroadcaster{}
-	svc := NewService(store, bc)
+	svc := NewService(context.Background(), store, bc)
 
 	roomID, roundID, _ := openAndWatch(t, store, svc, "host1", 1000, 100*time.Millisecond)
 	if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
@@ -143,7 +143,7 @@ func TestTimerSkipsTerminal(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	bc := &stubBroadcaster{}
-	svc := NewService(store, bc)
+	svc := NewService(context.Background(), store, bc)
 
 	roomID, roundID, _ := openAndWatch(t, store, svc, "host1", 1000, 2*time.Second)
 	if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
@@ -185,7 +185,7 @@ func TestAutoRefund(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	bc := &stubBroadcaster{}
-	svc := NewService(store, bc)
+	svc := NewService(context.Background(), store, bc)
 	svc.refundGrace = 300 * time.Millisecond
 
 	roomID, roundID, _ := openAndWatch(t, store, svc, "host1", 1000, 100*time.Millisecond)
@@ -263,7 +263,7 @@ func TestNoRefundAfterResolve(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	bc := &stubBroadcaster{}
-	svc := NewService(store, bc)
+	svc := NewService(context.Background(), store, bc)
 	svc.refundGrace = 300 * time.Millisecond
 
 	roomID, roundID, _ := openAndWatch(t, store, svc, "host1", 1000, 100*time.Millisecond)
@@ -315,5 +315,44 @@ func TestNoRefundAfterResolve(t *testing.T) {
 		if env.Type == "round_refunded" {
 			t.Errorf("unexpected round_refunded broadcast for an already-resolved round: %+v", c)
 		}
+	}
+}
+
+func TestTimerCancelled(t *testing.T) {
+	store := newTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	bc := &stubBroadcaster{}
+	svc := NewService(ctx, store, bc)
+
+	roomID := testID(t, "room")
+	if err := store.CreateRoom(context.Background(), roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+
+	opened, err := svc.Open(context.Background(), roomID, "host1", Spec{
+		Question: "Q?", Outcomes: []string{"Yes", "No"}, LockIn: MinLockIn,
+	})
+	if err != nil {
+		t.Fatalf("Open() = %v, want nil", err)
+	}
+
+	cancel()
+	// Sleep past the lock instant, not just 1s in — the point is to
+	// prove cancellation stopped the timer, not merely that it hasn't
+	// fired *yet*: at 1s in with a 3s lock window, the round would
+	// still read "open" regardless of whether cancellation works.
+	time.Sleep(MinLockIn + 1*time.Second)
+
+	rd, err := store.Round(context.Background(), opened.RoundID)
+	if err != nil {
+		t.Fatalf("Round() = %v, want nil", err)
+	}
+	if rd.Status != domain.RoundOpen {
+		t.Errorf("Round().Status = %q, want %q (no lock should have been attempted)", rd.Status, domain.RoundOpen)
+	}
+	if len(bc.Calls()) != 1 {
+		// Only the round_opened broadcast from Open itself — no
+		// round_locked.
+		t.Errorf("Broadcast call count = %d, want 1 (round_opened only)", len(bc.Calls()))
 	}
 }

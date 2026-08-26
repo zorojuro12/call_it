@@ -15,12 +15,19 @@ import (
 const RefundGrace = 60 * time.Second
 
 // watch runs one round's whole server-side clock: lock at lockAt, then
-// (from Task 7) auto-refund refundGrace later if still unresolved.
-// Started by Open in its own goroutine against a background context,
-// not the opening request's — a disconnecting host must not cancel the
-// round's clock.
+// auto-refund refundGrace later if still unresolved. Started by Open in
+// its own goroutine against the Service's base context, not the
+// opening request's — a disconnecting host must not cancel the round's
+// clock. Canceling that base context (e.g. on process shutdown) does
+// stop it, at either wait.
 func (s *Service) watch(ctx context.Context, roomID, roundID string, lockAt time.Time) {
-	<-time.After(time.Until(lockAt))
+	lockTimer := time.NewTimer(time.Until(lockAt))
+	defer lockTimer.Stop()
+	select {
+	case <-lockTimer.C:
+	case <-ctx.Done():
+		return
+	}
 
 	err := s.store.LockRound(ctx, roundID)
 	if errors.Is(err, redisstore.ErrRoundTerminal) {
@@ -42,7 +49,13 @@ func (s *Service) watch(ctx context.Context, roomID, roundID string, lockAt time
 	}
 	s.broadcaster.Broadcast(roomID, payload)
 
-	<-time.After(s.refundGrace)
+	refundTimer := time.NewTimer(s.refundGrace)
+	defer refundTimer.Stop()
+	select {
+	case <-refundTimer.C:
+	case <-ctx.Done():
+		return
+	}
 
 	rd, err := s.store.Round(ctx, roundID)
 	if err != nil {
