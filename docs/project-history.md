@@ -100,6 +100,40 @@ One MEDIUM raised (a session ending twice on a rapid disconnect/reconnect in
 the same window) was the known limitation Task 8 CP2 already documented — not
 a new gap.
 
+### Phase 5a — `internal/relay`, `internal/events`, `internal/migrate`, ledger schema
+
+No CRITICAL or HIGH. Scoped to the four surfaces the plan named:
+
+- **Event payloads as an exfiltration path** — clear. Settlement and refund
+  outbox events only emit per-user payout detail after `settle_round.lua` /
+  `refund_round.lua` CAS the round to a terminal status inside the same
+  atomic script that emits the event; nothing added this phase broadcasts or
+  logs that detail to a client pre-resolution.
+- **`payouts` JSON decoding** — clear. `events.Decode` unmarshals directly
+  into typed `[]Payout` (never `interface{}`), so amounts stay `int64`
+  without precision loss; `TestDecodeRoundSettled_PayoutPrecision` pins a
+  2^53+1 round-trip. No unbounded-allocation path found on a malformed array.
+- **The PostgreSQL DSN** — clear, with one MEDIUM accepted rather than fixed:
+  a migration failure could in principle surface a DSN-bearing error string
+  from the postgres driver. Accepted because the practical risk is low
+  (pgx/lib/pq redact the password in their own error formatting; verified
+  empirically — an unreachable-Postgres error during this phase's own testing
+  read `failed to connect to `user=callit database=callit`: ...` with no
+  password) and every default DSN in this repo (`CLAUDE.md`, `docker-compose.yml`,
+  CI) is unambiguously local-dev-shaped. Revisit if a production-shaped DSN
+  is ever wired through the same code path.
+- **Kafka connection** — clear. PLAINTEXT-to-localhost is the documented
+  local-dev posture (`docker-compose.yml`); no SASL/TLS material is
+  hardcoded anywhere, and the plaintext choice is a recorded decision, not
+  something silently inherited.
+
+One LOW noted, not fixed: `internal/relay`'s field-map conversion silently
+turns a non-string Redis stream value into `""` before handing it to
+`events.Decode`, which then reports a clearer "missing field" error instead of
+"wrong type" for that (currently unreachable, since every writer in this
+codebase writes strings) case. Left as-is — fixing it would be speculative
+hardening against a value shape nothing in this codebase produces.
+
 ### Open by design, deferred to Phase 7 hardening
 
 1. **Login timing.** The unknown-email path skips argon2id and so responds
