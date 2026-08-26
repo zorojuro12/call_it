@@ -40,6 +40,14 @@ func RoomRoundKey(roomID string) string {
 	return "room:" + roomID + ":round"
 }
 
+// RoomOpeningKey holds each player's opening session stake — the
+// effective balance granted at join, which never moves after (Amendment
+// D3). Needed to compute a session's net delta at EndSession, since the
+// wallet itself moves on every wager.
+func RoomOpeningKey(roomID string) string {
+	return "room:" + roomID + ":opening"
+}
+
 func RoundPoolsKey(roundID string) string {
 	return "round:" + roundID + ":pools"
 }

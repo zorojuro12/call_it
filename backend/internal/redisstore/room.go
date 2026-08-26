@@ -116,7 +116,16 @@ func (s *Store) JoinRoom(ctx context.Context, roomID, userID string, balance dom
 		return 0, fmt.Errorf("%w: balance %d must be positive", domain.ErrInvalidStake, balance)
 	}
 
-	if err := s.client.HSetNX(ctx, RoomWalletsKey(roomID), userID, strconv.FormatInt(int64(balance), 10)).Err(); err != nil {
+	// The opening stake is written in the same transaction as the
+	// wallet — Amendment D3 — so a wallet can never exist without its
+	// opening stake. HSetNX on both means a rejoin leaves each exactly
+	// as it stands, same as the wallet's own rejoin behavior.
+	_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HSetNX(ctx, RoomWalletsKey(roomID), userID, strconv.FormatInt(int64(balance), 10))
+		pipe.HSetNX(ctx, RoomOpeningKey(roomID), userID, strconv.FormatInt(int64(balance), 10))
+		return nil
+	})
+	if err != nil {
 		return 0, fmt.Errorf("redisstore: join room %s as %s: %w", roomID, userID, err)
 	}
 
@@ -144,6 +153,24 @@ func (s *Store) Balance(ctx context.Context, roomID, userID string) (domain.Toke
 	balance, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("redisstore: balance for %s in room %s: malformed value %q: %w", userID, roomID, v, err)
+	}
+	return domain.Tokens(balance), nil
+}
+
+// OpeningStake reads a user's opening session stake in a room — the
+// effective balance granted at join, which stays fixed through the
+// session even as the wallet moves on every wager (Amendment D3).
+func (s *Store) OpeningStake(ctx context.Context, roomID, userID string) (domain.Tokens, error) {
+	v, err := s.client.HGet(ctx, RoomOpeningKey(roomID), userID).Result()
+	if err == redis.Nil {
+		return 0, fmt.Errorf("redisstore: opening stake for %s in room %s: %w", userID, roomID, ErrNotFound)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: get opening stake for %s in room %s: %w", userID, roomID, err)
+	}
+	balance, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: opening stake for %s in room %s: malformed value %q: %w", userID, roomID, v, err)
 	}
 	return domain.Tokens(balance), nil
 }

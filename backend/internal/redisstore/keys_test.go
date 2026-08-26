@@ -11,6 +11,8 @@ func TestKeys(t *testing.T) {
 		{"RoomKey", RoomKey("r1"), "room:r1"},
 		{"RoomWalletsKey", RoomWalletsKey("r1"), "room:r1:wallets"},
 		{"RoomCodeKey", RoomCodeKey("WXYZ"), "code:WXYZ"},
+		{"RoomRoundKey", RoomRoundKey("rm1"), "room:rm1:round"},
+		{"RoomOpeningKey", RoomOpeningKey("rm1"), "room:rm1:opening"},
 		{"RoundKey", RoundKey("n1"), "round:n1"},
 		{"RoundPoolsKey", RoundPoolsKey("n1"), "round:n1:pools"},
 		{"RoundWagersKey", RoundWagersKey("n1"), "round:n1:wagers"},

@@ -177,12 +177,6 @@ func TestClearCurrentRound(t *testing.T) {
 	}
 }
 
-func TestKeys_RoomRoundKey(t *testing.T) {
-	if got, want := RoomRoundKey("rm1"), "room:rm1:round"; got != want {
-		t.Errorf("RoomRoundKey(%q) = %q, want %q", "rm1", got, want)
-	}
-}
-
 func TestRound_MalformedFields(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

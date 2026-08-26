@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 )
@@ -217,6 +218,70 @@ func TestJoinRoom(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("PlayerCount() = %d, want 2 (host excluded)", count)
+	}
+}
+
+func TestOpeningStake(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+
+	eff, err := store.JoinRoom(ctx, roomID, "u1", 600)
+	if err != nil {
+		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+	if eff != 600 {
+		t.Errorf("JoinRoom() effective = %d, want 600", eff)
+	}
+
+	opening, err := store.OpeningStake(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("OpeningStake() = %v, want nil", err)
+	}
+	if opening != 600 {
+		t.Errorf("OpeningStake() = %d, want 600", opening)
+	}
+	balance, err := store.Balance(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("Balance() = %v, want nil", err)
+	}
+	if balance != 600 {
+		t.Errorf("Balance() = %d, want 600", balance)
+	}
+
+	// Mutate the wallet with a wager — OpeningStake must not move.
+	roundID := testID(t, "round")
+	if err := store.CreateRound(ctx, roundID, roomID, "Question?", testOutcomes(2), time.Now().Add(30*time.Second)); err != nil {
+		t.Fatalf("CreateRound() = %v, want nil", err)
+	}
+	if _, err := store.PlaceWager(ctx, WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 0, Amount: 100, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager() = %v, want nil", err)
+	}
+
+	balance, err = store.Balance(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("Balance() after wager = %v, want nil", err)
+	}
+	if balance != 500 {
+		t.Errorf("Balance() after wager = %d, want 500", balance)
+	}
+	opening, err = store.OpeningStake(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("OpeningStake() after wager = %v, want nil", err)
+	}
+	if opening != 600 {
+		t.Errorf("OpeningStake() after wager = %d, want 600 (unchanged)", opening)
+	}
+
+	if _, err := store.OpeningStake(ctx, roomID, "never-joined"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("OpeningStake() for user who never joined error = %v, want ErrNotFound", err)
 	}
 }
 
