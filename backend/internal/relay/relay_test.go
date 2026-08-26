@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -118,5 +119,55 @@ func TestOnceProducesThenAcks(t *testing.T) {
 	}
 	if pending.Count != 0 {
 		t.Errorf("XPENDING count = %d, want 0 (all three must be acked)", pending.Count)
+	}
+}
+
+func TestOnceDoesNotAckOnProduceFailure(t *testing.T) {
+	ctx := context.Background()
+	stream, group := testStreamAndGroup(t)
+
+	r := New(testClient, stream, group, "consumer-1", nil)
+	if err := r.EnsureGroup(ctx); err != nil {
+		t.Fatalf("EnsureGroup() = %v, want nil", err)
+	}
+
+	xaddWagerPlaced(t, ctx, stream)
+	xaddRoundSettled(t, ctx, stream)
+
+	failing := &fakeProducer{err: errors.New("broker down")}
+	r.producer = failing
+
+	if _, err := r.Once(ctx, 10, time.Second); err == nil {
+		t.Fatalf("Once() error = nil, want an error wrapping the producer's failure")
+	}
+
+	pending, err := testClient.XPending(ctx, stream, group).Result()
+	if err != nil {
+		t.Fatalf("XPENDING: %v", err)
+	}
+	if pending.Count != 2 {
+		t.Errorf("XPENDING count = %d, want 2 (nothing acked on produce failure)", pending.Count)
+	}
+
+	succeeding := &fakeProducer{}
+	r.producer = succeeding
+
+	relayed, err := r.Recover(ctx, 10)
+	if err != nil {
+		t.Fatalf("Recover() error = %v, want nil", err)
+	}
+	if relayed != 2 {
+		t.Errorf("Recover() relayed = %d, want 2", relayed)
+	}
+	if succeeding.callCount() != 1 {
+		t.Errorf("Produce called %d times during Recover, want 1", succeeding.callCount())
+	}
+
+	pendingAfter, err := testClient.XPending(ctx, stream, group).Result()
+	if err != nil {
+		t.Fatalf("XPENDING after recover: %v", err)
+	}
+	if pendingAfter.Count != 0 {
+		t.Errorf("XPENDING count after Recover = %d, want 0", pendingAfter.Count)
 	}
 }

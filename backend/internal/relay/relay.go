@@ -63,10 +63,23 @@ func (r *Relay) EnsureGroup(ctx context.Context) error {
 // after Produce returns nil. An empty read (block timeout) returns
 // (0, nil).
 func (r *Relay) Once(ctx context.Context, count int64, block time.Duration) (int, error) {
+	return r.readDecodeProduceAck(ctx, ">", count, block)
+}
+
+// Recover re-reads this consumer's own pending entries (id "0" instead
+// of Once's ">") and relays them the same way. Used at startup, and
+// after a produce failure, to close the at-least-once gap Once's error
+// return leaves open: an entry Once read but could not produce stays
+// pending until Recover successfully relays it.
+func (r *Relay) Recover(ctx context.Context, count int64) (int, error) {
+	return r.readDecodeProduceAck(ctx, "0", count, 0)
+}
+
+func (r *Relay) readDecodeProduceAck(ctx context.Context, id string, count int64, block time.Duration) (int, error) {
 	streams, err := r.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    r.group,
 		Consumer: r.consumer,
-		Streams:  []string{r.stream, ">"},
+		Streams:  []string{r.stream, id},
 		Count:    count,
 		Block:    block,
 	}).Result()
