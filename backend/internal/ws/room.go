@@ -11,6 +11,10 @@ type joinCmd struct {
 	c *Client
 }
 
+type leaveCmd struct {
+	c *Client
+}
+
 type membersCmd struct {
 	reply chan []Identity
 }
@@ -33,12 +37,25 @@ func (r *Room) run(onEmpty func(roomID string)) {
 		switch c := cmd.(type) {
 		case joinCmd:
 			clients[c.c] = struct{}{}
+		case leaveCmd:
+			remove(clients, c.c)
 		case membersCmd:
 			c.reply <- membersOf(clients)
 		case countCmd:
 			c.reply <- len(clients)
 		}
 	}
+}
+
+// remove deletes c from clients and closes its send channel, but only
+// if c is actually present — a non-member removal is a no-op, which is
+// what makes closing send here safe from a double-close panic.
+func remove(clients map[*Client]struct{}, c *Client) {
+	if _, ok := clients[c]; !ok {
+		return
+	}
+	delete(clients, c)
+	close(c.send)
 }
 
 func membersOf(clients map[*Client]struct{}) []Identity {
@@ -53,6 +70,12 @@ func membersOf(clients map[*Client]struct{}) []Identity {
 // pointer twice is a no-op.
 func (r *Room) Join(c *Client) {
 	r.cmds <- joinCmd{c: c}
+}
+
+// Leave removes c from the room's membership and closes its send
+// channel. A client that is not a member is a harmless no-op.
+func (r *Room) Leave(c *Client) {
+	r.cmds <- leaveCmd{c: c}
 }
 
 // Members returns a snapshot of the room's current identities, in
