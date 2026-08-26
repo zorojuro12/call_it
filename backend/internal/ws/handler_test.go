@@ -203,6 +203,92 @@ func TestHandlerRequiresRoom(t *testing.T) {
 	}
 }
 
+func TestPresenceJoin(t *testing.T) {
+	// Arrange
+	issuer := newTestIssuer(t, time.Hour)
+	hub := NewHub()
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil))
+	defer server.Close()
+
+	tokenA, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+	tokenB, err := issuer.Issue(auth.Claims{UserID: "u2", DisplayName: "Grace", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+
+	// Act: A connects and drains its connected event
+	connA, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+tokenA, nil)
+	if err != nil {
+		t.Fatalf("Dial A error: %v", err)
+	}
+	defer connA.Close()
+	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mustReadEnvelope(t, connA, TypeConnected)
+
+	// A also receives a player_joined about its own join — the design
+	// deliberately broadcasts to the whole room including the newcomer
+	// (Task 7 CP1 contract), rather than special-casing the sender.
+	selfEnv := mustReadEnvelope(t, connA, TypePlayerJoined)
+	var selfPresence PresenceEvent
+	if err := unmarshalData(selfEnv, &selfPresence); err != nil {
+		t.Fatalf("unmarshal self PresenceEvent: %v", err)
+	}
+	wantSelf := PresenceEvent{UserID: "u1", DisplayName: "Ada", PlayerCount: 1}
+	if selfPresence != wantSelf {
+		t.Fatalf("A's own player_joined = %+v, want %+v", selfPresence, wantSelf)
+	}
+
+	// Act: B connects
+	connB, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+tokenB, nil)
+	if err != nil {
+		t.Fatalf("Dial B error: %v", err)
+	}
+	defer connB.Close()
+	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	// Assert: B receives its own connected event first
+	mustReadEnvelope(t, connB, TypeConnected)
+
+	// Assert: A's next message is player_joined for B
+	env := mustReadEnvelope(t, connA, TypePlayerJoined)
+	var presence PresenceEvent
+	if err := unmarshalData(env, &presence); err != nil {
+		t.Fatalf("unmarshal PresenceEvent: %v", err)
+	}
+	want := PresenceEvent{UserID: "u2", DisplayName: "Grace", PlayerCount: 2}
+	if presence != want {
+		t.Fatalf("A's player_joined = %+v, want %+v", presence, want)
+	}
+
+	// Assert: B also receives the same player_joined broadcast
+	env = mustReadEnvelope(t, connB, TypePlayerJoined)
+	if err := unmarshalData(env, &presence); err != nil {
+		t.Fatalf("unmarshal PresenceEvent: %v", err)
+	}
+	if presence != want {
+		t.Fatalf("B's player_joined = %+v, want %+v", presence, want)
+	}
+}
+
+func mustReadEnvelope(t *testing.T, conn *websocket.Conn, wantType string) Envelope {
+	t.Helper()
+	_, raw, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage error: %v", err)
+	}
+	env, err := Decode(raw)
+	if err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if env.Type != wantType {
+		t.Fatalf("Type = %q, want %q", env.Type, wantType)
+	}
+	return env
+}
+
 func unmarshalData(env Envelope, v any) error {
 	return json.Unmarshal(env.Data, v)
 }

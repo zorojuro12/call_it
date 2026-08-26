@@ -48,6 +48,11 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 			RoomID:      claims.RoomID,
 			Guest:       claims.Guest,
 		}))
+		room.Broadcast(mustEncode(TypePlayerJoined, PresenceEvent{
+			UserID:      claims.UserID,
+			DisplayName: claims.DisplayName,
+			PlayerCount: room.Count(),
+		}))
 
 		go c.WritePump()
 		go c.ReadPump(onMessage, func() {
