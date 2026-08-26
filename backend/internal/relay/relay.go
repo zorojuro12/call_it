@@ -1,0 +1,57 @@
+// Package relay reads the wager-outbox Redis Stream through a consumer
+// group and produces each entry to Kafka, acking only after the produce
+// is confirmed — an at-least-once bridge that never acks ahead of a
+// durable write, per the outbox pattern CLAUDE.md documents.
+package relay
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/redis/go-redis/v9"
+	"github.com/zorojuro12/call_it/backend/internal/events"
+)
+
+// Producer sends a batch of decoded events to their destination (Kafka
+// in production, a fake in tests). Declared here and satisfied
+// structurally by events.KafkaProducer, so this package does not import
+// internal/events' Kafka code and no import cycle exists.
+type Producer interface {
+	Produce(ctx context.Context, evs []events.Event) error
+}
+
+// Relay reads OutboxStream through a Redis consumer group, decodes each
+// entry, and hands the batch to a Producer.
+type Relay struct {
+	client   *redis.Client
+	stream   string
+	group    string
+	consumer string
+	producer Producer
+}
+
+// New builds a Relay. It performs no I/O — call EnsureGroup before Once
+// or Run.
+func New(client *redis.Client, stream, group, consumer string, p Producer) *Relay {
+	return &Relay{
+		client:   client,
+		stream:   stream,
+		group:    group,
+		consumer: consumer,
+		producer: p,
+	}
+}
+
+// EnsureGroup creates the consumer group if it does not already exist,
+// starting from stream id "0" rather than "$" — "$" would skip every
+// entry already written by a running API process, silently losing money
+// movements that predate the relay's first start. Idempotent: a second
+// call swallows Redis's BUSYGROUP error and returns nil.
+func (r *Relay) EnsureGroup(ctx context.Context) error {
+	err := r.client.XGroupCreateMkStream(ctx, r.stream, r.group, "0").Err()
+	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
+		return fmt.Errorf("relay: creating consumer group %q on stream %q: %w", r.group, r.stream, err)
+	}
+	return nil
+}

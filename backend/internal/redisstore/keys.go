@@ -14,6 +14,12 @@ import (
 // balance-mutating script XADDs into, atomically with its mutation.
 const OutboxStream = "wager-outbox"
 
+// OutboxGroup is cmd/relay's consumer group name on OutboxStream. A
+// single named group (rather than one per relay instance) lets multiple
+// relay processes share the stream's backlog via XREADGROUP without
+// double-delivering an entry.
+const OutboxGroup = "relay"
+
 // PoolTotalField is the field in a round's pools hash holding the sum of
 // every outcome's pool.
 const PoolTotalField = "total"
