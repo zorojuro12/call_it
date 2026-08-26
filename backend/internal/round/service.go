@@ -25,6 +25,14 @@ func NewService(store *redisstore.Store, b Broadcaster) *Service {
 // deliberate: no client should ever learn of a round Redis does not
 // have.
 func (s *Service) Open(ctx context.Context, roomID, callerID string, spec Spec) (Opened, error) {
+	rm, err := s.store.Room(ctx, roomID)
+	if err != nil {
+		return Opened{}, err
+	}
+	if rm.HostID != callerID {
+		return Opened{}, ErrNotHost
+	}
+
 	roundID := uuid.NewString()
 	lockAt := time.Now().Add(spec.LockIn)
 

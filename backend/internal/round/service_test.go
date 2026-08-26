@@ -3,12 +3,14 @@ package round
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/zorojuro12/call_it/backend/internal/domain"
+	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 )
 
 // stubBroadcaster records every Broadcast call, so tests can assert
@@ -119,5 +121,33 @@ func TestOpen(t *testing.T) {
 	}
 	if data.RoundID != opened.RoundID || data.Question != spec.Question || data.LockAtMS != opened.LockAtMS {
 		t.Errorf("Broadcast data = %+v, want it to echo %+v", data, opened)
+	}
+}
+
+func TestOpenNotHost(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, "u2", 1000); err != nil {
+		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+
+	spec := Spec{Question: "Clutch?", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}
+	_, err := svc.Open(ctx, roomID, "u2", spec)
+	if !errors.Is(err, ErrNotHost) {
+		t.Fatalf("Open() by non-host error = %v, want ErrNotHost", err)
+	}
+
+	if _, err := store.CurrentRound(ctx, roomID); !errors.Is(err, redisstore.ErrNotFound) {
+		t.Errorf("CurrentRound() after rejected Open error = %v, want ErrNotFound", err)
+	}
+	if len(bc.Calls()) != 0 {
+		t.Errorf("Broadcast call count = %d, want 0", len(bc.Calls()))
 	}
 }
