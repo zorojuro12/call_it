@@ -194,6 +194,34 @@ func TestWritePumpPings(t *testing.T) {
 	}
 }
 
+func TestWritePumpClosesConn(t *testing.T) {
+	// Arrange
+	stub := newStubConn()
+	cfg := DefaultClientConfig()
+	c := NewClient(stub, Identity{UserID: "u1"}, cfg)
+	done := make(chan struct{})
+
+	// Act
+	go func() {
+		c.WritePump()
+		close(done)
+	}()
+	close(c.send)
+
+	// Assert
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("WritePump did not return after send was closed")
+	}
+	if got := stub.Closed(); got != 1 {
+		t.Fatalf("Close() called %d times, want 1", got)
+	}
+	if got := len(stub.WriteMessages()); got != 0 {
+		t.Fatalf("got %d WriteMessage calls after close, want 0", got)
+	}
+}
+
 // waitFor polls cond until it's true or a timeout elapses, failing the
 // test on timeout. Used instead of a fixed sleep to avoid flaking on a
 // loaded runner.
