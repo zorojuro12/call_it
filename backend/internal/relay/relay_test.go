@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/zorojuro12/call_it/backend/internal/events"
 )
 
 func TestEnsureGroupIsIdempotent(t *testing.T) {
@@ -169,5 +170,43 @@ func TestOnceDoesNotAckOnProduceFailure(t *testing.T) {
 	}
 	if pendingAfter.Count != 0 {
 		t.Errorf("XPENDING count after Recover = %d, want 0", pendingAfter.Count)
+	}
+}
+
+func TestOnceHaltsOnUndecodableEntry(t *testing.T) {
+	ctx := context.Background()
+	stream, group := testStreamAndGroup(t)
+
+	r := New(testClient, stream, group, "consumer-1", nil)
+	if err := r.EnsureGroup(ctx); err != nil {
+		t.Fatalf("EnsureGroup() = %v, want nil", err)
+	}
+
+	xaddWagerPlaced(t, ctx, stream)
+	if _, err := testClient.XAdd(ctx, &redis.XAddArgs{
+		Stream: stream,
+		Values: map[string]interface{}{"type": "garbage"},
+	}).Result(); err != nil {
+		t.Fatalf("XADD garbage entry: %v", err)
+	}
+
+	fake := &fakeProducer{}
+	r.producer = fake
+
+	_, err := r.Once(ctx, 10, time.Second)
+	if !errors.Is(err, events.ErrUnknownEventType) {
+		t.Fatalf("Once() error = %v, want errors.Is(err, events.ErrUnknownEventType)", err)
+	}
+
+	if fake.callCount() != 0 {
+		t.Errorf("Produce called %d times, want 0 (nothing produced when a batch member fails to decode)", fake.callCount())
+	}
+
+	pending, err := testClient.XPending(ctx, stream, group).Result()
+	if err != nil {
+		t.Fatalf("XPENDING: %v", err)
+	}
+	if pending.Count != 2 {
+		t.Errorf("XPENDING count = %d, want 2 (nothing acked on decode failure)", pending.Count)
 	}
 }
