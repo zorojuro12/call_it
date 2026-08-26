@@ -393,6 +393,59 @@ func TestReadPumpErrorReply(t *testing.T) {
 	close(blockCh)
 }
 
+func TestReadPumpPong(t *testing.T) {
+	// Arrange
+	stub := newStubConn()
+	blockCh := make(chan struct{})
+	stub.readMessageFunc = func() (int, []byte, error) {
+		<-blockCh
+		return 0, nil, io.EOF
+	}
+	cfg := DefaultClientConfig()
+	cfg.PongWait = 5 * time.Second
+	c := NewClient(stub, Identity{UserID: "u1"}, cfg)
+
+	// Act
+	go c.ReadPump(nil, nil)
+	waitFor(t, func() bool {
+		stub.mu.Lock()
+		defer stub.mu.Unlock()
+		return len(stub.setReadLimits) >= 1 && len(stub.setReadDeadlines) >= 1 && stub.pongHandler != nil
+	})
+
+	// Assert: read limit and initial deadline were set
+	stub.mu.Lock()
+	limits := append([]int64{}, stub.setReadLimits...)
+	deadlinesBefore := len(stub.setReadDeadlines)
+	pongHandler := stub.pongHandler
+	stub.mu.Unlock()
+	if len(limits) != 1 || limits[0] != cfg.MaxMessage {
+		t.Fatalf("setReadLimits = %v, want [%d]", limits, cfg.MaxMessage)
+	}
+	if pongHandler == nil {
+		t.Fatal("no pong handler installed")
+	}
+
+	// Act: invoke the installed pong handler
+	if err := pongHandler(""); err != nil {
+		t.Fatalf("pong handler returned error: %v", err)
+	}
+
+	// Assert: a further SetReadDeadline was recorded, at least PongWait-1s out
+	stub.mu.Lock()
+	deadlinesAfter := append([]time.Time{}, stub.setReadDeadlines...)
+	stub.mu.Unlock()
+	if len(deadlinesAfter) <= deadlinesBefore {
+		t.Fatalf("got %d SetReadDeadline calls after pong, want more than %d", len(deadlinesAfter), deadlinesBefore)
+	}
+	last := deadlinesAfter[len(deadlinesAfter)-1]
+	if !last.After(time.Now().Add(4 * time.Second)) {
+		t.Errorf("pong deadline = %v, want at least 4s in the future", last)
+	}
+
+	close(blockCh)
+}
+
 func readWithTimeout(t *testing.T, ch chan []byte) []byte {
 	t.Helper()
 	select {

@@ -83,6 +83,12 @@ type MessageHandler func(c *Client, e Envelope)
 // ReadPump loops on c.conn.ReadMessage, decoding and dispatching each
 // message to handle. It returns on any read error.
 func (c *Client) ReadPump(handle MessageHandler, onClose func()) {
+	c.conn.SetReadLimit(c.cfg.MaxMessage)
+	_ = c.conn.SetReadDeadline(time.Now().Add(c.cfg.PongWait))
+	c.conn.SetPongHandler(func(string) error {
+		return c.conn.SetReadDeadline(time.Now().Add(c.cfg.PongWait))
+	})
+
 	for {
 		_, raw, err := c.conn.ReadMessage()
 		if err != nil {
