@@ -1,6 +1,7 @@
 package events
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 )
@@ -13,6 +14,8 @@ func Decode(fields map[string]string) (Event, error) {
 	switch fields["type"] {
 	case "wager_placed":
 		return decodeWagerPlaced(fields)
+	case "round_settled":
+		return decodeRoundSettled(fields)
 	default:
 		return nil, fmt.Errorf("events: unrecognized type %q", fields["type"])
 	}
@@ -76,5 +79,51 @@ func decodeWagerPlaced(fields map[string]string) (Event, error) {
 		Outcome:        int(outcome),
 		Amount:         amount,
 		Balance:        balance,
+	}, nil
+}
+
+func decodeRoundSettled(fields map[string]string) (Event, error) {
+	roomID, err := requireField(fields, "room_id")
+	if err != nil {
+		return nil, err
+	}
+	roundID, err := requireField(fields, "round_id")
+	if err != nil {
+		return nil, err
+	}
+	idempotencyKey, err := requireField(fields, "idempotency_key")
+	if err != nil {
+		return nil, err
+	}
+	winningOutcome, err := parseInt(fields, "winning_outcome")
+	if err != nil {
+		return nil, err
+	}
+	total, err := parseInt(fields, "total")
+	if err != nil {
+		return nil, err
+	}
+	dust, err := parseInt(fields, "dust")
+	if err != nil {
+		return nil, err
+	}
+	payoutsRaw, err := requireField(fields, "payouts")
+	if err != nil {
+		return nil, err
+	}
+	var payouts []Payout
+	if err := json.Unmarshal([]byte(payoutsRaw), &payouts); err != nil {
+		return nil, fmt.Errorf("events: field %q is not valid JSON: %w", "payouts", err)
+	}
+
+	return RoundSettled{
+		RoomID:         roomID,
+		RoundID:        roundID,
+		IdempotencyKey: idempotencyKey,
+		WinningOutcome: int(winningOutcome),
+		Total:          total,
+		Dust:           dust,
+		Payouts:        payouts,
+		Refunded:       false,
 	}, nil
 }
