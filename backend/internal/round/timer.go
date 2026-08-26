@@ -25,7 +25,8 @@ func (s *Service) watch(ctx context.Context, roomID, roundID string, lockAt time
 	if errors.Is(err, redisstore.ErrRoundTerminal) {
 		// A round resolved before its lock instant needs no lock —
 		// this is a benign race between the timer and a fast host,
-		// not a failure.
+		// not a failure. Also covers this checkpoint's case: a round
+		// that resolved before the timer ever fired.
 		return
 	}
 	if err != nil {

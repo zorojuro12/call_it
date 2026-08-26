@@ -138,3 +138,45 @@ func TestLockedRejectsWagers(t *testing.T) {
 		t.Errorf("Balance() after rejected wager = %d, want unchanged %d", balanceAfter, balanceBefore)
 	}
 }
+
+func TestTimerSkipsTerminal(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+
+	roomID, roundID, _ := openAndWatch(t, store, svc, "host1", 1000, 2*time.Second)
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
+		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+	if _, err := store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 0, Amount: 100, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager() = %v, want nil", err)
+	}
+
+	if err := store.LockRound(ctx, roundID); err != nil {
+		t.Fatalf("LockRound() = %v, want nil", err)
+	}
+	if _, err := store.SettleRound(ctx, roundID, 0, testID(t, "idem")); err != nil {
+		t.Fatalf("SettleRound() = %v, want nil", err)
+	}
+
+	time.Sleep(2500 * time.Millisecond)
+
+	rd, err := store.Round(ctx, roundID)
+	if err != nil {
+		t.Fatalf("Round() = %v, want nil", err)
+	}
+	if rd.Status != domain.RoundResolved {
+		t.Errorf("Round().Status = %q, want %q (unchanged by the timer)", rd.Status, domain.RoundResolved)
+	}
+
+	for _, c := range bc.Calls() {
+		env := decodeEnvelope(t, c.payload)
+		if env.Type == "round_locked" {
+			t.Errorf("unexpected round_locked broadcast for an already-resolved round: %+v", c)
+		}
+	}
+}
