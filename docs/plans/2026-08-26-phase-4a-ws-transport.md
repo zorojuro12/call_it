@@ -897,3 +897,26 @@ Expected: one commit. **The branch is green and verified — stop here.** `execu
 **4. Checkpoint realness.** Every checkpoint names an observable signal at the interface its test calls, per `writing-plans`' observable-signal rule. The two that warranted a second look: Task 2 CP4 (eviction is visible as `Count()` dropping *and* `send` closing — not merely as an internal map mutation) and Task 5 CP2 (reaping is visible as `RoomCount()` dropping *and* a new pointer on rejoin, which distinguishes a reaped room from a merely-emptied one). Both are genuinely falsifiable.
 
 **5. Where this plan stops.** At "the branch is green and verified" (Task 7 CP4). No merge, push, or PR step appears anywhere.
+
+## Measured
+
+Recorded at Task 7 CP4 close-out, for the `writing-plans-tuned` experiment
+this plan's split (Amendment C1) opted into first.
+
+| Metric | Value |
+|---|---|
+| Plan lines | 899 |
+| Checkpoints (plan body) | 25 — the header's "24 checkpoints" budget undercounted by one; Task 7 CP4 (close-out) is a 25th checkpoint the header total didn't include |
+| Lines/checkpoint | 899 / 25 ≈ 36 — under the header's own ≤60 target |
+| Commits landed | 25 (24 `feat` + 1 `docs` for this close-out), a clean 1:1 with checkpoints — no checkpoint merged or split across commits, unlike Phase 2 (28 landed vs. 31–32 estimated) or Phase 3 (~49 vs. ~44) |
+| Checkpoints un-batched into separate verify/commit steps | 0 — every checkpoint's "Step 2: Implement, then verify-and-commit in one command" ran as written, first try, no splitting into a separate verify pass and a separate commit pass |
+| Checkpoints that passed immediately (prior checkpoint's implementation already satisfied the contract) | 5 of 25 — Task 1 CP2, Task 3 CP2/CP3/CP4, Task 6 CP2. Each was verified genuine per the observable-signal rule by disabling the relevant guard, confirming the test failed, then restoring it — all 5 confirmed real, none vacuous |
+| Real defects found during execution (plan text vs. what actually had to be built) | 1 — Task 5 CP2's literal contract (delete the room from the registry directly on the empty notification) would let a client that rejoins between notification and reap land in an orphaned room while the hub spins up a second, empty one under the same ID. Implemented the close-confirmation round-trip the plan's own design note called for instead (`Room.close()` replies `false` if a member re-joined, hub only deletes on `true`) — this also required *not* returning from the hub's `run()` on `Shutdown`, since `RoomCount()` is called immediately after `Shutdown()` returns in Task 5 CP3's own test and would otherwise deadlock forever |
+
+**Verdict for `writing-plans-tuned` vs. `writing-plans`:** the zero-un-batching
+result is the number this experiment was designed to produce. On this one
+data point, the tuned format's combined verify-and-commit step held up
+under real execution without needing to fall back to the untuned two-step
+form. One phase isn't enough to merge the variant back into `writing-plans`
+outright — that call belongs to whoever runs the next `writing-plans-tuned`
+phase and compares.

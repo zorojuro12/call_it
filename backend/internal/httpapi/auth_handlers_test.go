@@ -15,6 +15,7 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/auth"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 	"github.com/zorojuro12/call_it/backend/internal/room"
+	"github.com/zorojuro12/call_it/backend/internal/ws"
 )
 
 // uniqueRemoteAddrCounter backs uniqueRemoteAddr.
@@ -37,7 +38,7 @@ func testDeps(t *testing.T) Deps {
 	issuer := testIssuer(t)
 	accounts := account.NewService(store, issuer)
 	rooms := room.NewService(store, issuer)
-	return Deps{Accounts: accounts, Rooms: rooms, Store: store, Issuer: issuer}
+	return Deps{Accounts: accounts, Rooms: rooms, Store: store, Issuer: issuer, Hub: ws.NewHub()}
 }
 
 func TestRegister(t *testing.T) {
