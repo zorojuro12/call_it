@@ -7,11 +7,22 @@ package wager
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 	"github.com/zorojuro12/call_it/backend/internal/round"
+)
+
+// Scope, Limit, and Window bound how often one user may place a wager.
+// This is the shared sliding-window limiter (redisstore.Store.Allow /
+// rate_limit.lua) — CLAUDE.md's "one limiter, every call site" — not a
+// second implementation.
+const (
+	Scope  = "wager"
+	Limit  = 20
+	Window = 10 * time.Second
 )
 
 // Request is what a caller supplies to Place. RoundID may be left
@@ -49,6 +60,14 @@ func NewService(store *redisstore.Store, b round.Broadcaster) *Service {
 // state. No Go-side balance or lockout check — place_wager.lua is the
 // authority on both.
 func (s *Service) Place(ctx context.Context, req Request) (Accepted, error) {
+	decision, err := s.store.Allow(ctx, Scope, req.UserID, Limit, Window)
+	if err != nil {
+		return Accepted{}, err
+	}
+	if !decision.Allowed {
+		return Accepted{}, &RateLimitError{RetryAfter: decision.RetryAfter}
+	}
+
 	parsed, err := uuid.Parse(req.IdempotencyKey)
 	if err != nil || parsed.Version() != 4 {
 		return Accepted{}, ErrBadIdempotency

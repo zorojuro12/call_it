@@ -29,7 +29,11 @@ func (b *stubBroadcaster) Broadcast(roomID string, payload []byte) {
 
 // setupOpenRound creates a room with an open round of outcomeCount
 // outcomes, joins each of players at the given balance, and returns the
-// room and round IDs.
+// room and round IDs. hostID and every key of players must be
+// collision-free across tests — the shared wager rate-limit keyspace is
+// keyed by user ID alone (not by room), so a literal "u1" reused across
+// test functions would let one test's quota consumption bleed into
+// another's within the same 10-second window.
 func setupOpenRound(t *testing.T, store *redisstore.Store, hostID string, buyIn domain.Tokens, outcomeCount int, players map[string]domain.Tokens) (roomID, roundID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -59,14 +63,16 @@ func setupOpenRound(t *testing.T, store *redisstore.Store, hostID string, buyIn 
 func TestPlace(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	roomID, _ := setupOpenRound(t, store, "host1", 1000, 2, map[string]domain.Tokens{"u1": 1000})
+	hostID := testID(t, "host")
+	u1 := testID(t, "user")
+	roomID, _ := setupOpenRound(t, store, hostID, 1000, 2, map[string]domain.Tokens{u1: 1000})
 
 	bc := &stubBroadcaster{}
 	svc := NewService(store, bc)
 
 	got, err := svc.Place(ctx, Request{
 		RoomID:         roomID,
-		UserID:         "u1",
+		UserID:         u1,
 		Outcome:        0,
 		Amount:         200,
 		IdempotencyKey: uuid.NewString(),
@@ -103,35 +109,43 @@ func TestPlace(t *testing.T) {
 func TestPlaceRejects(t *testing.T) {
 	tests := []struct {
 		name    string
-		userID  string
+		asUser  string // "host", "joined", or "never-joined"
 		outcome int
 		amount  domain.Tokens
 		noRound bool
 		wantErr error
 	}{
-		{"host wagers in own room", "host1", 0, 50, false, redisstore.ErrHostCannotBet},
+		{"host wagers in own room", "host", 0, 50, false, redisstore.ErrHostCannotBet},
 		{"user who never joined", "never-joined", 0, 50, false, redisstore.ErrNotInRoom},
-		{"amount exceeds session wallet", "u1", 0, 5000, false, domain.ErrInsufficientFunds},
-		{"outcome index out of range", "u1", 5, 50, false, domain.ErrInvalidOutcome},
-		{"no open round", "u1", 0, 50, true, ErrNoActiveRound},
-		{"amount is zero", "u1", 0, 0, false, domain.ErrInvalidStake},
-		{"amount is negative", "u1", 0, -10, false, domain.ErrInvalidStake},
+		{"amount exceeds session wallet", "joined", 0, 5000, false, domain.ErrInsufficientFunds},
+		{"outcome index out of range", "joined", 5, 50, false, domain.ErrInvalidOutcome},
+		{"no open round", "joined", 0, 50, true, ErrNoActiveRound},
+		{"amount is zero", "joined", 0, 0, false, domain.ErrInvalidStake},
+		{"amount is negative", "joined", 0, -10, false, domain.ErrInvalidStake},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := newTestStore(t)
 			ctx := context.Background()
-			roomID, _ := setupOpenRound(t, store, "host1", 1000, 2, map[string]domain.Tokens{"u1": 1000})
+			hostID := testID(t, "host")
+			joined := testID(t, "user")
+			roomID, _ := setupOpenRound(t, store, hostID, 1000, 2, map[string]domain.Tokens{joined: 1000})
 			if tt.noRound {
 				if err := store.ClearCurrentRound(ctx, roomID); err != nil {
 					t.Fatalf("ClearCurrentRound() = %v, want nil", err)
 				}
 			}
 
+			userID := map[string]string{
+				"host":         hostID,
+				"joined":       joined,
+				"never-joined": testID(t, "user"),
+			}[tt.asUser]
+
 			var balanceBefore domain.Tokens
 			hadBalance := false
-			if b, err := store.Balance(ctx, roomID, tt.userID); err == nil {
+			if b, err := store.Balance(ctx, roomID, userID); err == nil {
 				balanceBefore = b
 				hadBalance = true
 			}
@@ -141,7 +155,7 @@ func TestPlaceRejects(t *testing.T) {
 
 			_, err := svc.Place(ctx, Request{
 				RoomID:         roomID,
-				UserID:         tt.userID,
+				UserID:         userID,
 				Outcome:        tt.outcome,
 				Amount:         tt.amount,
 				IdempotencyKey: uuid.NewString(),
@@ -151,7 +165,7 @@ func TestPlaceRejects(t *testing.T) {
 			}
 
 			if hadBalance {
-				after, err := store.Balance(ctx, roomID, tt.userID)
+				after, err := store.Balance(ctx, roomID, userID)
 				if err != nil {
 					t.Fatalf("Balance() = %v, want nil", err)
 				}
@@ -166,13 +180,15 @@ func TestPlaceRejects(t *testing.T) {
 func TestPlaceIdempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
-	roomID, _ := setupOpenRound(t, store, "host1", 1000, 2, map[string]domain.Tokens{"u1": 1000})
+	hostID := testID(t, "host")
+	u1 := testID(t, "user")
+	roomID, _ := setupOpenRound(t, store, hostID, 1000, 2, map[string]domain.Tokens{u1: 1000})
 
 	bc := &stubBroadcaster{}
 	svc := NewService(store, bc)
 
 	key := uuid.NewString()
-	first, err := svc.Place(ctx, Request{RoomID: roomID, UserID: "u1", Outcome: 0, Amount: 200, IdempotencyKey: key})
+	first, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 200, IdempotencyKey: key})
 	if err != nil {
 		t.Fatalf("Place() first = %v, want nil", err)
 	}
@@ -180,7 +196,7 @@ func TestPlaceIdempotent(t *testing.T) {
 		t.Fatalf("Place() first Balance = %d, want 800", first.Balance)
 	}
 
-	replay, err := svc.Place(ctx, Request{RoomID: roomID, UserID: "u1", Outcome: 0, Amount: 200, IdempotencyKey: key})
+	replay, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 200, IdempotencyKey: key})
 	if err != nil {
 		t.Fatalf("Place() replay = %v, want nil", err)
 	}
@@ -194,7 +210,7 @@ func TestPlaceIdempotent(t *testing.T) {
 		t.Errorf("Place() replay Bettors = %d, want 1 (unchanged)", replay.Bettors)
 	}
 
-	second, err := svc.Place(ctx, Request{RoomID: roomID, UserID: "u1", Outcome: 0, Amount: 200, IdempotencyKey: uuid.NewString()})
+	second, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 200, IdempotencyKey: uuid.NewString()})
 	if err != nil {
 		t.Fatalf("Place() second (distinct key) = %v, want nil", err)
 	}
@@ -208,8 +224,48 @@ func TestPlaceIdempotent(t *testing.T) {
 		t.Errorf("Place() second Bettors = %d, want 1 (a repeat wagerer never moves the count)", second.Bettors)
 	}
 
-	_, err = svc.Place(ctx, Request{RoomID: roomID, UserID: "u1", Outcome: 0, Amount: 200, IdempotencyKey: "abc"})
+	_, err = svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 200, IdempotencyKey: "abc"})
 	if !errors.Is(err, ErrBadIdempotency) {
 		t.Fatalf("Place() with a non-UUIDv4 key error = %v, want ErrBadIdempotency", err)
+	}
+}
+
+func TestPlaceRateLimited(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	hostID := testID(t, "host")
+	u1 := testID(t, "user")
+	u2 := testID(t, "user")
+	roomID, _ := setupOpenRound(t, store, hostID, 1000, 2, map[string]domain.Tokens{
+		u1: 10000,
+		u2: 10000,
+	})
+
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+
+	for i := 0; i < Limit; i++ {
+		if _, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 1, IdempotencyKey: uuid.NewString()}); err != nil {
+			t.Fatalf("Place() u1 attempt %d = %v, want nil", i+1, err)
+		}
+	}
+
+	_, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 1, IdempotencyKey: uuid.NewString()})
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("Place() u1 attempt %d error = %v, want ErrRateLimited", Limit+1, err)
+	}
+	var rlErr *RateLimitError
+	if !errors.As(err, &rlErr) {
+		t.Fatalf("Place() error = %v, want *RateLimitError", err)
+	}
+	if rlErr.RetryAfter <= 0 {
+		t.Errorf("RateLimitError.RetryAfter = %v, want > 0", rlErr.RetryAfter)
+	}
+
+	// This is the test's 21st wager overall, but a different user's
+	// first — it must still succeed, proving the limiter is keyed by
+	// user, not globally.
+	if _, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u2, Outcome: 0, Amount: 1, IdempotencyKey: uuid.NewString()}); err != nil {
+		t.Errorf("Place() u2's first wager = %v, want nil (u1's exhausted limit must not affect u2)", err)
 	}
 }
