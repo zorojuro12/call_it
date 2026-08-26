@@ -33,8 +33,11 @@ lint:
 build:
 	cd backend && go build ./...
 
+# Applies the ledger schema. Requires POSTGRES_DSN — e.g.
+# postgres://callit:callit@localhost:5432/callit?sslmode=disable, matching
+# docker-compose.yml's postgres service. `make migrate ARGS=down` reverts it.
 migrate:
-	@echo "no migrations yet — added in Phase 5"
+	cd backend && go run ./cmd/migrate $(ARGS)
 
 loadtest:
 	@echo "no k6 scripts yet — added in Phase 7"

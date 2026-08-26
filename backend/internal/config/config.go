@@ -127,3 +127,34 @@ func Load(lookup LookupFunc) (Config, error) {
 
 	return cfg, nil
 }
+
+// MigrateConfig holds the configuration surface for cmd/migrate. A
+// migration runner has no business demanding a JWT signing key, so it
+// does not embed or require Config.
+type MigrateConfig struct {
+	PostgresDSN string
+	LogLevel    string
+}
+
+// LoadMigrate reads the migration runner's configuration via lookup. It
+// does not require JWT_SECRET.
+func LoadMigrate(lookup LookupFunc) (MigrateConfig, error) {
+	cfg := MigrateConfig{
+		LogLevel: "info",
+	}
+
+	dsn, ok := lookup("POSTGRES_DSN")
+	if !ok || dsn == "" {
+		return MigrateConfig{}, fmt.Errorf("config: POSTGRES_DSN is required")
+	}
+	cfg.PostgresDSN = dsn
+
+	if v, ok := lookup("LOG_LEVEL"); ok {
+		if !validLogLevels[v] {
+			return MigrateConfig{}, fmt.Errorf("config: LOG_LEVEL %q is not one of debug|info|warn|error", v)
+		}
+		cfg.LogLevel = v
+	}
+
+	return cfg, nil
+}
