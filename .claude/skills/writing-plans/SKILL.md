@@ -13,7 +13,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
 
-**Context:** If working in an isolated worktree, it should have been created via the `superpowers:using-git-worktrees` skill at execution time.
+**Context:** If working in an isolated worktree, it should have been created via the `using-git-worktrees` skill at execution time. (No `superpowers:` prefix — that skill is installed project-locally here and the prefixed name does not resolve, same as `finishing-a-development-branch`.)
 
 **Save plans to:** `docs/plans/YYYY-MM-DD-<feature-name>.md`
 - (This project keeps all plans in `docs/plans/`, alongside the top-level
@@ -46,14 +46,14 @@ independently testable deliverable.
 
 ## Bite-Sized Task Granularity
 
-**Each step is one action (2-5 minutes). A task may contain multiple
-checkpoints — one per distinct behavior/case — each checkpoint running its
-own cycle:**
-- "Write the failing test" - step
-- "Run it to make sure it fails" - step
-- "Implement the minimal code to make the test pass" - step
-- "Run the tests and make sure they pass" - step
-- "Commit" - step
+**A task may contain multiple checkpoints — one per distinct behavior/case —
+each running its own RED→GREEN cycle in two steps:**
+- **Step 1** — write the failing test, then run it. Expect FAIL.
+- **Step 2** — implement, then verify-and-commit in one chained command.
+
+The commit never needs a step of its own. Chained behind the verification
+command with `&&` it becomes free *and* safer: a red test makes the commit
+unreachable rather than merely inadvisable.
 
 A task with one straightforward behavior has one checkpoint (one commit). A
 task covering several cases gets one checkpoint per case (several commits) —
@@ -67,7 +67,7 @@ the behavior they cover. A checkpoint whose test passes the moment it's written
 is the signal that granularity has been pushed one notch past where the cycle
 actually divides.
 
-This matters beyond tidiness. Every checkpoint's Step 2 says "expect FAIL", so
+This matters beyond tidiness. Every checkpoint's Step 1 says "expect FAIL", so
 a checkpoint that expects PASS contradicts its own template — and
 `executing-plans` requires stopping on any mismatch between an instruction and
 reality. A cold executor hits that, halts, and may "fix" a correct test until
@@ -163,7 +163,7 @@ this isn't a universal improvement.
 
 **Checkpoint 1: [specific behavior or case this checkpoint covers]**
 
-- [ ] **Step 1: Write a failing test for this exact behavior**
+- [ ] **Step 1: Write the failing test, then run it**
 
 Spec: [exact input(s) → exact expected output or error, stated precisely
 enough that two different implementers would write the same test — e.g.
@@ -172,41 +172,43 @@ case." Show a code block only if a subtle assertion detail needs pinning
 down (a specific float tolerance, an exact error message string) — not by
 default.]
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: [exact command]
+Run: [exact scoped command — see Test Commands below]
 Expected: FAIL with [exact expected failure reason]
 
-- [ ] **Step 3: Implement to satisfy the test**
+- [ ] **Step 2: Implement, then verify-and-commit in one command**
 
 Contract: [the behavior in 1-2 lines, using the exact signature from
 Interfaces above. Not a function body — the executor writes that against
 this contract and the test from Step 1.]
 
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: [exact command]
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
 ```bash
-git add [exact paths]
-git commit -m "[exact type: description]"
+[exact scoped test command] && \
+  git add [exact paths] && \
+  git commit -m "[exact type: description]"
 ```
+
+Expected: PASS, then one commit.
 
 **Checkpoint 2: [next behavior or case, if this task has one]**
 
-- [ ] Step 1: Write a failing test for: [exact spec, as above]
-- [ ] Step 2: Run — expect FAIL
-- [ ] Step 3: Implement to satisfy: [exact contract, as above]
-- [ ] Step 4: Run — expect PASS
-- [ ] Step 5: Commit
-
-[Repeat Checkpoint N for each further distinct behavior. Omit Checkpoint 2+
-entirely when the task genuinely has only one behavior — a single checkpoint
-is a complete, valid task, not a truncated one.]
+[Same two steps. Omit Checkpoint 2+ entirely when the task genuinely has only
+one behavior — a single checkpoint is a complete, valid task, not a truncated
+one.]
 ````
+
+Chain the commit with `&&`, never `;` and never separate lines — the commit
+must be unreachable when the test fails. `git add` names exact paths; never
+`git add -A` or `git add .`.
+
+## Test Commands
+
+- **Inside a checkpoint:** scope to the package or module under test, and to
+  the single test when that package is slow.
+- **At a task boundary:** the full suite once, chained into one call.
+- **Never** put the full-suite command inside a checkpoint.
+
+Include the flag that defeats cached results (`-count=1` in Go, equivalent
+elsewhere) — a cached PASS from the previous checkpoint masks a genuine RED.
 
 ## No Placeholders
 
