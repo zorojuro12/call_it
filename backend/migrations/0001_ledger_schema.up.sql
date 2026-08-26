@@ -29,3 +29,23 @@ CREATE TABLE ledger_entries (
     direction      text NOT NULL CHECK (direction IN ('debit', 'credit')),
     amount         bigint NOT NULL
 );
+
+CREATE FUNCTION assert_transaction_balanced() RETURNS trigger AS $$
+DECLARE
+  net bigint;
+BEGIN
+  SELECT COALESCE(SUM(CASE WHEN direction = 'debit' THEN amount ELSE -amount END), 0)
+    INTO net
+    FROM ledger_entries
+   WHERE transaction_id = NEW.transaction_id;
+  IF net <> 0 THEN
+    RAISE EXCEPTION 'transaction is not balanced: % has net %', NEW.transaction_id, net;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER ledger_entries_balanced
+  AFTER INSERT ON ledger_entries
+  DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION assert_transaction_balanced();

@@ -2,8 +2,10 @@ package migrate
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -114,4 +116,121 @@ func TestDownRemovesLedgerTables(t *testing.T) {
 			t.Errorf("table %s: missing after re-Up()", table)
 		}
 	}
+}
+
+// seedAccountAndTransaction inserts two accounts and one transaction row,
+// returning (accountA, accountB, transactionID) for ledger_entries tests
+// that need valid foreign keys already in place.
+func seedAccountAndTransaction(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (uuid.UUID, uuid.UUID, uuid.UUID) {
+	t.Helper()
+
+	acctA, acctB, txID := uuid.New(), uuid.New(), uuid.New()
+
+	_, err := pool.Exec(ctx,
+		`INSERT INTO accounts (id, kind) VALUES ($1, 'user_wallet'), ($2, 'system_dust')`,
+		acctA, acctB,
+	)
+	if err != nil {
+		t.Fatalf("seeding accounts: %v", err)
+	}
+
+	_, err = pool.Exec(ctx,
+		`INSERT INTO transactions (id, idempotency_key, kind) VALUES ($1, $2, 'settlement')`,
+		txID, txID.String(),
+	)
+	if err != nil {
+		t.Fatalf("seeding transaction: %v", err)
+	}
+
+	return acctA, acctB, txID
+}
+
+func TestUnbalancedTransactionRejectedAtCommit(t *testing.T) {
+	ctx := context.Background()
+	if err := Up(ctx, testDSN); err != nil {
+		t.Fatalf("Up() error = %v, want nil", err)
+	}
+	t.Cleanup(func() {
+		if err := Down(ctx, testDSN); err != nil {
+			t.Fatalf("cleanup Down() error = %v", err)
+		}
+	})
+
+	pool, err := pgxpool.New(ctx, testDSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New() error = %v", err)
+	}
+	defer pool.Close()
+
+	t.Run("single-sided entry rejected at commit", func(t *testing.T) {
+		acctA, _, txID := seedAccountAndTransaction(t, ctx, pool)
+
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("Begin() error = %v", err)
+		}
+
+		// The INSERT itself must succeed — the trigger is deferred, not
+		// immediate. An immediate trigger would reject the first leg of
+		// every legitimate two-leg entry.
+		_, err = tx.Exec(ctx,
+			`INSERT INTO ledger_entries (id, transaction_id, account_id, direction, amount) VALUES ($1, $2, $3, 'debit', 100)`,
+			uuid.New(), txID, acctA,
+		)
+		if err != nil {
+			t.Fatalf("INSERT (single leg) error = %v, want nil (trigger must be deferred)", err)
+		}
+
+		err = tx.Commit(ctx)
+		if err == nil {
+			t.Fatalf("Commit() error = nil, want an unbalanced-transaction error")
+		}
+		if !strings.Contains(err.Error(), "transaction is not balanced") {
+			t.Errorf("Commit() error = %v, want it to mention %q", err, "transaction is not balanced")
+		}
+
+		var count int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM ledger_entries WHERE transaction_id = $1`, txID).Scan(&count); err != nil {
+			t.Fatalf("counting ledger_entries: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("ledger_entries rows for failed transaction = %d, want 0", count)
+		}
+	})
+
+	t.Run("balanced pair commits successfully", func(t *testing.T) {
+		acctA, acctB, txID := seedAccountAndTransaction(t, ctx, pool)
+
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("Begin() error = %v", err)
+		}
+
+		_, err = tx.Exec(ctx,
+			`INSERT INTO ledger_entries (id, transaction_id, account_id, direction, amount) VALUES ($1, $2, $3, 'debit', 100)`,
+			uuid.New(), txID, acctA,
+		)
+		if err != nil {
+			t.Fatalf("INSERT (debit leg) error = %v", err)
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO ledger_entries (id, transaction_id, account_id, direction, amount) VALUES ($1, $2, $3, 'credit', 100)`,
+			uuid.New(), txID, acctB,
+		)
+		if err != nil {
+			t.Fatalf("INSERT (credit leg) error = %v", err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatalf("Commit() error = %v, want nil for a balanced pair", err)
+		}
+
+		var count int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM ledger_entries WHERE transaction_id = $1`, txID).Scan(&count); err != nil {
+			t.Fatalf("counting ledger_entries: %v", err)
+		}
+		if count != 2 {
+			t.Errorf("ledger_entries rows for balanced transaction = %d, want 2", count)
+		}
+	})
 }
