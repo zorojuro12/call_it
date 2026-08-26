@@ -45,6 +45,10 @@ func (b *stubBroadcaster) Broadcast(roomID string, payload []byte) {
 	b.calls = append(b.calls, broadcastCall{roomID: roomID, payload: payload})
 }
 
+func (b *stubBroadcaster) Names(roomID string) map[string]string {
+	return map[string]string{}
+}
+
 // setupOpenRound creates a room with an open round of outcomeCount
 // outcomes, joins each of players at the given balance, and returns the
 // room and round IDs. hostID and every key of players must be
