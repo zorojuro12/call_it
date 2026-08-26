@@ -654,6 +654,193 @@ func TestSettleEventCarriesPayoutDetail(t *testing.T) {
 	}
 }
 
+func TestRefundEventCarriesPayoutDetail(t *testing.T) {
+	t.Run("locked round refunds with per-user payout detail", func(t *testing.T) {
+		store := newTestStore(t)
+		ctx := context.Background()
+
+		roomID, roundID := setupSettleRound(t, store, "host1", 500, 2,
+			map[string]domain.Tokens{"userA": 500, "userB": 500},
+			[]domain.Stake{
+				{UserID: "userA", Outcome: 0, Amount: 100},
+				{UserID: "userA", Outcome: 1, Amount: 50},
+				{UserID: "userB", Outcome: 0, Amount: 200},
+			})
+
+		total, err := store.RefundRound(ctx, roundID, testID(t, "idem"))
+		if err != nil {
+			t.Fatalf("RefundRound() = %v, want nil", err)
+		}
+		if total != 350 {
+			t.Errorf("RefundRound() = %d, want 350", total)
+		}
+
+		for userID, want := range map[string]string{"userA": "500", "userB": "500"} {
+			got, err := store.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
+			if err != nil {
+				t.Fatalf("HGET wallets %s: %v", userID, err)
+			}
+			if got != want {
+				t.Errorf("HGET wallets %s = %q, want %q", userID, got, want)
+			}
+		}
+
+		entries, err := store.client.XRevRangeN(ctx, store.outboxStream, "+", "-", 1).Result()
+		if err != nil {
+			t.Fatalf("XREVRANGE outbox: %v", err)
+		}
+		if len(entries) != 1 {
+			t.Fatalf("XREVRANGE outbox returned %d entries, want 1", len(entries))
+		}
+		entry := entries[0]
+
+		if entry.Values["type"] != "round_refunded" {
+			t.Errorf("entry type = %v, want %q", entry.Values["type"], "round_refunded")
+		}
+		if entry.Values["room_id"] != roomID {
+			t.Errorf("entry room_id = %v, want %q", entry.Values["room_id"], roomID)
+		}
+		if entry.Values["total"] != "350" {
+			t.Errorf("entry total = %v, want %q", entry.Values["total"], "350")
+		}
+		if entry.Values["dust"] != "0" {
+			t.Errorf("entry dust = %v, want %q", entry.Values["dust"], "0")
+		}
+		if entry.Values["winning_outcome"] != "" {
+			t.Errorf("entry winning_outcome = %v, want empty", entry.Values["winning_outcome"])
+		}
+
+		var payouts []decodedPayout
+		if err := json.Unmarshal([]byte(entry.Values["payouts"].(string)), &payouts); err != nil {
+			t.Fatalf("unmarshaling payouts %v: %v", entry.Values["payouts"], err)
+		}
+		// userA's two stakes on different outcomes aggregate into one
+		// payout entry — a ledger credit line is per account, not per
+		// stake. Sorted by user ID, matching ReadStakes's ordering.
+		want := []decodedPayout{{UserID: "userA", Amount: 150}, {UserID: "userB", Amount: 200}}
+		if !reflect.DeepEqual(payouts, want) {
+			t.Errorf("payouts = %+v, want %+v", payouts, want)
+		}
+	})
+
+	t.Run("an open round rejects a refund", func(t *testing.T) {
+		store := newTestStore(t)
+		ctx := context.Background()
+		lockAt := time.Now().Add(30 * time.Second)
+
+		roomID := testID(t, "room")
+		roundID := testID(t, "round")
+		if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 500); err != nil {
+			t.Fatalf("CreateRoom() = %v, want nil", err)
+		}
+		if err := store.CreateRound(ctx, roundID, roomID, "Question?", testOutcomes(2), lockAt); err != nil {
+			t.Fatalf("CreateRound() = %v, want nil", err)
+		}
+
+		xlenBefore, err := store.client.XLen(ctx, store.outboxStream).Result()
+		if err != nil {
+			t.Fatalf("XLEN outbox before: %v", err)
+		}
+
+		_, err = store.RefundRound(ctx, roundID, testID(t, "idem"))
+		if !errors.Is(err, ErrNotLocked) {
+			t.Fatalf("RefundRound() on open round error = %v, want ErrNotLocked", err)
+		}
+
+		xlenAfter, err := store.client.XLen(ctx, store.outboxStream).Result()
+		if err != nil {
+			t.Fatalf("XLEN outbox after: %v", err)
+		}
+		if xlenAfter != xlenBefore {
+			t.Errorf("XLEN outbox = %d, want unchanged %d", xlenAfter, xlenBefore)
+		}
+	})
+
+	t.Run("an already-resolved round rejects a refund", func(t *testing.T) {
+		store := newTestStore(t)
+		ctx := context.Background()
+
+		roomID, roundID := setupSettleRound(t, store, "host1", 500, 2,
+			map[string]domain.Tokens{"u1": 500},
+			[]domain.Stake{{UserID: "u1", Outcome: 0, Amount: 100}})
+
+		if _, err := store.SettleRound(ctx, roundID, 0, testID(t, "idem")); err != nil {
+			t.Fatalf("SettleRound() = %v, want nil", err)
+		}
+
+		balBefore, err := store.client.HGet(ctx, RoomWalletsKey(roomID), "u1").Result()
+		if err != nil {
+			t.Fatalf("HGET wallets u1: %v", err)
+		}
+		xlenBefore, err := store.client.XLen(ctx, store.outboxStream).Result()
+		if err != nil {
+			t.Fatalf("XLEN outbox before: %v", err)
+		}
+
+		_, err = store.RefundRound(ctx, roundID, testID(t, "idem"))
+		if !errors.Is(err, ErrAlreadySettled) {
+			t.Fatalf("RefundRound() on resolved round error = %v, want ErrAlreadySettled", err)
+		}
+
+		balAfter, err := store.client.HGet(ctx, RoomWalletsKey(roomID), "u1").Result()
+		if err != nil {
+			t.Fatalf("HGET wallets u1: %v", err)
+		}
+		if balAfter != balBefore {
+			t.Errorf("wallet u1 = %q, want unchanged %q", balAfter, balBefore)
+		}
+		xlenAfter, err := store.client.XLen(ctx, store.outboxStream).Result()
+		if err != nil {
+			t.Fatalf("XLEN outbox after: %v", err)
+		}
+		if xlenAfter != xlenBefore {
+			t.Errorf("XLEN outbox = %d, want unchanged %d", xlenAfter, xlenBefore)
+		}
+	})
+
+	t.Run("an already-refunded round rejects a second refund", func(t *testing.T) {
+		store := newTestStore(t)
+		ctx := context.Background()
+
+		roomID, roundID := setupSettleRound(t, store, "host1", 500, 2,
+			map[string]domain.Tokens{"u1": 500},
+			[]domain.Stake{{UserID: "u1", Outcome: 0, Amount: 100}})
+
+		if _, err := store.RefundRound(ctx, roundID, testID(t, "idem-first")); err != nil {
+			t.Fatalf("RefundRound() first = %v, want nil", err)
+		}
+
+		balBefore, err := store.client.HGet(ctx, RoomWalletsKey(roomID), "u1").Result()
+		if err != nil {
+			t.Fatalf("HGET wallets u1: %v", err)
+		}
+		xlenBefore, err := store.client.XLen(ctx, store.outboxStream).Result()
+		if err != nil {
+			t.Fatalf("XLEN outbox before: %v", err)
+		}
+
+		_, err = store.RefundRound(ctx, roundID, testID(t, "idem-second"))
+		if !errors.Is(err, ErrAlreadySettled) {
+			t.Fatalf("RefundRound() second error = %v, want ErrAlreadySettled", err)
+		}
+
+		balAfter, err := store.client.HGet(ctx, RoomWalletsKey(roomID), "u1").Result()
+		if err != nil {
+			t.Fatalf("HGET wallets u1: %v", err)
+		}
+		if balAfter != balBefore {
+			t.Errorf("wallet u1 = %q, want unchanged %q", balAfter, balBefore)
+		}
+		xlenAfter, err := store.client.XLen(ctx, store.outboxStream).Result()
+		if err != nil {
+			t.Fatalf("XLEN outbox after: %v", err)
+		}
+		if xlenAfter != xlenBefore {
+			t.Errorf("XLEN outbox = %d, want unchanged %d", xlenAfter, xlenBefore)
+		}
+	})
+}
+
 func sumHashValues(ctx context.Context, store *Store, key string) (int64, error) {
 	fields, err := store.client.HGetAll(ctx, key).Result()
 	if err != nil {
