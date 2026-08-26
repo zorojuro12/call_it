@@ -2,6 +2,7 @@ package round
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -129,4 +130,36 @@ func TestEndSession(t *testing.T) {
 			t.Errorf("EndSession() = %d, want 4400 (5000 persistent - 600 net loss)", newBalance)
 		}
 	})
+}
+
+func TestEndSessionGuest(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	bc := &stubBroadcaster{}
+	svc := NewService(context.Background(), store, bc)
+
+	roomID := testID(t, "room")
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	guest1 := testID(t, "guest")
+	if _, err := store.JoinRoom(ctx, roomID, guest1, 1000); err != nil {
+		t.Fatalf("JoinRoom(guest1) = %v, want nil", err)
+	}
+
+	newBalance, err := svc.EndSession(ctx, roomID, guest1, true)
+	if err != nil {
+		t.Fatalf("EndSession(guest) = %v, want nil", err)
+	}
+	if newBalance != 0 {
+		t.Errorf("EndSession(guest) = %d, want 0", newBalance)
+	}
+	if _, err := store.User(ctx, guest1); !errors.Is(err, redisstore.ErrNotFound) {
+		t.Errorf("User(guest1) error = %v, want ErrNotFound (a guest has no persistent identity)", err)
+	}
+
+	neverJoined := testID(t, "user")
+	if _, err := svc.EndSession(ctx, roomID, neverJoined, false); !errors.Is(err, redisstore.ErrNotFound) {
+		t.Errorf("EndSession(never-joined) error = %v, want ErrNotFound", err)
+	}
 }
