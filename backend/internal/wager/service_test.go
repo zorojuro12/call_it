@@ -2,6 +2,7 @@ package wager
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -96,5 +97,68 @@ func TestPlace(t *testing.T) {
 		if got.Multipliers[i] != wantMult[i] {
 			t.Errorf("Place().Multipliers[%d] = %v, want %v", i, got.Multipliers[i], wantMult[i])
 		}
+	}
+}
+
+func TestPlaceRejects(t *testing.T) {
+	tests := []struct {
+		name    string
+		userID  string
+		outcome int
+		amount  domain.Tokens
+		noRound bool
+		wantErr error
+	}{
+		{"host wagers in own room", "host1", 0, 50, false, redisstore.ErrHostCannotBet},
+		{"user who never joined", "never-joined", 0, 50, false, redisstore.ErrNotInRoom},
+		{"amount exceeds session wallet", "u1", 0, 5000, false, domain.ErrInsufficientFunds},
+		{"outcome index out of range", "u1", 5, 50, false, domain.ErrInvalidOutcome},
+		{"no open round", "u1", 0, 50, true, ErrNoActiveRound},
+		{"amount is zero", "u1", 0, 0, false, domain.ErrInvalidStake},
+		{"amount is negative", "u1", 0, -10, false, domain.ErrInvalidStake},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestStore(t)
+			ctx := context.Background()
+			roomID, _ := setupOpenRound(t, store, "host1", 1000, 2, map[string]domain.Tokens{"u1": 1000})
+			if tt.noRound {
+				if err := store.ClearCurrentRound(ctx, roomID); err != nil {
+					t.Fatalf("ClearCurrentRound() = %v, want nil", err)
+				}
+			}
+
+			var balanceBefore domain.Tokens
+			hadBalance := false
+			if b, err := store.Balance(ctx, roomID, tt.userID); err == nil {
+				balanceBefore = b
+				hadBalance = true
+			}
+
+			bc := &stubBroadcaster{}
+			svc := NewService(store, bc)
+
+			_, err := svc.Place(ctx, Request{
+				RoomID:         roomID,
+				UserID:         tt.userID,
+				Outcome:        tt.outcome,
+				Amount:         tt.amount,
+				IdempotencyKey: uuid.NewString(),
+			})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Place() error = %v, want %v", err, tt.wantErr)
+			}
+
+			if hadBalance {
+				after, err := store.Balance(ctx, roomID, tt.userID)
+				if err != nil {
+					t.Fatalf("Balance() = %v, want nil", err)
+				}
+				if after != balanceBefore {
+					t.Errorf("Balance() after rejected wager = %d, want unchanged %d", after, balanceBefore)
+				}
+			}
+		})
 	}
 }
