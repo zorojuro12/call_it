@@ -15,7 +15,7 @@ CREATE TABLE accounts (
 
 CREATE TABLE transactions (
     id              uuid PRIMARY KEY,
-    idempotency_key text NOT NULL,
+    idempotency_key text NOT NULL UNIQUE,
     kind            text NOT NULL,
     room_id         uuid,
     round_id        uuid,

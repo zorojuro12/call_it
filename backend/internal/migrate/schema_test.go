@@ -2,10 +2,12 @@ package migrate
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -233,4 +235,47 @@ func TestUnbalancedTransactionRejectedAtCommit(t *testing.T) {
 			t.Errorf("ledger_entries rows for balanced transaction = %d, want 2", count)
 		}
 	})
+}
+
+func TestDuplicateIdempotencyKeyRejected(t *testing.T) {
+	ctx := context.Background()
+	if err := Up(ctx, testDSN); err != nil {
+		t.Fatalf("Up() error = %v, want nil", err)
+	}
+
+	pool, err := pgxpool.New(ctx, testDSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New() error = %v", err)
+	}
+	defer pool.Close()
+
+	key := uuid.New().String()
+
+	_, err = pool.Exec(ctx,
+		`INSERT INTO transactions (id, idempotency_key, kind) VALUES ($1, $2, 'settlement')`,
+		uuid.New(), key,
+	)
+	if err != nil {
+		t.Fatalf("first insert error = %v, want nil", err)
+	}
+
+	_, err = pool.Exec(ctx,
+		`INSERT INTO transactions (id, idempotency_key, kind) VALUES ($1, $2, 'settlement')`,
+		uuid.New(), key,
+	)
+	if err == nil {
+		t.Fatalf("second insert with duplicate idempotency_key error = nil, want a unique_violation")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Errorf("second insert error = %v, want SQLSTATE 23505 (unique_violation)", err)
+	}
+
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM transactions WHERE idempotency_key = $1`, key).Scan(&count); err != nil {
+		t.Fatalf("counting transactions: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("transactions rows with key %q = %d, want 1", key, count)
+	}
 }
