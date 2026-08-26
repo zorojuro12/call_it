@@ -18,6 +18,7 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/httpapi"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 	"github.com/zorojuro12/call_it/backend/internal/room"
+	"github.com/zorojuro12/call_it/backend/internal/ws"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -55,6 +56,7 @@ func run() error {
 
 	accounts := account.NewService(store, issuer)
 	rooms := room.NewService(store, issuer)
+	hub := ws.NewHub()
 
 	server := &http.Server{
 		Addr: fmt.Sprintf(":%d", cfg.Port),
@@ -63,6 +65,7 @@ func run() error {
 			Rooms:    rooms,
 			Store:    store,
 			Issuer:   issuer,
+			Hub:      hub,
 		}),
 	}
 
@@ -92,6 +95,7 @@ func run() error {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
+	hub.Shutdown()
 
 	logger.Info("server stopped cleanly")
 	return nil

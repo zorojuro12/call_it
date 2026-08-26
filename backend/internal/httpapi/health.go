@@ -10,6 +10,7 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/auth"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 	"github.com/zorojuro12/call_it/backend/internal/room"
+	"github.com/zorojuro12/call_it/backend/internal/ws"
 )
 
 // HealthHandler reports that the process is up. It deliberately checks
@@ -31,6 +32,7 @@ type Deps struct {
 	Rooms    *room.Service
 	Store    *redisstore.Store
 	Issuer   *auth.Issuer
+	Hub      *ws.Hub
 }
 
 // NewMux assembles the process's HTTP routes.
@@ -40,5 +42,6 @@ func NewMux(d Deps) *http.ServeMux {
 	registerAuthRoutes(mux, d)
 	registerRoomRoutes(mux, d)
 	registerAccountRoutes(mux, d)
+	registerWSRoutes(mux, d)
 	return mux
 }
