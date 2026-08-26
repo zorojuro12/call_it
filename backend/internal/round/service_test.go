@@ -342,3 +342,93 @@ func TestResolve(t *testing.T) {
 		t.Errorf("u2 row = %+v, want Staked 100, Returned 0, Net -100", u2Row)
 	}
 }
+
+func TestResolveRejects(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(store *redisstore.Store, roomID, roundID string) // extra setup before Resolve
+		caller  string
+		outcome int
+		wantErr error
+	}{
+		{
+			name:    "non-host caller",
+			caller:  "u1",
+			outcome: 0,
+			wantErr: ErrNotHost,
+		},
+		{
+			name: "no current round",
+			prepare: func(store *redisstore.Store, roomID, roundID string) {
+				_ = store.ClearCurrentRound(context.Background(), roomID)
+			},
+			caller:  "host1",
+			outcome: 0,
+			wantErr: ErrNoActiveRound,
+		},
+		{
+			name:    "round still open",
+			caller:  "host1",
+			outcome: 0,
+			wantErr: redisstore.ErrNotLocked,
+		},
+		{
+			name: "round already resolved",
+			prepare: func(store *redisstore.Store, roomID, roundID string) {
+				ctx := context.Background()
+				_ = store.LockRound(ctx, roundID)
+				_, _ = store.SettleRound(ctx, roundID, 0, uuid.NewString())
+			},
+			caller:  "host1",
+			outcome: 0,
+			wantErr: redisstore.ErrAlreadySettled,
+		},
+		{
+			name: "winning outcome out of range",
+			prepare: func(store *redisstore.Store, roomID, roundID string) {
+				_ = store.LockRound(context.Background(), roundID)
+			},
+			caller:  "host1",
+			outcome: 7,
+			wantErr: domain.ErrInvalidOutcome,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestStore(t)
+			ctx := context.Background()
+			roomID := testID(t, "room")
+			if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+				t.Fatalf("CreateRoom() = %v, want nil", err)
+			}
+			if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
+				t.Fatalf("JoinRoom() = %v, want nil", err)
+			}
+
+			bc := &stubBroadcaster{}
+			svc := NewService(store, bc)
+			spec := Spec{Question: "Q?", Outcomes: []string{"Yes", "No"}, LockIn: 10 * time.Second}
+			opened, err := svc.Open(ctx, roomID, "host1", spec)
+			if err != nil {
+				t.Fatalf("Open() = %v, want nil", err)
+			}
+
+			if tt.prepare != nil {
+				tt.prepare(store, roomID, opened.RoundID)
+			}
+
+			_, err = svc.Resolve(ctx, roomID, tt.caller, tt.outcome)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Resolve() error = %v, want %v", err, tt.wantErr)
+			}
+
+			for _, c := range bc.Calls() {
+				env := decodeEnvelope(t, c.payload)
+				if env.Type == "round_resolved" {
+					t.Errorf("unexpected round_resolved broadcast: %+v", c)
+				}
+			}
+		})
+	}
+}
