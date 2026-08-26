@@ -27,7 +27,7 @@ CREATE TABLE ledger_entries (
     transaction_id uuid NOT NULL REFERENCES transactions (id),
     account_id     uuid NOT NULL REFERENCES accounts (id),
     direction      text NOT NULL CHECK (direction IN ('debit', 'credit')),
-    amount         bigint NOT NULL
+    amount         bigint NOT NULL CHECK (amount > 0)
 );
 
 CREATE FUNCTION assert_transaction_balanced() RETURNS trigger AS $$

@@ -279,3 +279,48 @@ func TestDuplicateIdempotencyKeyRejected(t *testing.T) {
 		t.Errorf("transactions rows with key %q = %d, want 1", key, count)
 	}
 }
+
+func TestNonPositiveAmountRejected(t *testing.T) {
+	ctx := context.Background()
+	if err := Up(ctx, testDSN); err != nil {
+		t.Fatalf("Up() error = %v, want nil", err)
+	}
+
+	pool, err := pgxpool.New(ctx, testDSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New() error = %v", err)
+	}
+	defer pool.Close()
+
+	tests := []struct {
+		name   string
+		amount int64
+	}{
+		{"zero", 0},
+		{"negative", -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			acctA, _, txID := seedAccountAndTransaction(t, ctx, pool)
+
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("Begin() error = %v", err)
+			}
+			defer tx.Rollback(ctx)
+
+			_, err = tx.Exec(ctx,
+				`INSERT INTO ledger_entries (id, transaction_id, account_id, direction, amount) VALUES ($1, $2, $3, 'debit', $4)`,
+				uuid.New(), txID, acctA, tt.amount,
+			)
+			if err == nil {
+				t.Fatalf("INSERT with amount %d error = nil, want a check_violation", tt.amount)
+			}
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+				t.Errorf("INSERT with amount %d error = %v, want SQLSTATE 23514 (check_violation)", tt.amount, err)
+			}
+		})
+	}
+}
