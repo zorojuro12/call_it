@@ -180,3 +180,81 @@ func TestTimerSkipsTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestAutoRefund(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+	svc.refundGrace = 300 * time.Millisecond
+
+	roomID, roundID, _ := openAndWatch(t, store, svc, "host1", 1000, 100*time.Millisecond)
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
+		t.Fatalf("JoinRoom(u1) = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, "u2", 1000); err != nil {
+		t.Fatalf("JoinRoom(u2) = %v, want nil", err)
+	}
+	if _, err := store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 0, Amount: 100, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager(u1) = %v, want nil", err)
+	}
+	if _, err := store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u2",
+		Outcome: 1, Amount: 150, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager(u2) = %v, want nil", err)
+	}
+
+	pollUntil(t, 3*time.Second, func() bool {
+		rd, err := store.Round(ctx, roundID)
+		return err == nil && rd.Status == domain.RoundRefunded
+	})
+
+	rd, err := store.Round(ctx, roundID)
+	if err != nil {
+		t.Fatalf("Round() = %v, want nil", err)
+	}
+	if rd.Status != domain.RoundRefunded {
+		t.Fatalf("Round().Status = %q, want %q", rd.Status, domain.RoundRefunded)
+	}
+
+	u1Balance, err := store.Balance(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("Balance(u1) = %v, want nil", err)
+	}
+	if u1Balance != 1000 {
+		t.Errorf("Balance(u1) = %d, want 1000 (pre-wager)", u1Balance)
+	}
+	u2Balance, err := store.Balance(ctx, roomID, "u2")
+	if err != nil {
+		t.Fatalf("Balance(u2) = %v, want nil", err)
+	}
+	if u2Balance != 1000 {
+		t.Errorf("Balance(u2) = %d, want 1000 (pre-wager)", u2Balance)
+	}
+
+	if _, err := store.CurrentRound(ctx, roomID); !errors.Is(err, redisstore.ErrNotFound) {
+		t.Errorf("CurrentRound() after auto-refund error = %v, want ErrNotFound", err)
+	}
+
+	var found bool
+	for _, c := range bc.Calls() {
+		env := decodeEnvelope(t, c.payload)
+		if env.Type != "round_refunded" {
+			continue
+		}
+		var data RefundedEvent
+		if err := json.Unmarshal(env.Data, &data); err != nil {
+			t.Fatalf("decode round_refunded data: %v", err)
+		}
+		if data.RoundID == roundID && data.Total == 250 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no round_refunded broadcast with RoundID %s and Total 250 found in %+v", roundID, bc.Calls())
+	}
+}

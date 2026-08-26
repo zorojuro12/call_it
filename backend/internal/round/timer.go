@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 )
 
@@ -40,4 +41,35 @@ func (s *Service) watch(ctx context.Context, roomID, roundID string, lockAt time
 		return
 	}
 	s.broadcaster.Broadcast(roomID, payload)
+
+	<-time.After(s.refundGrace)
+
+	rd, err := s.store.Round(ctx, roundID)
+	if err != nil {
+		log.Printf("round: re-read round %s before refund: %v", roundID, err)
+		return
+	}
+	if rd.Status.IsTerminal() {
+		// The host resolved it during the grace window — nothing to
+		// refund.
+		return
+	}
+
+	total, err := s.store.RefundRound(ctx, roundID, uuid.NewString())
+	if err != nil {
+		log.Printf("round: refund round %s: %v", roundID, err)
+		return
+	}
+
+	if err := s.store.ClearCurrentRound(ctx, roomID); err != nil {
+		log.Printf("round: clear current round for %s after refund: %v", roomID, err)
+		return
+	}
+
+	refundPayload, err := EncodeEnvelope("round_refunded", RefundedEvent{RoundID: roundID, Total: int64(total)})
+	if err != nil {
+		log.Printf("round: encode round_refunded for %s: %v", roundID, err)
+		return
+	}
+	s.broadcaster.Broadcast(roomID, refundPayload)
 }

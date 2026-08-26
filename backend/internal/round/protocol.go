@@ -32,6 +32,13 @@ type LockedEvent struct {
 	RoundID string `json:"round_id"`
 }
 
+// RefundedEvent is the round_refunded broadcast payload — the
+// host-disconnect fallback (spec §4).
+type RefundedEvent struct {
+	RoundID string `json:"round_id"`
+	Total   int64  `json:"total"`
+}
+
 // Broadcaster is how this package reaches a room's connected clients
 // without importing internal/ws — internal/ws imports round (for the
 // message router, Task 9), so round cannot import ws without a build
