@@ -31,6 +31,10 @@ type closeCmd struct {
 	reply chan bool
 }
 
+type shutdownCmd struct {
+	reply chan struct{}
+}
+
 // NewRoom starts the room's owner goroutine and returns immediately.
 func NewRoom(id string, onEmpty func(roomID string)) *Room {
 	r := &Room{ID: id, cmds: make(chan any)}
@@ -69,6 +73,12 @@ func (r *Room) run(onEmpty func(roomID string)) {
 				return
 			}
 			c.reply <- false
+		case shutdownCmd:
+			for client := range clients {
+				close(client.send)
+			}
+			c.reply <- struct{}{}
+			return
 		}
 	}
 }
@@ -133,6 +143,14 @@ func (r *Room) close() bool {
 	reply := make(chan bool)
 	r.cmds <- closeCmd{reply: reply}
 	return <-reply
+}
+
+// shutdown disconnects every member and unconditionally ends run(),
+// regardless of membership. Unexported: only the hub calls this.
+func (r *Room) shutdown() {
+	reply := make(chan struct{})
+	r.cmds <- shutdownCmd{reply: reply}
+	<-reply
 }
 
 // Count returns the number of clients currently in the room.

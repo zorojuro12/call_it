@@ -87,6 +87,29 @@ func TestHubReaps(t *testing.T) {
 	}
 }
 
+func TestHubShutdown(t *testing.T) {
+	// Arrange
+	h := NewHub()
+	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
+	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
+	h.Join("r1", c1)
+	h.Join("r2", c2)
+
+	// Act
+	h.Shutdown()
+
+	// Assert: immediately after Shutdown returns, no sleep
+	if got := h.RoomCount(); got != 0 {
+		t.Fatalf("RoomCount() after Shutdown = %d, want 0", got)
+	}
+	if _, ok := <-c1.send; ok {
+		t.Error("c1.send should be closed after Shutdown")
+	}
+	if _, ok := <-c2.send; ok {
+		t.Error("c2.send should be closed after Shutdown")
+	}
+}
+
 // waitForCount polls h.RoomCount() until it equals want or timeout
 // elapses, failing the test on timeout.
 func waitForCount(t *testing.T, h *Hub, want int, timeout time.Duration) {
