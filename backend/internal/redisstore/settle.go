@@ -2,6 +2,7 @@ package redisstore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -10,6 +11,29 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 	lua "github.com/zorojuro12/call_it/backend/scripts/lua"
 )
+
+// wirePayout is the outbox event's JSON shape for one payout. Kept
+// separate from domain.Payout so the domain type never grows wire-format
+// tags (Amendment E1).
+type wirePayout struct {
+	UserID string `json:"user_id"`
+	Amount int64  `json:"amount"`
+}
+
+// marshalPayouts renders payouts as the outbox wire format. An empty
+// slice marshals to "[]", never "null" — the payouts field always
+// carries a JSON array, even when settlement produced no payouts.
+func marshalPayouts(payouts []domain.Payout) (string, error) {
+	wire := make([]wirePayout, len(payouts))
+	for i, p := range payouts {
+		wire[i] = wirePayout{UserID: p.UserID, Amount: int64(p.Amount)}
+	}
+	b, err := json.Marshal(wire)
+	if err != nil {
+		return "", fmt.Errorf("redisstore: marshal payouts: %w", err)
+	}
+	return string(b), nil
+}
 
 var settleRoundScript = redis.NewScript(lua.SettleRound)
 var refundRoundScript = redis.NewScript(lua.RefundRound)
@@ -92,6 +116,16 @@ func (s *Store) SettleRound(ctx context.Context, roundID string, winningOutcome 
 		resolvedOutcomeArg = ""
 	}
 
+	var total domain.Tokens
+	for _, st := range stakes {
+		total += st.Amount
+	}
+
+	payoutsJSON, err := marshalPayouts(settlement.Payouts)
+	if err != nil {
+		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: %w", roundID, err)
+	}
+
 	keys := []string{RoundKey(roundID), RoomWalletsKey(round.RoomID), s.outboxStream}
 	argv := []interface{}{
 		terminalStatus,
@@ -99,6 +133,9 @@ func (s *Store) SettleRound(ctx context.Context, roundID string, winningOutcome 
 		strconv.FormatInt(int64(settlement.Dust), 10),
 		idempotencyKey,
 		roundID,
+		round.RoomID,
+		strconv.FormatInt(int64(total), 10),
+		payoutsJSON,
 	}
 	for _, p := range settlement.Payouts {
 		argv = append(argv, p.UserID, strconv.FormatInt(int64(p.Amount), 10))

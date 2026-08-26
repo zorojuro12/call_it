@@ -2,6 +2,7 @@ package redisstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strconv"
@@ -10,6 +11,12 @@ import (
 
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 )
+
+// decodedPayout mirrors the payouts JSON's wire shape for test assertions.
+type decodedPayout struct {
+	UserID string `json:"user_id"`
+	Amount int64  `json:"amount"`
+}
 
 func TestReadStakes(t *testing.T) {
 	store := newTestStore(t)
@@ -575,6 +582,75 @@ func TestRefundRound_RequiresLock(t *testing.T) {
 	}
 	if xlenAfter != xlenBefore {
 		t.Errorf("XLEN outbox = %d, want unchanged %d", xlenAfter, xlenBefore)
+	}
+}
+
+func TestSettleEventCarriesPayoutDetail(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	roomID, roundID := setupSettleRound(t, store, "host1", 500, 2,
+		map[string]domain.Tokens{"userA": 500, "userB": 500},
+		[]domain.Stake{
+			{UserID: "userA", Outcome: 0, Amount: 100},
+			{UserID: "userB", Outcome: 1, Amount: 300},
+		})
+
+	settlement, err := store.SettleRound(ctx, roundID, 1, testID(t, "idem"))
+	if err != nil {
+		t.Fatalf("SettleRound() = %v, want nil", err)
+	}
+
+	entries, err := store.client.XRevRangeN(ctx, store.outboxStream, "+", "-", 1).Result()
+	if err != nil {
+		t.Fatalf("XREVRANGE outbox: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("XREVRANGE outbox returned %d entries, want 1", len(entries))
+	}
+	entry := entries[0]
+
+	if entry.Values["type"] != "round_settled" {
+		t.Errorf("entry type = %v, want %q", entry.Values["type"], "round_settled")
+	}
+	if entry.Values["round_id"] != roundID {
+		t.Errorf("entry round_id = %v, want %q", entry.Values["round_id"], roundID)
+	}
+	if entry.Values["room_id"] != roomID {
+		t.Errorf("entry room_id = %v, want %q", entry.Values["room_id"], roomID)
+	}
+	if entry.Values["total"] != "400" {
+		t.Errorf("entry total = %v, want %q", entry.Values["total"], "400")
+	}
+	if entry.Values["winning_outcome"] != "1" {
+		t.Errorf("entry winning_outcome = %v, want %q", entry.Values["winning_outcome"], "1")
+	}
+
+	dust, err := strconv.ParseInt(entry.Values["dust"].(string), 10, 64)
+	if err != nil {
+		t.Fatalf("parsing dust %v: %v", entry.Values["dust"], err)
+	}
+	if domain.Tokens(dust) != settlement.Dust {
+		t.Errorf("entry dust = %d, want %d", dust, settlement.Dust)
+	}
+
+	var payouts []decodedPayout
+	if err := json.Unmarshal([]byte(entry.Values["payouts"].(string)), &payouts); err != nil {
+		t.Fatalf("unmarshaling payouts %v: %v", entry.Values["payouts"], err)
+	}
+	want := []decodedPayout{{UserID: "userB", Amount: 400}}
+	if !reflect.DeepEqual(payouts, want) {
+		t.Errorf("payouts = %+v, want %+v", payouts, want)
+	}
+
+	// Conservation, asserted directly on the event: Σ payouts + dust ==
+	// total. This is the invariant Phase 5b's ledger worker depends on.
+	var sumPayouts int64
+	for _, p := range payouts {
+		sumPayouts += p.Amount
+	}
+	if sumPayouts+dust != 400 {
+		t.Errorf("Σ payouts (%d) + dust (%d) = %d, want 400", sumPayouts, dust, sumPayouts+dust)
 	}
 }
 
