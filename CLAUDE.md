@@ -15,21 +15,18 @@ tool selection; read this for "how work actually gets done in this repo."
 
 ## Stack
 
-Go 1.22.10 (backend) · `github.com/redis/go-redis/v9` **v9.18.0** — the
-project's first external dependency, and **pinned**: v9.19.0 and later
-declare `go 1.24` in their `go.mod` and will not build against this
-project's Go 1.22.10 (verified 2026-08-24 across v9.18.0 through v9.22.0).
-Raising it means moving the Go toolchain and CI's `go-version` pin first —
-this is the single most likely thing a future `go get -u` breaks. ·
-`golang.org/x/crypto` **v0.33.0** — also pinned: v0.34.0 declares `go
-1.23.0`, and `go get` will silently rewrite this module's `go` directive
-to accept it, breaking CI the same way an unpinned go-redis would
-(verified 2026-08-25). · `github.com/golang-jwt/jwt/v5` **v5.3.1** and
-`github.com/google/uuid` **v1.6.0** — both declare an older/no `go`
-directive, safe. · Redis 7.2 (atomic Lua, rate limiting) · Kafka 3.7
-KRaft-mode (event backbone, Phase 5+) · PostgreSQL 16 (double-entry
-ledger, Phase 5+) · Next.js/React (frontend, Phase 6+) · Docker Compose
-(local dev).
+Go 1.22.10 (backend) · Redis 7.2 (atomic Lua, rate limiting) · Kafka 3.7
+KRaft-mode (event backbone, Phase 5+) · PostgreSQL 16 (double-entry ledger,
+Phase 5+) · Next.js/React (frontend, Phase 6+) · Docker Compose (local dev).
+
+**Never run `go get -u`.** Two dependencies are pinned because newer versions
+declare a `go` directive above 1.22.10 and `go get` will silently rewrite this
+module's directive to accept them, breaking CI: `go-redis/v9` **v9.18.0**
+(v9.19.0+ needs `go 1.24`) and `golang.org/x/crypto` **v0.33.0** (v0.34.0 needs
+`go 1.23.0`). Raising either means moving the Go toolchain and CI's
+`go-version` pin first. `golang-jwt/jwt/v5`, `google/uuid`, and
+`gorilla/websocket` are safe. Before adding any dependency, check its `go`
+directive. Verification log: `docs/project-history.md`.
 
 Monorepo: `backend/`, `frontend/` (not yet scaffolded — Phase 6), root
 `docker-compose.yml`.
@@ -155,6 +152,12 @@ red.
   every `Verify` call — a verifier that honors the attacker-supplied
   `alg` header is the classic JWT vulnerability. Don't relax this to
   "any algorithm the secret can produce."
+- **A connection's room and identity come from the verified JWT claims,
+  never from a request path or message payload.** The WebSocket route is
+  `GET /api/v1/socket` with no room in the path, and the message router
+  ignores any `room_id` a client sends. Two sources for the same fact means
+  a mismatch check that can be forgotten; one source means there is nothing
+  to check. Don't add a room path segment or trust a payload's room field.
 - **Login gives byte-identical responses for an unknown email and a
   wrong password.** Both collapse into `account.ErrInvalidCredentials`;
   a corrupted/malformed stored hash collapses into the same sentinel
@@ -176,33 +179,35 @@ doesn't yet touch most of them. See the plan for full context on each.)
 
 ```
 backend/
-├── cmd/api/              # HTTP/WS server entrypoint (exists)
-├── cmd/relay/             # Redis Stream → Kafka outbox relay (Phase 5)
-├── cmd/ledger-worker/     # Kafka → PostgreSQL ledger writer (Phase 5)
-├── internal/config/       # env config, fail-fast validation (exists)
-├── internal/httpapi/      # REST handlers, mux, error envelope, auth/rate-limit middleware
-│                          #   (exists, 91.6% coverage)
-├── internal/domain/       # odds, payout+dust, round FSM, wallet rules (exists, 100% coverage)
-├── internal/auth/         # argon2id + credential validation + JWT issue/verify — pure,
-│                          #   no I/O (exists, 93.5% coverage)
-├── internal/account/      # account lifecycle: register, login, refill claims (exists —
-│                          #   wraps redisstore.CreateUser/User/UserByEmail/TopUpBalance/Allow)
-├── internal/room/         # room lifecycle, short-code generation, joining (exists — wraps
-│                          #   redisstore.CreateRoom/JoinRoom, does not write hashes directly)
-├── internal/round/        # round orchestration, server-side timers (Phase 4 — wraps
-│                          #   redisstore.CreateRound/LockRound)
-├── internal/wager/        # wager service: validate → Lua → broadcast (later phase —
-│                          #   wraps redisstore.PlaceWager)
-├── internal/redisstore/   # redis client, key schema, Lua wrappers (exists, 82.4% own-package
-│                          #   coverage — room/round/wager/settlement/refund/account/ratelimit
-│                          #   writers all live here)
-├── internal/ws/           # hub, room, client pumps (Phase 4)
-├── internal/events/       # event schemas, Kafka producer/consumer (Phase 5)
-├── internal/ledger/       # PostgreSQL double-entry repository (Phase 5)
-├── migrations/            # NNNN_name.up.sql / .down.sql (Phase 5)
-└── scripts/lua/           # place_wager.lua, lock_round.lua, settle_round.lua, refund_round.lua,
-                           #   claim_unique.lua, rate_limit.lua, top_up_balance.lua (exists)
+├── cmd/api/               # HTTP/WS server entrypoint
+├── cmd/callit-cli/        # CLI client — plays a full round end to end
+├── internal/config/       # env config, fail-fast validation
+├── internal/domain/       # PURE, no I/O: odds, payout+dust, round FSM, wallet rules
+├── internal/auth/         # PURE, no I/O: argon2id, credential validation, JWT issue/verify
+├── internal/redisstore/   # redis client, key schema, Lua wrappers — every writer lives here
+├── internal/account/      # register, login, refill claims        ─┐ service layer:
+├── internal/room/         # room lifecycle, short codes, joining   │ orchestrates
+├── internal/round/        # round lifecycle, server-side timers    │ redisstore +
+├── internal/wager/        # validate → Lua → broadcast            ─┘ domain; never
+├── internal/httpapi/      # REST handlers, mux, error envelope,      writes a hash
+│                          #   auth + rate-limit middleware           directly
+├── internal/ws/           # hub, per-room goroutine, client pumps, message router
+└── scripts/lua/           # place_wager, lock_round, settle_round, refund_round,
+                           #   claim_unique, rate_limit, top_up_balance
+
+Phase 5 adds:
+├── cmd/relay/             # Redis Stream → Kafka outbox relay
+├── cmd/ledger-worker/     # Kafka → PostgreSQL ledger writer
+├── internal/events/       # event schemas, Kafka producer/consumer
+├── internal/ledger/       # PostgreSQL double-entry repository
+└── migrations/            # NNNN_name.up.sql / .down.sql — this naming is the convention
 ```
+
+**`relay` and `ledger-worker` are separate binaries under `cmd/` deliberately** —
+that separation is what structurally enforces "the WebSocket server never writes
+PostgreSQL directly." Running either as a goroutine inside the API process would
+satisfy the written invariant while reintroducing the coupling it exists to
+prevent.
 
 Packages are organized by feature, not by type (`.claude/rules/ecc/golang/patterns.md`).
 Full rationale for this layout: plan §3.
@@ -214,59 +219,17 @@ Full rationale for this layout: plan §3.
 
 **Commit at logical checkpoints within that branch**, not once at the end.
 A checkpoint is one behavior/case with its own passing test — a feature
-covering 3 distinct behaviors gets 3 commits, not 1. (Phase 0 landed as a
-single commit; that was the mistake this convention exists to prevent.)
-**Validated in Phase 1** — 22 checkpoint commits, one per behavior, on
-`phase-1-domain-core`. That run also surfaced a real defect (checkpoints
-whose test passed the moment it was written, because an earlier checkpoint's
-implementation already satisfied it) — `writing-plans` now requires a
-checkpoint to be a genuine RED→GREEN cycle, not just a labeled commit.
+covering 3 distinct behaviors gets 3 commits, not 1. A checkpoint must be a
+genuine RED→GREEN cycle, not just a labeled commit.
 
-`writing-plans` also moved from pre-writing full code per checkpoint to
-specifying exact input→output/error contracts (`ab190b9`) — adopted *after*
-Phase 1's plan was written, so Phase 1 ran under the old code-heavy format
-(one contributor to that plan hitting 3000+ lines). **Phase 2 was the first
-plan written under the new spec-driven format**, and it held up under a
-cold executor: 1,591 lines against Phase 1's 3,111 for a phase with more
-moving parts, no precision lost, and the plan's own contracts caught a real
-plan defect during execution (its CP2 assertion `Σ wallets + Σ pools ==
-1500` was inconsistent with `settle_round.lua`'s own KEYS list, which never
-touches the pools key — fixed to the correct invariant, `Σ wallets + Dust`,
-while implementing). Landed as **28 commits**, not the plan's estimated
-31–32 — two checkpoints (`lock_round.lua`'s ALREADY_LOCKED case, which
-turned out black-box indistinguishable from its unconditional-OK
-predecessor at the Go API surface) and the four concurrency verifications
-(committed as two batches rather than four) combined rather than splitting
-1:1 with the plan's checkpoint list. Every commit still follows
-`type: description` and is independently green.
+**A phase is one deliverable**, not several bundled because they're
+thematically related. If a plan's own self-review names a mid-phase stopping
+point, split the phase in the parent plan's §9 table *before* writing the
+detailed task breakdown.
 
-See `docs/dev-workflow-guide.md` §2a for the current Opus-plans/Sonnet-executes
-split across separate windows, and `journal/2026-08-23_1544_ansh_workflow-tooling-and-git-granularity.md`
-for the original decision.
-
-**Phase 3 landed as ~49 commits against the plan's own estimate of
-~44** — the largest phase so far (12 tasks, 4 deliverables: credentials,
-tokens, the shared limiter, and the REST surface over rooms/refills).
-The delta from plan is real defects the plan itself didn't anticipate,
-each fixed and documented in its commit rather than silently folded in:
-an early `go mod tidy` stripped the phase's new dependencies before
-anything imported them (same failure mode Phase 2's journal already
-warned about, from `go get` immediately followed by `tidy`); a
-rate-limit-window test that passed even with eviction disabled, because
-the key's own `PEXPIRE` TTL masked the missing `ZREMRANGEBYSCORE`; a
-`TestMain`-per-package `FLUSHDB` race across `redisstore`/`account`/
-`room`/`httpapi` once a second integration-test package existed (fixed
-with `-p 1`, also missing from CI until this phase); and Task 7 CP5's
-own test, whose "both succeed" narrative didn't arithmetically agree
-with its own contract, redesigned as a 20-trial statistical test after
-a single racing pair proved unfalsifiable in practice (~5/50 hits cold
-vs ~49/50 warm). The observable-signal rule (added after Phase 2) held
-up for the cases the plan flagged in advance — Task 6 CP3 and Task 7
-CP2 both did pass immediately as anticipated, verified as genuine RED
-by disabling the guard and confirming failure, then restored — but the
-CP5 case is a fourth pattern it doesn't yet name: an interaction test
-whose result depends on a resource's *warm-up state*, not just its
-code path. Worth folding into `writing-plans` if it recurs.
+See `docs/dev-workflow-guide.md` §2a for the Opus-plans/Sonnet-executes split
+across separate windows, and `docs/project-history.md` for how these
+conventions were validated phase by phase.
 
 **Self-merge into `dev` once the phase's tests pass. No PR.** Solo project;
 PR ceremony doesn't add value with one developer. Revisit immediately if a
@@ -285,100 +248,38 @@ Phase 0 lost its commit granularity.
 
 80% minimum coverage, TDD (RED → GREEN → IMPROVE), AAA structure —
 `.claude/rules/ecc/common/testing.md` (always loaded, not restated here).
-Table-driven tests per `.claude/skills/golang-testing/`. Current coverage
-(verified live, Phase 3 close-out): `internal/config` 100%, `internal/domain`
-100% (this package's floor is 100%, not the project's 80% — plan §9's
-"near-total unit coverage" call, since there is no wiring code here to
-excuse a gap), `internal/auth` 93.5%, `internal/httpapi` 91.6%,
-`internal/redisstore` 82.4% (own-package `go test` figure — integration +
-concurrency suites run with `-race`, against real Redis on DB 15, no fake,
-no build tag), `cmd/api` 0% — expected, not a gap: thin wiring with no
-branching logic of its own, per the plan's own note on `main.go`.
+Table-driven tests per `.claude/skills/golang-testing/`.
 
-**`internal/account` and `internal/room` show low numbers (29%/50%) under
-a plain per-package `go test ./pkg/ -cover` — this is a measurement
-artifact, not a real gap.** Their `Register`/`Login`/`Create`/`Join`
-methods are exercised entirely by `internal/httpapi`'s black-box HTTP
-tests, and Go's coverage tool only attributes a line to the test binary
-that directly executed it — a different package's test binary doesn't
-count, even though the line genuinely ran. Verified with
-`go test ./... -coverpkg=./...` (attributes every line to its *source*
-package regardless of which test binary hit it): `account.Register`
-85.7%, `account.Login` 85.7%, `account.ClaimRefill` 82.4%,
-`room.Create` 85.7%, `room.Join` 82.6% — all solid. Don't "fix" the
-per-package number by adding redundant direct tests solely to move the
-metric; that's padding a coverage figure, not closing a real gap. If a
-real gap is suspected in either package, check the `-coverpkg=./...`
-profile first, not the per-package one.
+**`internal/domain`'s floor is 100%, not 80%** — there is no wiring code here
+to excuse a gap (plan §9). `cmd/*` at 0% is expected, not a gap.
 
-`redisstore`'s remaining gap (82.4%, just under its ≥85% aspirational
-floor) is the same category Phase 2 already accepted: defensive
-`if err != nil` branches after a Redis call, unreachable without fault-
-injecting the Redis connection itself (e.g. a mid-call network drop).
-Dead-but-safe, not a behavior gap — don't chase these with a fake/mock
-Redis just to flip the percentage.
+**Judge coverage from `go test ./... -coverpkg=./...`, never the per-package
+figure.** `internal/account` and `internal/room` read low per-package because
+their methods are exercised by `internal/httpapi`'s black-box tests, and Go
+attributes a line only to the test binary that directly ran it. Don't add
+redundant direct tests to move that number — that pads a metric rather than
+closing a gap. Standing interpretations, and `redisstore`'s accepted
+defensive-branch gap: `docs/project-history.md`.
+
+Run `make test` for current figures rather than trusting a table in a doc.
 
 ## Installed Tooling
 
-`golang-patterns`, `golang-testing`, `docker-patterns` — installed ahead of
-Phase 0 since it writes `go.mod` and `docker-compose.yml`. `redis-patterns`
-is now in use, installed ahead of Phase 2. `api-design` was installed ahead
-of Phase 3 and used throughout — `/api/v1` versioning, resource-naming
-(joining as `POST .../participants`, not a `/rooms/join` verb), the
-envelope/error-code conventions. `postgres-patterns`/`database-migrations`
-(Phase 5) are **not yet installed** — staggered per-phase per the plan's
-"Tooling to import" column (plan §9), since rule dirs are always-loaded
-into every turn and shouldn't sit in context for a stack this project
-isn't touching yet. Phase 4 needs no new tooling (plan §9). Check that
-column before starting a new phase.
+**Skills are installed per-phase, not up front** — rule dirs load into every
+turn, so they shouldn't sit in context for a stack the project isn't touching
+yet. Check the parent plan §9's "Tooling to import" column before starting a
+phase.
 
-**Phase 3's security review** (`security-reviewer` agent, run against
-`internal/auth`, `internal/account`, `internal/httpapi`, and the three
-new Lua scripts) found no CRITICAL or HIGH issues — every item the plan
-called out to confirm (constant-time password comparison, HS256-only
-JWT verification, no-enumeration login, generic 500s, rate limiter
-fail-closed, `X-Forwarded-For` ignored) held. One LOW finding (a
-hardcoded `"3"` instead of `domain.RefillQuota` in a response header)
-was fixed on the spot. Two items remain open by design, not oversight:
-login timing (the unknown-email path skips argon2id and so responds
-faster than the wrong-password path, even though response bodies are
-identical — closing this needs a dummy-hash verify on the miss path,
-deferred to Phase 7 hardening) and the room-code generator's slight
-modulo bias (accepted — the code is a lookup handle, not a secret;
-authorization rests on the JWT).
+Installed: `golang-patterns`, `golang-testing`, `docker-patterns`,
+`redis-patterns`, `api-design`. Not yet installed: `postgres-patterns`,
+`database-migrations` (Phase 5). `continuous-learning-v2` is present but
+**deliberately dormant** — don't enable it without re-reading
+`dev-workflow-guide.md` §9.
 
-**Phase 4b's security review** (`security-reviewer` agent, run against
-`internal/round`, `internal/wager`, and `internal/ws` before close-out)
-found one HIGH, fixed on the spot: the socket router's error-code table
-had no case for a throttled wager (`wager.ErrRateLimited`), so it fell
-through to the generic `internal_error` code instead of `rate_limited`,
-giving a rate-limited client no signal to back off — now mapped, with
-the retry-after duration folded into the message. Every invariant the
-plan called out to confirm held (host-cannot-wager enforced in Lua and
-mirrored in the router's error table, wager anonymity — the
-`odds_updated` payload's key set asserted directly, not just assumed,
-lockout via Redis `TIME` not Go, UUIDv4 idempotency keys validated,
-settlement math computed once in `internal/domain` and never
-recomputed, room ID always taken from the verified token claim rather
-than the message payload, the one shared rate limiter, no hardcoded
-secrets). One MEDIUM was raised — a session ending twice on a rapid
-disconnect/reconnect within the same window, since `EndSession` folds
-a delta into the persistent balance without clearing the session's
-opening-stake marker — but this is exactly the known limitation Task 8
-CP2 already documented and this file already named above (under "A
-session's opening stake..."): reconnect-with-session-resume needs a
-grace window this phase doesn't have, deferred to Phase 7 hardening
-alongside login timing. Not a new gap this review found, its known
-mechanism.
-
-`continuous-learning-v2` is present under `.claude/skills/` (from the bulk
-ECC tooling install) but **intentionally dormant** — `observer.enabled:
-false`, no hooks wired in `~/.claude/settings.json`. Don't enable it without
-re-reading `dev-workflow-guide.md` §9 first; it was evaluated and declined
-for this project specifically (redundant with memory + journal, statistically
-curated rather than judgment-curated). `subagent-driven-development` was
-evaluated and not installed at all, same section, same reasoning: the
-context-pollution problem it solves wasn't demonstrated here.
+**Run the `security-reviewer` agent before closing any phase that touches
+auth, money movement, or a network surface.** Past findings, and the three
+items open by design (login timing, room-code modulo bias, reconnect ending a
+session — all deferred to Phase 7): `docs/project-history.md`.
 
 ## Known Environment Gotchas
 
@@ -394,14 +295,10 @@ context-pollution problem it solves wasn't demonstrated here.
 - **Docker requires WSL2 integration enabled per-distro in Docker Desktop
   settings** (Settings → Resources → WSL Integration → toggle the specific
   distro, not just "the default distro") — it's not on by default even when
-  Docker Desktop itself is installed and running on the Windows side. Once
-  enabled, a *new* shell is needed (PATH changes don't reach shells already
-  open). Verified 2026-08-23: with integration on, `docker compose up -d`
-  brings up Redis and PostgreSQL, both report `healthy`
-  (`redis-cli ping` → `PONG`, `pg_isready` → accepting connections). The
-  `full` profile was also verified — Kafka (KRaft mode) starts, reports
-  `healthy`, and uses a modest ~290MB RSS — so the whole compose file is
-  confirmed working, not just YAML-valid.
+  Docker Desktop is installed and running on the Windows side. Once enabled, a
+  *new* shell is needed; PATH changes don't reach already-open shells. The
+  whole compose file including the Kafka `full` profile is verified working —
+  see `docs/project-history.md`.
 - Kafka is real Kafka (not Redpanda), chosen deliberately for deeper
   hands-on experience (spec §2) — it's heavier to run locally, which is why
   it's gated behind `make up-full` / the `full` Compose profile rather than
