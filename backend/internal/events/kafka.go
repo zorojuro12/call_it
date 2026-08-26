@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/segmentio/kafka-go"
@@ -75,7 +76,27 @@ func (p *KafkaProducer) EnsureTopics(ctx context.Context, partitions int) error 
 // Produce writes each event as one Kafka message, keyed by its
 // PartitionKey so events sharing a key always land on the same
 // partition — the real per-room ordering guarantee, not a nominal one.
+// RequiredAcks: RequireAll on the writer means a produce does not return
+// successfully until the broker has durably accepted the write — the
+// relay must not ack a Redis entry against a write the broker can still
+// lose, which would reopen the crash window the outbox exists to close.
 func (p *KafkaProducer) Produce(ctx context.Context, evs []Event) error {
+	msgs := make([]kafka.Message, len(evs))
+	for i, ev := range evs {
+		v, err := json.Marshal(ev)
+		if err != nil {
+			return fmt.Errorf("events: marshaling event for topic %s: %w", ev.Topic(), err)
+		}
+		msgs[i] = kafka.Message{
+			Topic: ev.Topic(),
+			Key:   []byte(ev.PartitionKey()),
+			Value: v,
+		}
+	}
+
+	if err := p.writer.WriteMessages(ctx, msgs...); err != nil {
+		return fmt.Errorf("events: writing %d messages to Kafka: %w", len(msgs), err)
+	}
 	return nil
 }
 
