@@ -303,11 +303,25 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 1 | **Domain core (pure Go)** | Odds math, payout and dust distribution, round state machine, wallet rules (buy-in, 3× cap, partial buy-in, refill quota). No I/O; near-total unit coverage | 0 | None new — covered by Phase 0's Go tooling |
 | 2 | **Redis layer** | Key schema, four Lua scripts (`place_wager`, `lock_round`, `settle_round`, `refund_round`), Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 | `redis-patterns` skill |
 | 3 | **Auth + REST** ✅ | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 | `api-design` skill |
-| 4 | **WebSocket hub + round lifecycle** | Per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, server-side lock timer and 60-second auto-refund fallback. Playable end to end from a CLI client | 3 | None new |
-| 5 | **Kafka + ledger** | Outbox relay, `wagers-placed` and `rounds-settled` producers, ledger-worker consumer, migrations, deferred constraint trigger, Redis↔PostgreSQL reconciliation test | 2, 4 | `postgres-patterns`, `database-migrations` skills |
-| 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4 | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
+| 4a | **WebSocket transport** ✅ | Authenticated room socket (JWT verified at handshake, no per-message lookup), per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, join/leave presence broadcast | 3 | None new |
+| 4b | **Round lifecycle** | Rounds, wagers, live odds, server-side lock timer and 60-second auto-refund fallback, host-resolve settlement reveal, session-end persistence, playable end to end from a CLI client | 4a | None new |
+| 5 | **Kafka + ledger** | Outbox relay, `wagers-placed` and `rounds-settled` producers, ledger-worker consumer, migrations, deferred constraint trigger, Redis↔PostgreSQL reconciliation test | 2, 4b | `postgres-patterns`, `database-migrations` skills |
+| 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
 | 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5, 6 | None new — spec already names k6 directly |
 | 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7 | Decide when unblocked |
+
+**Phase 4 split into 4a/4b (added at Phase 4a close-out).** Scoping Phase 4
+as written above produced ~13 tasks / ~38 checkpoints — the shape this
+table's own **Phase-sizing note** (added at Phase 3 close-out, see below)
+warns against, after Phase 3 landed at 2,904 lines and exhausted a full
+token window. Split at the layer boundary — 4a is pure transport with zero
+game knowledge (`docs/plans/2026-08-26-phase-4a-ws-transport.md`), 4b is
+rounds, wagers, and money over that transport
+(`docs/plans/2026-08-26-phase-4b-round-lifecycle.md`) — via the seam
+`ws.MessageHandler` plus `ws.Room.Broadcast`. 4a is also the first phase
+planned under `writing-plans-tuned`, an experimental token-budget-tuned
+variant of `writing-plans`; see that plan's own "Measured" section for the
+experiment's outcome.
 
 **Phase 3 note (added at Phase 2 close-out, Amendment A4/A5).** Phase 2
 already wrote the real room and round writers — `CreateRoom`, `JoinRoom`,
