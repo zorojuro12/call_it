@@ -41,7 +41,7 @@ func TestHandlerUpgrade(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
 	hub := NewHub()
-	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil))
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
 	token, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1", Guest: false})
@@ -126,7 +126,7 @@ func TestHandlerRejects(t *testing.T) {
 	otherIssuer := newOtherSecretIssuer(t, time.Hour)
 	expiredIssuer := newTestIssuer(t, time.Millisecond)
 	hub := NewHub()
-	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil))
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
 	wrongSecretToken, err := otherIssuer.Issue(auth.Claims{UserID: "u1", RoomID: "r1"})
@@ -176,7 +176,7 @@ func TestHandlerRequiresRoom(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
 	hub := NewHub()
-	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil))
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
 	token, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: ""})
@@ -207,7 +207,7 @@ func TestPresenceJoin(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
 	hub := NewHub()
-	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil))
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
 	tokenA, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1"})
@@ -277,7 +277,7 @@ func TestPresenceLeave(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
 	hub := NewHub()
-	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil))
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
 	tokenA, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1"})

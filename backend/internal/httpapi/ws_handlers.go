@@ -14,11 +14,26 @@ const (
 	wsConnectWindow = time.Minute
 )
 
-// registerWSRoutes wires the room-scoped WebSocket socket. The nil
-// MessageHandler is Phase 4b's seam — no gameplay handler exists yet
-// in this phase.
+// registerWSRoutes wires the room-scoped WebSocket socket to the real
+// message router — d.Rounds and d.Wagers replace Phase 4a's nil
+// MessageHandler seam. d.Rounds also ends a departing client's session
+// on disconnect (its EndSession satisfies ws.SessionEnder).
 func registerWSRoutes(mux *http.ServeMux, d Deps) {
-	mux.Handle("GET /api/v1/socket", wsThrottle(d.Store, d.Issuer)(ws.Handler(d.Hub, d.Issuer, ws.DefaultClientConfig(), nil)))
+	router := ws.NewRouter(d.Rounds, d.Wagers)
+
+	// A nil *round.Service assigned directly to the ws.SessionEnder
+	// parameter would not compare equal to a nil interface (the classic
+	// typed-nil-in-interface gotcha) — Handler's own "sessions != nil"
+	// check would then pass and call EndSession on a nil receiver.
+	// Building the interface value only when d.Rounds is actually set
+	// keeps it a true nil for callers (tests) that construct Deps
+	// without a round service.
+	var sessions ws.SessionEnder
+	if d.Rounds != nil {
+		sessions = d.Rounds
+	}
+
+	mux.Handle("GET /api/v1/socket", wsThrottle(d.Store, d.Issuer)(ws.Handler(d.Hub, d.Issuer, ws.DefaultClientConfig(), router.Handle, sessions)))
 }
 
 // wsThrottle limits WebSocket connection attempts through the shared

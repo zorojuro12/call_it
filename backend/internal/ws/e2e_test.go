@@ -167,7 +167,7 @@ func TestEndToEndRound(t *testing.T) {
 	wagerSvc := wager.NewService(store, hub)
 	router := ws.NewRouter(roundSvc, wagerSvc)
 	wsMux := http.NewServeMux()
-	wsMux.Handle("GET /api/v1/socket", ws.Handler(hub, issuer, ws.DefaultClientConfig(), router.Handle))
+	wsMux.Handle("GET /api/v1/socket", ws.Handler(hub, issuer, ws.DefaultClientConfig(), router.Handle, roundSvc))
 	wsServer := httptest.NewServer(wsMux)
 	defer wsServer.Close()
 	wsBase := strings.Replace(wsServer.URL, "http://", "ws://", 1) + "/api/v1/socket?token="
