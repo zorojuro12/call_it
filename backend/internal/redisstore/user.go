@@ -104,6 +104,24 @@ func (s *Store) UserByEmail(ctx context.Context, normalizedEmail string) (User, 
 	return s.User(ctx, userID)
 }
 
+// SetBalance overwrites an account's persistent balance outright —
+// unlike TopUpBalance, this can decrease it. Used to fold a session's
+// net result (which may be negative) into the persistent balance;
+// TopUpBalance's floor semantics would silently refuse a decrease.
+func (s *Store) SetBalance(ctx context.Context, userID string, balance domain.Tokens) error {
+	n, err := s.client.HExists(ctx, UserKey(userID), "balance").Result()
+	if err != nil {
+		return fmt.Errorf("redisstore: set balance for %s: %w", userID, err)
+	}
+	if !n {
+		return fmt.Errorf("redisstore: set balance for %s: %w", userID, ErrNotFound)
+	}
+	if err := s.client.HSet(ctx, UserKey(userID), "balance", strconv.FormatInt(int64(balance), 10)).Err(); err != nil {
+		return fmt.Errorf("redisstore: set balance for %s: %w", userID, err)
+	}
+	return nil
+}
+
 // TopUpBalance sets an account's persistent balance to target, unless it
 // is already at or above target — a refill is a floor, never a ceiling.
 // Setting to the target rather than incrementing by a Go-computed delta
