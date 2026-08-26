@@ -2,6 +2,7 @@ package ws
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -74,4 +75,32 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 			t.Errorf("got %+v, want %+v", got, want)
 		}
 	})
+}
+
+func TestDecodeRejectsMalformed(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []byte
+		wantErr error
+	}{
+		{"not json", []byte("{not json"), ErrMalformed},
+		{"json array", []byte("[]"), ErrMalformed},
+		{"missing type", []byte(`{"data":{}}`), ErrMissingType},
+		{"empty type", []byte(`{"type":"","data":{}}`), ErrMissingType},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			env, err := Decode(tt.input)
+
+			// Assert
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("Decode(%s) error = %v, want %v", tt.input, err, tt.wantErr)
+			}
+			if env.Type != "" || env.Data != nil {
+				t.Errorf("Decode(%s) envelope = %+v, want zero value", tt.input, env)
+			}
+		})
+	}
 }
