@@ -357,3 +357,49 @@ func TestPlaceBroadcastsOdds(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaceBroadcastSuppressed(t *testing.T) {
+	t.Run("rejected wager broadcasts nothing", func(t *testing.T) {
+		store := newTestStore(t)
+		ctx := context.Background()
+		hostID := testID(t, "host")
+		roomID, _ := setupOpenRound(t, store, hostID, 1000, 2, nil)
+
+		bc := &stubBroadcaster{}
+		svc := NewService(store, bc)
+
+		_, err := svc.Place(ctx, Request{RoomID: roomID, UserID: hostID, Outcome: 0, Amount: 50, IdempotencyKey: uuid.NewString()})
+		if !errors.Is(err, redisstore.ErrHostCannotBet) {
+			t.Fatalf("Place() error = %v, want ErrHostCannotBet", err)
+		}
+		if len(bc.calls) != 0 {
+			t.Errorf("Broadcast call count = %d, want 0", len(bc.calls))
+		}
+	})
+
+	t.Run("replayed key rebroadcasts an identical payload", func(t *testing.T) {
+		store := newTestStore(t)
+		ctx := context.Background()
+		hostID := testID(t, "host")
+		u1 := testID(t, "user")
+		roomID, _ := setupOpenRound(t, store, hostID, 1000, 2, map[string]domain.Tokens{u1: 1000})
+
+		bc := &stubBroadcaster{}
+		svc := NewService(store, bc)
+
+		key := uuid.NewString()
+		if _, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 200, IdempotencyKey: key}); err != nil {
+			t.Fatalf("Place() first = %v, want nil", err)
+		}
+		if _, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 200, IdempotencyKey: key}); err != nil {
+			t.Fatalf("Place() replay = %v, want nil", err)
+		}
+
+		if len(bc.calls) != 2 {
+			t.Fatalf("Broadcast call count = %d, want 2", len(bc.calls))
+		}
+		if string(bc.calls[0].payload) != string(bc.calls[1].payload) {
+			t.Errorf("replay payload = %s, want identical to first %s", bc.calls[1].payload, bc.calls[0].payload)
+		}
+	})
+}
