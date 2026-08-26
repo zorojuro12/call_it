@@ -15,7 +15,9 @@ func Decode(fields map[string]string) (Event, error) {
 	case "wager_placed":
 		return decodeWagerPlaced(fields)
 	case "round_settled":
-		return decodeRoundSettled(fields)
+		return decodeRoundSettled(fields, false)
+	case "round_refunded":
+		return decodeRoundSettled(fields, true)
 	default:
 		return nil, fmt.Errorf("events: unrecognized type %q", fields["type"])
 	}
@@ -82,7 +84,7 @@ func decodeWagerPlaced(fields map[string]string) (Event, error) {
 	}, nil
 }
 
-func decodeRoundSettled(fields map[string]string) (Event, error) {
+func decodeRoundSettled(fields map[string]string, refunded bool) (Event, error) {
 	roomID, err := requireField(fields, "room_id")
 	if err != nil {
 		return nil, err
@@ -95,10 +97,21 @@ func decodeRoundSettled(fields map[string]string) (Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	winningOutcome, err := parseInt(fields, "winning_outcome")
-	if err != nil {
-		return nil, err
+
+	// -1 is the sentinel for "no winning outcome": 0 is a valid outcome
+	// index and would be indistinguishable from a real outcome-0 win.
+	winningOutcome := int64(-1)
+	if refunded {
+		if fields["winning_outcome"] != "" {
+			return nil, fmt.Errorf("events: a refund event cannot carry a winning_outcome (got %q)", fields["winning_outcome"])
+		}
+	} else {
+		winningOutcome, err = parseInt(fields, "winning_outcome")
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	total, err := parseInt(fields, "total")
 	if err != nil {
 		return nil, err
@@ -124,6 +137,6 @@ func decodeRoundSettled(fields map[string]string) (Event, error) {
 		Total:          total,
 		Dust:           dust,
 		Payouts:        payouts,
-		Refunded:       false,
+		Refunded:       refunded,
 	}, nil
 }

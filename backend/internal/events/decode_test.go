@@ -198,3 +198,59 @@ func TestDecodeRoundSettled_Malformed(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeRoundRefunded(t *testing.T) {
+	fields := map[string]string{
+		"type":            "round_refunded",
+		"round_id":        "rd1",
+		"room_id":         "r1",
+		"dust":            "0",
+		"total":           "400",
+		"winning_outcome": "",
+		"payouts":         `[{"user_id":"u2","amount":398}]`,
+		"idempotency_key": "idem-2",
+	}
+
+	ev, err := Decode(fields)
+	if err != nil {
+		t.Fatalf("Decode() error = %v, want nil", err)
+	}
+
+	rs, ok := ev.(RoundSettled)
+	if !ok {
+		t.Fatalf("Decode() = %T, want RoundSettled", ev)
+	}
+
+	want := RoundSettled{
+		RoomID:         "r1",
+		RoundID:        "rd1",
+		IdempotencyKey: "idem-2",
+		WinningOutcome: -1,
+		Total:          400,
+		Dust:           0,
+		Payouts:        []Payout{{UserID: "u2", Amount: 398}},
+		Refunded:       true,
+	}
+	if !reflect.DeepEqual(rs, want) {
+		t.Errorf("Decode() = %+v, want %+v", rs, want)
+	}
+}
+
+func TestDecodeRoundRefunded_ContradictoryWinningOutcome(t *testing.T) {
+	// A refund with a non-empty winning_outcome is a contradiction — a
+	// refund means nobody backed the winner, so there is no winner to name.
+	fields := map[string]string{
+		"type":            "round_refunded",
+		"round_id":        "rd1",
+		"room_id":         "r1",
+		"dust":            "0",
+		"total":           "400",
+		"winning_outcome": "1",
+		"payouts":         `[{"user_id":"u2","amount":398}]`,
+		"idempotency_key": "idem-2",
+	}
+
+	if _, err := Decode(fields); err == nil {
+		t.Errorf("Decode() error = nil, want an error for a refund carrying a winning_outcome")
+	}
+}
