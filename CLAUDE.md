@@ -45,13 +45,18 @@ make down        # docker compose down
 make test-unit   # cd backend && go test ./... -race -cover -p 1 — assumes Redis is already up
 ```
 
-`make test` now starts Redis and waits for it to report healthy before
-running Go, and `internal/redisstore`'s integration tests **fail rather
-than skip** when Redis is unreachable — a suite whose whole purpose is
-proving zero double-spend must not report PASS while executing nothing.
-They run against Redis **DB 15**, never DB 0, so a run can't touch local
-dev state; `REDIS_ADDR` (default `localhost:6379`) overrides the address.
-Use `make test-unit` when Redis is already up and the Docker round trip
+`make test` now brings up the **full stack** — Redis, PostgreSQL, and
+Kafka — and waits for all three to report healthy before running Go
+(Phase 5a). `internal/redisstore`, `internal/migrate`, and
+`internal/events`' integration tests **fail rather than skip** when their
+respective dependency is unreachable — a suite whose whole purpose is
+proving zero double-spend, or that a migration/event actually reaches its
+target, must not report PASS while executing nothing. `redisstore` runs
+against Redis **DB 15**, never DB 0, so a run can't touch local dev state;
+`REDIS_ADDR` (default `localhost:6379`), `POSTGRES_DSN` (default
+`postgres://callit:callit@localhost:5432/callit?sslmode=disable`), and
+`KAFKA_BROKERS` (default `localhost:9092`) override the addresses. Use
+`make test-unit` when all three are already up and the Docker round trip
 through `make test` is unwanted.
 
 **`-p 1` is load-bearing, not incidental (added Phase 3).** Multiple
@@ -300,6 +305,15 @@ session — all deferred to Phase 7): `docs/project-history.md`.
   whole compose file including the Kafka `full` profile is verified working —
   see `docs/project-history.md`.
 - Kafka is real Kafka (not Redpanda), chosen deliberately for deeper
-  hands-on experience (spec §2) — it's heavier to run locally, which is why
-  it's gated behind `make up-full` / the `full` Compose profile rather than
-  running by default through Phases 0-4.
+  hands-on experience (spec §2). It was gated behind `make up-full` / the
+  `full` Compose profile through Phases 0-4 to avoid running it before
+  anything needed it — **now historical**: `make test` and CI both bring
+  Kafka up unconditionally from Phase 5a onward, since `internal/events`'
+  integration suite needs it and fails rather than skips without it.
+- **A bare `docker compose down` does not stop or remove `full`-profile
+  services** (Kafka) — it only touches services in the profiles that
+  invocation activates, so `down` after `up-full` used to leave the Kafka
+  container running. `make down` now runs `docker compose --profile full
+  down` for exactly this reason — don't drop the flag if editing that
+  target, and don't call bare `docker compose down` by hand expecting it
+  to reach Kafka.

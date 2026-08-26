@@ -22,6 +22,19 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: callit
+          POSTGRES_PASSWORD: callit
+          POSTGRES_DB: callit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U callit"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +57,22 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Kafka runs via the same docker-compose.yml as local dev (the
+      # `full` profile) rather than a services: container — KRaft mode's
+      # listener configuration is awkward to express as a GitHub Actions
+      # service, and reusing the compose file keeps CI and local dev on
+      # one definition.
+      - name: Start Kafka
+        working-directory: .
+        run: |
+          docker compose --profile full up -d kafka
+          until [ "$(docker inspect -f '{{.State.Health.Status}}' call-it-kafka-1 2>/dev/null)" = "healthy" ]; do
+            sleep 2
+          done
+
       - name: Test
         run: go test ./... -race -cover -p 1
         env:
           REDIS_ADDR: localhost:6379
+          POSTGRES_DSN: postgres://callit:callit@localhost:5432/callit?sslmode=disable
+          KAFKA_BROKERS: localhost:9092
