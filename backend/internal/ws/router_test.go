@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
@@ -128,6 +129,7 @@ func TestRouterErrors(t *testing.T) {
 		{"round in progress", round.ErrRoundInProgress, "round_in_progress"},
 		{"no active round", wager.ErrNoActiveRound, "no_active_round"},
 		{"bad idempotency key", wager.ErrBadIdempotency, "bad_idempotency_key"},
+		{"rate limited", &wager.RateLimitError{RetryAfter: 5 * time.Second}, "rate_limited"},
 		{"unrecognized error", errUnrecognizedForTest, "internal_error"},
 	}
 

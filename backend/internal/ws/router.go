@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -145,6 +146,13 @@ func (r *Router) replyServiceError(c *Client, err error) {
 		r.replyError(c, "no_active_round", err.Error())
 	case errors.Is(err, wager.ErrBadIdempotency):
 		r.replyError(c, "bad_idempotency_key", err.Error())
+	case errors.Is(err, wager.ErrRateLimited):
+		msg := err.Error()
+		var rlErr *wager.RateLimitError
+		if errors.As(err, &rlErr) {
+			msg = fmt.Sprintf("%s (retry after %s)", msg, rlErr.RetryAfter)
+		}
+		r.replyError(c, "rate_limited", msg)
 	default:
 		log.Printf("ws: router: unmapped service error: %v", err)
 		r.replyError(c, "internal_error", "an internal error occurred")
