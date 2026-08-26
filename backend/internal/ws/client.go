@@ -90,12 +90,25 @@ func (c *Client) ReadPump(handle MessageHandler, onClose func()) {
 		}
 		env, err := Decode(raw)
 		if err != nil {
+			c.Send(mustEncode(TypeError, ErrorEvent{Code: "malformed", Message: err.Error()}))
 			continue
 		}
-		if handle != nil {
-			handle(c, env)
+		if handle == nil {
+			c.Send(mustEncode(TypeError, ErrorEvent{Code: "unknown_type", Message: "unsupported message type: " + env.Type}))
+			continue
 		}
+		handle(c, env)
 	}
+}
+
+// mustEncode encodes a known-good payload type (a plain struct with no
+// unmarshalable fields), for which Encode cannot fail.
+func mustEncode(msgType string, data any) []byte {
+	raw, err := Encode(msgType, data)
+	if err != nil {
+		panic(err)
+	}
+	return raw
 }
 
 // Send queues payload on c.send, non-blocking — a client too backed

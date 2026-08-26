@@ -331,6 +331,79 @@ func TestReadPumpDispatch(t *testing.T) {
 	close(blockCh)
 }
 
+func TestReadPumpErrorReply(t *testing.T) {
+	// Arrange
+	stub := newStubConn()
+	messages := [][]byte{
+		[]byte("{not json"),
+		[]byte(`{"type":"nonsense"}`),
+	}
+	idx := 0
+	blockCh := make(chan struct{})
+	stub.readMessageFunc = func() (int, []byte, error) {
+		if idx < len(messages) {
+			m := messages[idx]
+			idx++
+			return websocket.TextMessage, m, nil
+		}
+		<-blockCh
+		return 0, nil, io.EOF
+	}
+	cfg := DefaultClientConfig()
+	cfg.SendBuffer = 4
+	c := NewClient(stub, Identity{UserID: "u1"}, cfg)
+
+	// Act
+	go c.ReadPump(nil, nil)
+
+	// Assert: two error replies land on this client's own send channel
+	first := readWithTimeout(t, c.send)
+	second := readWithTimeout(t, c.send)
+
+	env1, err := Decode(first)
+	if err != nil {
+		t.Fatalf("Decode(first) error: %v", err)
+	}
+	if env1.Type != TypeError {
+		t.Errorf("first Type = %q, want %q", env1.Type, TypeError)
+	}
+	var ev1 ErrorEvent
+	if err := json.Unmarshal(env1.Data, &ev1); err != nil {
+		t.Fatalf("failed to unmarshal first Data: %v", err)
+	}
+	if ev1.Code != "malformed" || ev1.Message == "" {
+		t.Errorf("first ErrorEvent = %+v, want Code %q and non-empty Message", ev1, "malformed")
+	}
+
+	env2, err := Decode(second)
+	if err != nil {
+		t.Fatalf("Decode(second) error: %v", err)
+	}
+	if env2.Type != TypeError {
+		t.Errorf("second Type = %q, want %q", env2.Type, TypeError)
+	}
+	var ev2 ErrorEvent
+	if err := json.Unmarshal(env2.Data, &ev2); err != nil {
+		t.Fatalf("failed to unmarshal second Data: %v", err)
+	}
+	if ev2.Code != "unknown_type" || ev2.Message == "" {
+		t.Errorf("second ErrorEvent = %+v, want Code %q and non-empty Message", ev2, "unknown_type")
+	}
+
+	close(blockCh)
+}
+
+func readWithTimeout(t *testing.T, ch chan []byte) []byte {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for send channel")
+		return nil
+	}
+}
+
 // waitFor polls cond until it's true or a timeout elapses, failing the
 // test on timeout. Used instead of a fixed sleep to avoid flaking on a
 // loaded runner.
