@@ -112,6 +112,51 @@ func TestCreateRound(t *testing.T) {
 	}
 }
 
+func TestCurrentRound(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+	lockAt := time.Now().Add(30 * time.Second)
+
+	if _, err := store.CurrentRound(ctx, roomID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("CurrentRound() on a room with no round error = %v, want ErrNotFound", err)
+	}
+
+	roundID := testID(t, "round")
+	if err := store.CreateRound(ctx, roundID, roomID, "Question?", testOutcomes(2), lockAt); err != nil {
+		t.Fatalf("CreateRound() = %v, want nil", err)
+	}
+
+	got, err := store.CurrentRound(ctx, roomID)
+	if err != nil {
+		t.Fatalf("CurrentRound() = %v, want nil", err)
+	}
+	if got != roundID {
+		t.Errorf("CurrentRound() = %q, want %q", got, roundID)
+	}
+
+	// A second round overwrites the index — CreateRound is a low-level
+	// writer and enforces no policy; refusing a concurrent round is the
+	// round service's job.
+	roundID2 := testID(t, "round")
+	if err := store.CreateRound(ctx, roundID2, roomID, "Question 2?", testOutcomes(2), lockAt); err != nil {
+		t.Fatalf("CreateRound() second = %v, want nil", err)
+	}
+	got, err = store.CurrentRound(ctx, roomID)
+	if err != nil {
+		t.Fatalf("CurrentRound() after second create = %v, want nil", err)
+	}
+	if got != roundID2 {
+		t.Errorf("CurrentRound() = %q, want %q", got, roundID2)
+	}
+}
+
+func TestKeys_RoomRoundKey(t *testing.T) {
+	if got, want := RoomRoundKey("rm1"), "room:rm1:round"; got != want {
+		t.Errorf("RoomRoundKey(%q) = %q, want %q", "rm1", got, want)
+	}
+}
+
 func TestRound_MalformedFields(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

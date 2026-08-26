@@ -34,6 +34,12 @@ func RoundKey(roundID string) string {
 	return "round:" + roundID
 }
 
+// RoomRoundKey indexes a room's current (non-terminal) round, so finding
+// it never requires scanning every round key (Amendment D2).
+func RoomRoundKey(roomID string) string {
+	return "room:" + roomID + ":round"
+}
+
 func RoundPoolsKey(roundID string) string {
 	return "round:" + roundID + ":pools"
 }

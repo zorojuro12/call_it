@@ -3,6 +3,7 @@ package redisstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -61,6 +62,8 @@ func (s *Store) CreateRound(ctx context.Context, roundID, roomID, question strin
 		poolFields = append(poolFields, PoolTotalField, "0")
 		pipe.HSet(ctx, RoundPoolsKey(roundID), poolFields...)
 
+		pipe.Set(ctx, RoomRoundKey(roomID), roundID, 0)
+
 		return nil
 	})
 	if err != nil {
@@ -68,6 +71,19 @@ func (s *Store) CreateRound(ctx context.Context, roundID, roomID, question strin
 	}
 
 	return nil
+}
+
+// CurrentRound returns the room's current (non-terminal) round ID, or
+// ErrNotFound when the room has none.
+func (s *Store) CurrentRound(ctx context.Context, roomID string) (string, error) {
+	roundID, err := s.client.Get(ctx, RoomRoundKey(roomID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", fmt.Errorf("redisstore: current round for room %s: %w", roomID, ErrNotFound)
+	}
+	if err != nil {
+		return "", fmt.Errorf("redisstore: current round for room %s: %w", roomID, err)
+	}
+	return roundID, nil
 }
 
 // Round reads a round's hash back into its typed projection. The stored
