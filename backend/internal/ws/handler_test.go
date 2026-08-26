@@ -172,6 +172,37 @@ func TestHandlerRejects(t *testing.T) {
 	}
 }
 
+func TestHandlerRequiresRoom(t *testing.T) {
+	// Arrange
+	issuer := newTestIssuer(t, time.Hour)
+	hub := NewHub()
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil))
+	defer server.Close()
+
+	token, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: ""})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+
+	// Act
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+token, nil)
+
+	// Assert
+	if err == nil {
+		t.Fatal("Dial succeeded, want failure")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		status := -1
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		t.Fatalf("status = %d, want %d", status, http.StatusForbidden)
+	}
+	if hub.RoomCount() != 0 {
+		t.Fatalf("RoomCount() = %d, want 0", hub.RoomCount())
+	}
+}
+
 func unmarshalData(env Envelope, v any) error {
 	return json.Unmarshal(env.Data, v)
 }

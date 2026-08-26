@@ -28,6 +28,11 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 			return
 		}
 
+		if claims.RoomID == "" {
+			http.Error(w, "token is not scoped to a room", http.StatusForbidden)
+			return
+		}
+
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
