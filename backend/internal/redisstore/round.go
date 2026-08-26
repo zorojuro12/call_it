@@ -86,6 +86,17 @@ func (s *Store) CurrentRound(ctx context.Context, roomID string) (string, error)
 	return roundID, nil
 }
 
+// ClearCurrentRound deletes the room's current-round index. It is
+// idempotent — clearing an already-cleared room is not an error, since
+// the resolve path and the refund timer can both reach it for the same
+// round.
+func (s *Store) ClearCurrentRound(ctx context.Context, roomID string) error {
+	if err := s.client.Del(ctx, RoomRoundKey(roomID)).Err(); err != nil {
+		return fmt.Errorf("redisstore: clear current round for room %s: %w", roomID, err)
+	}
+	return nil
+}
+
 // Round reads a round's hash back into its typed projection. The stored
 // status string maps directly onto domain.RoundStatus — they are the
 // same strings by construction (internal/domain's round.go doc comment),

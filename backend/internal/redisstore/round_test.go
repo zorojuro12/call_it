@@ -151,6 +151,32 @@ func TestCurrentRound(t *testing.T) {
 	}
 }
 
+func TestClearCurrentRound(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+	roundID := testID(t, "round")
+	lockAt := time.Now().Add(30 * time.Second)
+
+	if err := store.CreateRound(ctx, roundID, roomID, "Question?", testOutcomes(2), lockAt); err != nil {
+		t.Fatalf("CreateRound() = %v, want nil", err)
+	}
+
+	if err := store.ClearCurrentRound(ctx, roomID); err != nil {
+		t.Fatalf("ClearCurrentRound() = %v, want nil", err)
+	}
+	if _, err := store.CurrentRound(ctx, roomID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("CurrentRound() after clear error = %v, want ErrNotFound", err)
+	}
+
+	// Clearing an already-cleared room is a no-op, not an error — the
+	// resolve path and the refund timer can both reach it for the same
+	// round, and the loser of that race must not report a failure.
+	if err := store.ClearCurrentRound(ctx, roomID); err != nil {
+		t.Errorf("ClearCurrentRound() on an already-cleared room = %v, want nil", err)
+	}
+}
+
 func TestKeys_RoomRoundKey(t *testing.T) {
 	if got, want := RoomRoundKey("rm1"), "room:rm1:round"; got != want {
 		t.Errorf("RoomRoundKey(%q) = %q, want %q", "rm1", got, want)
