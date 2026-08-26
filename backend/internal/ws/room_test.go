@@ -68,3 +68,32 @@ func TestRoomLeave(t *testing.T) {
 		t.Fatalf("Count() after leaving non-member = %d, want 1", got)
 	}
 }
+
+func TestRoomBroadcast(t *testing.T) {
+	// Arrange
+	room := NewRoom("r1", nil)
+	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
+	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
+	c3 := newClient(nil, Identity{UserID: "u3"}, 4)
+	room.Join(c1)
+	room.Join(c2)
+	room.Join(c3)
+
+	// Act
+	room.Broadcast([]byte("hello"))
+	room.Broadcast([]byte("world"))
+
+	// Assert
+	for _, c := range []*Client{c1, c2, c3} {
+		first := <-c.send
+		second := <-c.send
+		if string(first) != "hello" || string(second) != "world" {
+			t.Fatalf("client %s got [%q, %q], want [\"hello\", \"world\"]", c.UserID, first, second)
+		}
+		select {
+		case extra := <-c.send:
+			t.Fatalf("client %s got unexpected extra message %q", c.UserID, extra)
+		default:
+		}
+	}
+}

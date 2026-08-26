@@ -23,6 +23,10 @@ type countCmd struct {
 	reply chan int
 }
 
+type broadcastCmd struct {
+	payload []byte
+}
+
 // NewRoom starts the room's owner goroutine and returns immediately.
 func NewRoom(id string, onEmpty func(roomID string)) *Room {
 	r := &Room{ID: id, cmds: make(chan any)}
@@ -39,6 +43,13 @@ func (r *Room) run(onEmpty func(roomID string)) {
 			clients[c.c] = struct{}{}
 		case leaveCmd:
 			remove(clients, c.c)
+		case broadcastCmd:
+			for client := range clients {
+				select {
+				case client.send <- c.payload:
+				default:
+				}
+			}
 		case membersCmd:
 			c.reply <- membersOf(clients)
 		case countCmd:
@@ -76,6 +87,13 @@ func (r *Room) Join(c *Client) {
 // channel. A client that is not a member is a harmless no-op.
 func (r *Room) Leave(c *Client) {
 	r.cmds <- leaveCmd{c: c}
+}
+
+// Broadcast delivers payload to every member's send channel,
+// non-blocking — a member whose buffer is full does not stall this
+// call (eviction of that member is pinned by a later checkpoint).
+func (r *Room) Broadcast(payload []byte) {
+	r.cmds <- broadcastCmd{payload: payload}
 }
 
 // Members returns a snapshot of the room's current identities, in
