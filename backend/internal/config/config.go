@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -20,9 +21,10 @@ const (
 	maxJWTTTL     = 24 * time.Hour
 )
 
-// Config holds Phase 0's configuration surface. Fields for services this
-// binary doesn't talk to yet (Postgres, Kafka) are added in the phase
-// that introduces that integration, not speculatively here.
+// Config holds cmd/api's configuration surface. Postgres and Kafka never
+// appear here — cmd/api never talks to either directly (CLAUDE.md: the
+// WebSocket server never writes PostgreSQL directly); those surfaces
+// belong to MigrateConfig and RelayConfig, the binaries that do.
 type Config struct {
 	Port      int
 	Env       string
@@ -154,6 +156,77 @@ func LoadMigrate(lookup LookupFunc) (MigrateConfig, error) {
 			return MigrateConfig{}, fmt.Errorf("config: LOG_LEVEL %q is not one of debug|info|warn|error", v)
 		}
 		cfg.LogLevel = v
+	}
+
+	return cfg, nil
+}
+
+// RelayConfig holds cmd/relay's configuration surface. Like
+// MigrateConfig, it does not require JWT_SECRET — the relay never
+// issues or verifies a token, and requiring one would hand a non-auth
+// binary a credential it has no use for.
+type RelayConfig struct {
+	RedisAddr    string
+	RedisDB      int
+	KafkaBrokers []string
+	LogLevel     string
+	Env          string
+}
+
+// LoadRelay reads the relay's configuration via lookup, reusing Load's
+// validation helpers for the fields the two binaries share.
+func LoadRelay(lookup LookupFunc) (RelayConfig, error) {
+	cfg := RelayConfig{
+		RedisAddr:    "localhost:6379",
+		RedisDB:      0,
+		KafkaBrokers: []string{"localhost:9092"},
+		LogLevel:     "info",
+		Env:          "development",
+	}
+
+	if v, ok := lookup("REDIS_ADDR"); ok {
+		if v == "" {
+			return RelayConfig{}, fmt.Errorf("config: REDIS_ADDR must not be empty")
+		}
+		cfg.RedisAddr = v
+	}
+
+	if v, ok := lookup("REDIS_DB"); ok {
+		db, err := strconv.Atoi(v)
+		if err != nil {
+			return RelayConfig{}, fmt.Errorf("config: REDIS_DB %q is not a valid integer: %w", v, err)
+		}
+		if db < 0 || db > 15 {
+			return RelayConfig{}, fmt.Errorf("config: REDIS_DB %d out of valid range 0-15", db)
+		}
+		cfg.RedisDB = db
+	}
+
+	if v, ok := lookup("KAFKA_BROKERS"); ok {
+		if v == "" {
+			return RelayConfig{}, fmt.Errorf("config: KAFKA_BROKERS must not be empty")
+		}
+		brokers := strings.Split(v, ",")
+		for _, b := range brokers {
+			if b == "" {
+				return RelayConfig{}, fmt.Errorf("config: KAFKA_BROKERS %q contains an empty element", v)
+			}
+		}
+		cfg.KafkaBrokers = brokers
+	}
+
+	if v, ok := lookup("LOG_LEVEL"); ok {
+		if !validLogLevels[v] {
+			return RelayConfig{}, fmt.Errorf("config: LOG_LEVEL %q is not one of debug|info|warn|error", v)
+		}
+		cfg.LogLevel = v
+	}
+
+	if v, ok := lookup("ENV"); ok {
+		if !validEnvs[v] {
+			return RelayConfig{}, fmt.Errorf("config: ENV %q is not one of development|production|test", v)
+		}
+		cfg.Env = v
 	}
 
 	return cfg, nil
