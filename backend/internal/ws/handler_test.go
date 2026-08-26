@@ -273,6 +273,62 @@ func TestPresenceJoin(t *testing.T) {
 	}
 }
 
+func TestPresenceLeave(t *testing.T) {
+	// Arrange
+	issuer := newTestIssuer(t, time.Hour)
+	hub := NewHub()
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil))
+	defer server.Close()
+
+	tokenA, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+	tokenB, err := issuer.Issue(auth.Claims{UserID: "u2", DisplayName: "Grace", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+
+	connA, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+tokenA, nil)
+	if err != nil {
+		t.Fatalf("Dial A error: %v", err)
+	}
+	defer connA.Close()
+	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mustReadEnvelope(t, connA, TypeConnected)
+	mustReadEnvelope(t, connA, TypePlayerJoined) // A's own self-broadcast
+
+	connB, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+tokenB, nil)
+	if err != nil {
+		t.Fatalf("Dial B error: %v", err)
+	}
+	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mustReadEnvelope(t, connB, TypeConnected)
+	mustReadEnvelope(t, connB, TypePlayerJoined) // B's own broadcast, reaching B
+
+	mustReadEnvelope(t, connA, TypePlayerJoined) // A also hears B's join
+
+	// Act: close B's connection
+	connB.Close()
+
+	// Assert: A's next message is player_left for B, count taken after removal
+	env := mustReadEnvelope(t, connA, TypePlayerLeft)
+	var presence PresenceEvent
+	if err := unmarshalData(env, &presence); err != nil {
+		t.Fatalf("unmarshal PresenceEvent: %v", err)
+	}
+	want := PresenceEvent{UserID: "u2", DisplayName: "Grace", PlayerCount: 1}
+	if presence != want {
+		t.Fatalf("A's player_left = %+v, want %+v", presence, want)
+	}
+
+	// Act: close A's connection too
+	connA.Close()
+
+	// Assert: the room is reaped
+	waitFor(t, func() bool { return hub.RoomCount() == 0 })
+}
+
 func mustReadEnvelope(t *testing.T, conn *websocket.Conn, wantType string) Envelope {
 	t.Helper()
 	_, raw, err := conn.ReadMessage()
