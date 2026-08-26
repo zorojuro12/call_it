@@ -16,15 +16,25 @@
 
 ---
 
-## ⚠ Revision required before execution
+## ✅ Pre-execution verification — done 2026-08-26, no revision needed
 
-This plan was drafted in the **same session as Phase 4a's plan, before 4a was executed.** It consumes three interfaces that do not exist yet and are specified only on paper:
+This plan was drafted in the **same session as Phase 4a's plan, before 4a was executed**, so every interface it consumes from `internal/ws` was specified only on paper. Those were re-checked against what 4a actually landed, on `dev` at merge commit `e1c65ad`:
 
-- `ws.MessageHandler` — the `func(c *Client, e Envelope)` seam (4a Task 4)
-- `ws.Room.Broadcast(payload []byte)` and `ws.Client.Send(payload []byte)` (4a Tasks 2 and 4)
-- `ws.Hub.Join(roomID string, c *Client) *Room` (4a Task 5)
+| assumed by this plan | actual | |
+|---|---|---|
+| `ws.MessageHandler func(c *Client, e Envelope)` | identical | ✅ |
+| `ws.Room.Broadcast(payload []byte)` | identical | ✅ |
+| `ws.Room.Members() []Identity` | identical | ✅ |
+| `ws.Client.Send(payload []byte)` | identical | ✅ |
+| `ws.Hub.Join(roomID string, c *Client) *Room` | identical | ✅ |
+| `ws.Encode` / `ws.Decode` / `ws.Envelope` | identical | ✅ |
+| `ws.TypeError`, `ws.ErrorEvent`, `ws.DefaultClientConfig()` | identical | ✅ |
+| `httpapi.Deps.Hub` and the `nil` MessageHandler seam in `ws_handlers.go` | present, with the comment naming this phase | ✅ |
+| `ws.Client.RoomID` | **absent** — `Client` embeds `Identity{UserID, DisplayName, Guest}` only | ⚠ already covered |
 
-**Before starting Task 1, diff those three against what 4a actually landed** (`go doc ./internal/ws`) and fix any drift in this plan's Interfaces blocks. If 4a's execution changed a signature, this plan is stale at exactly those points and nowhere else — the tasks below never reach into 4a's transport internals.
+**No drift. No Interfaces block in this plan needs editing.** The single gap — `Client` carries no `RoomID` — is the one Task 9 CP1 already anticipates in its contract ("add it if 4a did not"), so it is planned work, not a stale assumption.
+
+**One 4a implementation detail worth knowing** (it changed from 4a's plan text, and Task 9 CP3 builds on it): 4a's hub does **not** return from its `run()` goroutine on `Shutdown`, and `Room.close()` performs a confirmation round-trip that replies `false` when a client rejoined before the reap. Task 9 CP3 adds `Hub.Broadcast`/`Hub.Names` as further hub commands, which that long-lived `run()` supports directly — no accommodation needed.
 
 ---
 
