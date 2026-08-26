@@ -115,12 +115,34 @@ func (s *Service) Place(ctx context.Context, req Request) (Accepted, error) {
 		return Accepted{}, err
 	}
 
-	return Accepted{
+	accepted := Accepted{
 		Balance:     result.Balance,
 		Pools:       result.Pools,
 		Total:       result.Total,
 		Multipliers: domain.Multipliers(result.Total, result.Pools),
 		Bettors:     result.BettorCount,
 		Players:     players,
-	}, nil
+	}
+
+	// Broadcast after the Lua call succeeds, never before — an
+	// announced wager that then failed would desynchronize every
+	// client's odds from Redis.
+	pools := make([]int64, len(result.Pools))
+	for i, p := range result.Pools {
+		pools[i] = int64(p)
+	}
+	payload, err := round.EncodeEnvelope("odds_updated", OddsEvent{
+		RoundID:     roundID,
+		Pools:       pools,
+		Total:       int64(result.Total),
+		Multipliers: accepted.Multipliers,
+		Bettors:     accepted.Bettors,
+		Players:     accepted.Players,
+	})
+	if err != nil {
+		return Accepted{}, err
+	}
+	s.broadcaster.Broadcast(req.RoomID, payload)
+
+	return accepted, nil
 }

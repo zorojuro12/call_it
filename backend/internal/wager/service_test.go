@@ -2,6 +2,7 @@ package wager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -10,6 +11,23 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 )
+
+// testEnvelope decodes a broadcast payload's {"type":...,"data":...}
+// shape without depending on internal/ws (wager must not import it —
+// see round.Broadcaster's doc comment for why).
+type testEnvelope struct {
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
+func decodeEnvelope(t *testing.T, payload []byte) testEnvelope {
+	t.Helper()
+	var env testEnvelope
+	if err := json.Unmarshal(payload, &env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	return env
+}
 
 // stubBroadcaster records every Broadcast call, mirroring
 // internal/round's own test double so both packages assert the same
@@ -267,5 +285,75 @@ func TestPlaceRateLimited(t *testing.T) {
 	// user, not globally.
 	if _, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u2, Outcome: 0, Amount: 1, IdempotencyKey: uuid.NewString()}); err != nil {
 		t.Errorf("Place() u2's first wager = %v, want nil (u1's exhausted limit must not affect u2)", err)
+	}
+}
+
+func TestPlaceBroadcastsOdds(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	hostID := testID(t, "host")
+	u1 := testID(t, "user")
+	roomID, roundID := setupOpenRound(t, store, hostID, 1000, 2, map[string]domain.Tokens{u1: 1000})
+
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+
+	if _, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 200, IdempotencyKey: uuid.NewString()}); err != nil {
+		t.Fatalf("Place() = %v, want nil", err)
+	}
+
+	if len(bc.calls) != 1 {
+		t.Fatalf("Broadcast call count = %d, want 1", len(bc.calls))
+	}
+	if bc.calls[0].roomID != roomID {
+		t.Errorf("Broadcast roomID = %q, want %q", bc.calls[0].roomID, roomID)
+	}
+	env := decodeEnvelope(t, bc.calls[0].payload)
+	if env.Type != "odds_updated" {
+		t.Errorf("Broadcast envelope Type = %q, want %q", env.Type, "odds_updated")
+	}
+
+	var data OddsEvent
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatalf("decode odds_updated data: %v", err)
+	}
+	if data.RoundID != roundID {
+		t.Errorf("OddsEvent.RoundID = %q, want %q", data.RoundID, roundID)
+	}
+	wantPools := []int64{200, 0}
+	if len(data.Pools) != 2 || data.Pools[0] != wantPools[0] || data.Pools[1] != wantPools[1] {
+		t.Errorf("OddsEvent.Pools = %v, want %v", data.Pools, wantPools)
+	}
+	if data.Total != 200 {
+		t.Errorf("OddsEvent.Total = %d, want 200", data.Total)
+	}
+	if data.Bettors != 1 {
+		t.Errorf("OddsEvent.Bettors = %d, want 1", data.Bettors)
+	}
+	if data.Players != 1 {
+		t.Errorf("OddsEvent.Players = %d, want 1", data.Players)
+	}
+	wantMult := domain.Multipliers(200, []domain.Tokens{200, 0})
+	for i := range wantMult {
+		if data.Multipliers[i] != wantMult[i] {
+			t.Errorf("OddsEvent.Multipliers[%d] = %v, want %v", i, data.Multipliers[i], wantMult[i])
+		}
+	}
+
+	// Anonymity invariant: the payload's key set must be exactly these
+	// six fields — no per-user field can ever sneak in before the round
+	// resolves (CLAUDE.md).
+	var asMap map[string]any
+	if err := json.Unmarshal(env.Data, &asMap); err != nil {
+		t.Fatalf("decode odds_updated as map: %v", err)
+	}
+	wantKeys := map[string]bool{"round_id": true, "pools": true, "total": true, "multipliers": true, "bettors": true, "players": true}
+	if len(asMap) != len(wantKeys) {
+		t.Fatalf("odds_updated key set = %v, want exactly %v", asMap, wantKeys)
+	}
+	for k := range asMap {
+		if !wantKeys[k] {
+			t.Errorf("odds_updated has unexpected key %q", k)
+		}
 	}
 }
