@@ -167,6 +167,33 @@ func TestWritePump(t *testing.T) {
 	}
 }
 
+func TestWritePumpPings(t *testing.T) {
+	// Arrange
+	stub := newStubConn()
+	cfg := DefaultClientConfig()
+	cfg.PingInterval = 20 * time.Millisecond
+	c := NewClient(stub, Identity{UserID: "u1"}, cfg)
+
+	// Act
+	go c.WritePump()
+	waitFor(t, func() bool { return len(stub.WriteControls()) >= 2 })
+
+	// Assert: at least two pings, never an exact count — exact makes this a timing flake
+	controls := stub.WriteControls()
+	pingCount := 0
+	for _, ctl := range controls {
+		if ctl.messageType == websocket.PingMessage {
+			pingCount++
+			if !ctl.deadline.After(time.Now().Add(-time.Second)) {
+				t.Errorf("ping deadline = %v, want a deadline in the future", ctl.deadline)
+			}
+		}
+	}
+	if pingCount < 2 {
+		t.Fatalf("got %d ping control frames, want at least 2", pingCount)
+	}
+}
+
 // waitFor polls cond until it's true or a timeout elapses, failing the
 // test on timeout. Used instead of a fixed sleep to avoid flaking on a
 // loaded runner.
