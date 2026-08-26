@@ -432,3 +432,99 @@ func TestResolveRejects(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveNobodyWon covers plan §5's pool_W == 0 edge case:
+// domain.Settle already implements the refund-everyone path at 100%
+// coverage — this checkpoint proves the service surfaces it rather than
+// reimplementing it.
+func TestResolveNobodyWon(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
+		t.Fatalf("JoinRoom(u1) = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, "u2", 1000); err != nil {
+		t.Fatalf("JoinRoom(u2) = %v, want nil", err)
+	}
+
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+	spec := Spec{Question: "Q?", Outcomes: []string{"A", "B", "C"}, LockIn: 10 * time.Second}
+	opened, err := svc.Open(ctx, roomID, "host1", spec)
+	if err != nil {
+		t.Fatalf("Open() = %v, want nil", err)
+	}
+
+	if _, err := store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: opened.RoundID, UserID: "u1",
+		Outcome: 0, Amount: 100, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager(u1) = %v, want nil", err)
+	}
+	if _, err := store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: opened.RoundID, UserID: "u2",
+		Outcome: 0, Amount: 150, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager(u2) = %v, want nil", err)
+	}
+
+	if err := store.LockRound(ctx, opened.RoundID); err != nil {
+		t.Fatalf("LockRound() = %v, want nil", err)
+	}
+
+	// Nobody backed outcome 2.
+	settlement, err := svc.Resolve(ctx, roomID, "host1", 2)
+	if err != nil {
+		t.Fatalf("Resolve() = %v, want nil", err)
+	}
+	if !settlement.Refunded {
+		t.Errorf("Settlement.Refunded = false, want true")
+	}
+
+	u1Balance, err := store.Balance(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("Balance(u1) = %v, want nil", err)
+	}
+	if u1Balance != 1000 {
+		t.Errorf("Balance(u1) = %d, want 1000 (pre-wager)", u1Balance)
+	}
+	u2Balance, err := store.Balance(ctx, roomID, "u2")
+	if err != nil {
+		t.Fatalf("Balance(u2) = %v, want nil", err)
+	}
+	if u2Balance != 1000 {
+		t.Errorf("Balance(u2) = %d, want 1000 (pre-wager)", u2Balance)
+	}
+
+	var resolvedCall *broadcastCall
+	for i, c := range bc.Calls() {
+		env := decodeEnvelope(t, c.payload)
+		if env.Type == "round_resolved" {
+			calls := bc.Calls()
+			resolvedCall = &calls[i]
+		}
+	}
+	if resolvedCall == nil {
+		t.Fatalf("no round_resolved broadcast found")
+	}
+	env := decodeEnvelope(t, resolvedCall.payload)
+	var data ResolvedEvent
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatalf("decode round_resolved data: %v", err)
+	}
+	if !data.Refunded {
+		t.Errorf("ResolvedEvent.Refunded = false, want true")
+	}
+	for _, row := range data.Results {
+		if row.Net != 0 {
+			t.Errorf("row %+v: Net = %d, want 0", row, row.Net)
+		}
+		if row.Returned != row.Staked {
+			t.Errorf("row %+v: Returned != Staked", row)
+		}
+	}
+}
