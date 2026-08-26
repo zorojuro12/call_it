@@ -356,3 +356,52 @@ func TestTimerCancelled(t *testing.T) {
 		t.Errorf("Broadcast call count = %d, want 1 (round_opened only)", len(bc.Calls()))
 	}
 }
+
+// TestTimerCancelledAfterLock covers watch's second cancellation point
+// — the refund wait, not just the lock wait TestTimerCancelled already
+// exercises. Cancelling after the lock but before the grace period
+// elapses must skip the refund entirely, the same way cancelling
+// before the lock skips it (Task 7 CP3's own test only reached the
+// first select).
+func TestTimerCancelledAfterLock(t *testing.T) {
+	store := newTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	bc := &stubBroadcaster{}
+	svc := NewService(ctx, store, bc)
+	svc.refundGrace = 300 * time.Millisecond
+
+	roomID := testID(t, "room")
+	if err := store.CreateRoom(context.Background(), roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	opened, err := svc.Open(context.Background(), roomID, "host1", Spec{
+		Question: "Q?", Outcomes: []string{"Yes", "No"}, LockIn: MinLockIn,
+	})
+	if err != nil {
+		t.Fatalf("Open() = %v, want nil", err)
+	}
+
+	pollUntil(t, MinLockIn+2*time.Second, func() bool {
+		rd, err := store.Round(context.Background(), opened.RoundID)
+		return err == nil && rd.Status == domain.RoundLocked
+	})
+
+	cancel()
+	// Sleep past refundGrace — if cancellation didn't stop the second
+	// wait, a refund would have fired by now.
+	time.Sleep(600 * time.Millisecond)
+
+	rd, err := store.Round(context.Background(), opened.RoundID)
+	if err != nil {
+		t.Fatalf("Round() = %v, want nil", err)
+	}
+	if rd.Status != domain.RoundLocked {
+		t.Errorf("Round().Status = %q, want %q (no refund should have been attempted)", rd.Status, domain.RoundLocked)
+	}
+	for _, c := range bc.Calls() {
+		env := decodeEnvelope(t, c.payload)
+		if env.Type == "round_refunded" {
+			t.Errorf("unexpected round_refunded broadcast after cancellation: %+v", c)
+		}
+	}
+}
