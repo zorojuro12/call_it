@@ -46,7 +46,9 @@ func (h *Hub) run() {
 				c.reply <- len(rooms)
 			}
 		case roomID := <-h.empty:
-			delete(rooms, roomID)
+			if room, ok := rooms[roomID]; ok && room.close() {
+				delete(rooms, roomID)
+			}
 		}
 	}
 }

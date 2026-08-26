@@ -27,6 +27,10 @@ type broadcastCmd struct {
 	payload []byte
 }
 
+type closeCmd struct {
+	reply chan bool
+}
+
 // NewRoom starts the room's owner goroutine and returns immediately.
 func NewRoom(id string, onEmpty func(roomID string)) *Room {
 	r := &Room{ID: id, cmds: make(chan any)}
@@ -59,6 +63,12 @@ func (r *Room) run(onEmpty func(roomID string)) {
 			c.reply <- membersOf(clients)
 		case countCmd:
 			c.reply <- len(clients)
+		case closeCmd:
+			if len(clients) == 0 {
+				c.reply <- true
+				return
+			}
+			c.reply <- false
 		}
 	}
 }
@@ -112,6 +122,16 @@ func (r *Room) Broadcast(payload []byte) {
 func (r *Room) Members() []Identity {
 	reply := make(chan []Identity)
 	r.cmds <- membersCmd{reply: reply}
+	return <-reply
+}
+
+// close asks the room to shut down its run() goroutine, but only if it
+// is currently empty — it replies false and keeps running otherwise
+// (a client may have rejoined between the empty notification and this
+// call). Unexported: only the hub calls this, as part of reaping.
+func (r *Room) close() bool {
+	reply := make(chan bool)
+	r.cmds <- closeCmd{reply: reply}
 	return <-reply
 }
 
