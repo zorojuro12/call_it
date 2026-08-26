@@ -258,3 +258,62 @@ func TestAutoRefund(t *testing.T) {
 		t.Errorf("no round_refunded broadcast with RoundID %s and Total 250 found in %+v", roundID, bc.Calls())
 	}
 }
+
+func TestNoRefundAfterResolve(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+	svc.refundGrace = 300 * time.Millisecond
+
+	roomID, roundID, _ := openAndWatch(t, store, svc, "host1", 1000, 100*time.Millisecond)
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
+		t.Fatalf("JoinRoom(u1) = %v, want nil", err)
+	}
+	if _, err := store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 0, Amount: 100, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager(u1) = %v, want nil", err)
+	}
+
+	pollUntil(t, 2*time.Second, func() bool {
+		rd, err := store.Round(ctx, roundID)
+		return err == nil && rd.Status == domain.RoundLocked
+	})
+
+	settlement, err := svc.Resolve(ctx, roomID, "host1", 0)
+	if err != nil {
+		t.Fatalf("Resolve() = %v, want nil", err)
+	}
+	wantBalance := 1000 - 100 + settlement.Payouts[0].Amount
+
+	time.Sleep(500 * time.Millisecond) // past refundGrace
+
+	rd, err := store.Round(ctx, roundID)
+	if err != nil {
+		t.Fatalf("Round() = %v, want nil", err)
+	}
+	if rd.Status != domain.RoundResolved {
+		t.Errorf("Round().Status = %q, want %q (unchanged by the grace timer)", rd.Status, domain.RoundResolved)
+	}
+
+	balance, err := store.Balance(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("Balance(u1) = %v, want nil", err)
+	}
+	// The most important assertion in this checkpoint: the winner's
+	// payout was not clawed back by an auto-refund arriving after the
+	// resolve. A double-credit or a claw-back here is the worst
+	// possible bug in this phase.
+	if balance != wantBalance {
+		t.Errorf("Balance(u1) = %d, want %d", balance, wantBalance)
+	}
+
+	for _, c := range bc.Calls() {
+		env := decodeEnvelope(t, c.payload)
+		if env.Type == "round_refunded" {
+			t.Errorf("unexpected round_refunded broadcast for an already-resolved round: %+v", c)
+		}
+	}
+}

@@ -56,6 +56,12 @@ func (s *Service) watch(ctx context.Context, roomID, roundID string, lockAt time
 	}
 
 	total, err := s.store.RefundRound(ctx, roundID, uuid.NewString())
+	if errors.Is(err, redisstore.ErrAlreadySettled) {
+		// Belt and braces: the round could resolve in the window
+		// between the status re-read above and this call — a race the
+		// re-read alone cannot close.
+		return
+	}
 	if err != nil {
 		log.Printf("round: refund round %s: %v", roundID, err)
 		return
