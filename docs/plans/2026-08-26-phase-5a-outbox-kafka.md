@@ -1271,15 +1271,62 @@ without rejecting it.
 
 ## Execution notes
 
-**This phase is the delegation test bed.** Each task above is sized to be
-handed to a subagent with only its own `Interfaces` block as context. Two
-things must hold for that to be safe, both of which this plan is written to
-support: the `Consumes`/`Produces` blocks are exact, and a subagent that hits
-a contradiction between this plan and the code **stops and reports** rather
-than redesigning around it. The amendments were resolved here, in-document,
-specifically so no delegated task has to invent a contract that Phase 5b
-depends on.
+### Execute inline unless the delegation skill exists
+
+**Default: run this plan with `executing-plans`, inline, exactly as Phases
+2–4b were run.** The delegation experiment described below is **designed but
+not built** as of this plan's commit. If no delegation skill is present in
+`.claude/skills/` when execution starts, that is not an oversight to work
+around — it means the experiment was deferred, and inline execution is the
+correct path. Do not improvise a delegation scheme from this section.
+
+### What the delegation experiment would be, if it runs
+
+Each task above is sized to be handed to a subagent with only its own
+`Interfaces` block as context. Two things must hold for that to be safe, both
+of which this plan is already written to support: the `Consumes`/`Produces`
+blocks are exact, and a subagent that hits a contradiction between this plan
+and the code **stops and reports** rather than redesigning around it. The
+amendments were resolved here, in-document, specifically so that no delegated
+task has to invent a contract Phase 5b depends on.
+
+The motivating cost model, measured against Phase 4b: `cost ≈ Σ over turns of
+(context size at that turn)`. A subagent's turns run at 50–80k rather than
+~300k, which is the only remaining lever after the `writing-plans-tuned`
+experiment falsified the turn-count one. Full derivation and evidence:
+`journal/2026-08-26_1404_ansh_subagent-delegation-proposal.md`.
 
 **Pre-registered prediction:** `tok/CP < 4.6M`, with `un-batched = 0` and
-`commits/CP <= 1.10` as discipline guardrails. Phase 2 is the control — a
+`commits/CP <= 1.10` as discipline guardrails. **Phase 2 (4.61M) is the
+control, not Phase 4b (9.08M)** — 5a is plumbing, and scoring it against 4b's
+four-package money wiring would let delegation clear the bar for free. A
 result between 4.6M and 6.0M is ambiguous, not a win.
+
+### Three wiring points, if the skill is written later
+
+A skill dropped into `.claude/skills/` is **discoverable but not active**: a
+fresh session sees only its name and one-line description, and the body loads
+only on invocation. Nothing in "execute this plan" would trigger it, since
+that phrasing matches `executing-plans` almost verbatim. Worse,
+`executing-plans` currently states at lines 14–17 that subagent execution is
+"deliberately not" used and that it "is the execution path for `call_it`" — so
+silence does not leave the question open, it resolves it *against* delegation.
+
+Wiring it therefore takes three edits, in descending order of reliability:
+
+1. **This plan's header `REQUIRED SUB-SKILL` line** — name the delegation
+   skill alongside `executing-plans`. The plan is the one artifact guaranteed
+   to be read, and `executing-plans` already sanctions this channel
+   ("Reference skills when plan says to").
+2. **`executing-plans` lines 14–17** — rewrite, or it contradicts the plan.
+   Be precise in the rewrite: the standing objection was to
+   `subagent-driven-development`'s *ceremony*, never to delegation itself, and
+   that distinction is what makes the change coherent rather than a reversal.
+3. **`CLAUDE.md`'s `Installed:` line** — puts the name in always-loaded
+   context for sessions that never open this plan.
+
+**Sequencing hazard.** Per `docs/dev-workflow-guide.md` §2a mechanics item 4,
+only one window may edit `.claude/skills/` at a time — on 2026-08-23 an
+executing window rewrote `writing-plans` while a planning window was mid-review
+of the same file. The skill and all three edits must land *before* an executing
+window opens, never alongside it.
