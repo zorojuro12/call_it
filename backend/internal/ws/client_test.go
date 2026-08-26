@@ -1,12 +1,15 @@
 package ws
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+var errBrokenPipe = errors.New("broken pipe")
 
 // stubConn is a test double for Conn. It records written messages and
 // control frames on its own storage, guarded by a mutex since the
@@ -219,6 +222,50 @@ func TestWritePumpClosesConn(t *testing.T) {
 	}
 	if got := len(stub.WriteMessages()); got != 0 {
 		t.Fatalf("got %d WriteMessage calls after close, want 0", got)
+	}
+}
+
+func TestWritePumpWriteError(t *testing.T) {
+	// Arrange
+	stub := newStubConn()
+	stub.writeMessageErr = func(callIndex int) error {
+		if callIndex == 0 {
+			return errBrokenPipe
+		}
+		return nil
+	}
+	cfg := DefaultClientConfig()
+	cfg.SendBuffer = 4
+	c := NewClient(stub, Identity{UserID: "u1"}, cfg)
+	done := make(chan struct{})
+
+	// Act
+	go func() {
+		c.WritePump()
+		close(done)
+	}()
+	c.send <- []byte("a")
+
+	// Assert
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("WritePump did not return after write failure")
+	}
+	if got := stub.Closed(); got != 1 {
+		t.Fatalf("Close() called %d times, want 1", got)
+	}
+
+	// Act: push a second payload after the pump has stopped
+	select {
+	case c.send <- []byte("b"):
+	default:
+	}
+
+	// Assert: no second WriteMessage was ever recorded
+	time.Sleep(20 * time.Millisecond)
+	if got := len(stub.WriteMessages()); got != 1 {
+		t.Fatalf("got %d WriteMessage calls, want 1", got)
 	}
 }
 
