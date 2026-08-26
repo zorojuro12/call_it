@@ -121,9 +121,12 @@ func (r *Relay) readDecodeProduceAck(ctx context.Context, id string, count int64
 }
 
 // blockInterval bounds each Run iteration's XREADGROUP block duration.
-// Kept at or under a second so a SIGTERM is not held past a deploy's
-// patience waiting for a blocking read to time out.
-const blockInterval = time.Second
+// go-redis's blocking read does not observe ctx cancellation mid-block —
+// it returns only once the block elapses — so Run's shutdown latency is
+// bounded by this value, not by ctx alone. Kept well under the plan's
+// 1-second ceiling so a SIGTERM is not held for anywhere near a second
+// waiting for an idle blocking read to time out.
+const blockInterval = 200 * time.Millisecond
 
 // Run drains every pending entry via Recover, then loops on Once until
 // ctx is cancelled. Draining first, before reading any new entry, keeps
