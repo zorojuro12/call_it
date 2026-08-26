@@ -256,6 +256,52 @@ func TestDecodeRoundRefunded_ContradictoryWinningOutcome(t *testing.T) {
 	}
 }
 
+func TestEventRouting(t *testing.T) {
+	tests := []struct {
+		name             string
+		ev               Event
+		wantTopic        string
+		wantPartitionKey string
+		wantKey          string
+	}{
+		{
+			name:             "wager placed",
+			ev:               WagerPlaced{RoomID: "r1", IdempotencyKey: "idem-1"},
+			wantTopic:        "wagers-placed",
+			wantPartitionKey: "r1",
+			wantKey:          "idem-1",
+		},
+		{
+			name:             "round settled",
+			ev:               RoundSettled{RoomID: "r2", IdempotencyKey: "idem-2", Refunded: false},
+			wantTopic:        "rounds-settled",
+			wantPartitionKey: "r2",
+			wantKey:          "idem-2",
+		},
+		{
+			name:             "round refunded",
+			ev:               RoundSettled{RoomID: "r3", IdempotencyKey: "idem-3", Refunded: true},
+			wantTopic:        "rounds-settled",
+			wantPartitionKey: "r3",
+			wantKey:          "idem-3",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ev.Topic(); got != tt.wantTopic {
+				t.Errorf("Topic() = %q, want %q", got, tt.wantTopic)
+			}
+			if got := tt.ev.PartitionKey(); got != tt.wantPartitionKey {
+				t.Errorf("PartitionKey() = %q, want %q", got, tt.wantPartitionKey)
+			}
+			if got := tt.ev.Key(); got != tt.wantKey {
+				t.Errorf("Key() = %q, want %q", got, tt.wantKey)
+			}
+		})
+	}
+}
+
 func TestDecodeUnknownType(t *testing.T) {
 	tests := []struct {
 		name   string
