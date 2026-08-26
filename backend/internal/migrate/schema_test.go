@@ -16,9 +16,10 @@ var wantColumns = map[string][]string{
 	"ledger_entries": {"id", "transaction_id", "account_id", "direction", "amount"},
 }
 
+// Tests in this package are deliberately not t.Parallel(): every test
+// shares one callit_test database and mutates its schema (Up/Down create
+// and drop the same tables), unlike redisstore's per-key isolation.
 func TestUpCreatesLedgerTables(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
 	if err := Up(ctx, testDSN); err != nil {
 		t.Fatalf("Up() error = %v, want nil", err)
@@ -64,6 +65,53 @@ func TestUpCreatesLedgerTables(t *testing.T) {
 			if !got[col] {
 				t.Errorf("table %s: missing expected column %q (has %v)", table, col, got)
 			}
+		}
+	}
+}
+
+func tableExists(t *testing.T, ctx context.Context, dsn, table string) bool {
+	t.Helper()
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("pgxpool.New() error = %v", err)
+	}
+	defer pool.Close()
+
+	var exists bool
+	err = pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1)`,
+		table,
+	).Scan(&exists)
+	if err != nil {
+		t.Fatalf("checking table %s exists: %v", table, err)
+	}
+	return exists
+}
+
+func TestDownRemovesLedgerTables(t *testing.T) {
+	ctx := context.Background()
+	if err := Up(ctx, testDSN); err != nil {
+		t.Fatalf("Up() error = %v, want nil", err)
+	}
+
+	if err := Down(ctx, testDSN); err != nil {
+		t.Fatalf("Down() error = %v, want nil", err)
+	}
+
+	for table := range wantColumns {
+		if tableExists(t, ctx, testDSN, table) {
+			t.Errorf("table %s: still present after Down()", table)
+		}
+	}
+
+	// Down must leave a re-migratable database, not a wedged one.
+	if err := Up(ctx, testDSN); err != nil {
+		t.Fatalf("Up() after Down() error = %v, want nil", err)
+	}
+	for table := range wantColumns {
+		if !tableExists(t, ctx, testDSN, table) {
+			t.Errorf("table %s: missing after re-Up()", table)
 		}
 	}
 }
