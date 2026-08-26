@@ -76,6 +76,37 @@ func NewClient(conn Conn, ident Identity, cfg ClientConfig) *Client {
 	}
 }
 
+// MessageHandler is the seam Phase 4b fills. A nil handler is legal
+// and makes every inbound message an unknown-type error reply.
+type MessageHandler func(c *Client, e Envelope)
+
+// ReadPump loops on c.conn.ReadMessage, decoding and dispatching each
+// message to handle. It returns on any read error.
+func (c *Client) ReadPump(handle MessageHandler, onClose func()) {
+	for {
+		_, raw, err := c.conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		env, err := Decode(raw)
+		if err != nil {
+			continue
+		}
+		if handle != nil {
+			handle(c, env)
+		}
+	}
+}
+
+// Send queues payload on c.send, non-blocking — a client too backed
+// up to receive is already being evicted by the room.
+func (c *Client) Send(payload []byte) {
+	select {
+	case c.send <- payload:
+	default:
+	}
+}
+
 // WritePump drains c.send, writing each payload as a text message, and
 // sends a heartbeat ping on cfg.PingInterval. It returns — closing the
 // connection — when send is closed or a write fails.

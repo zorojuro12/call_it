@@ -1,7 +1,9 @@
 package ws
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -267,6 +269,66 @@ func TestWritePumpWriteError(t *testing.T) {
 	if got := len(stub.WriteMessages()); got != 1 {
 		t.Fatalf("got %d WriteMessage calls, want 1", got)
 	}
+}
+
+func TestReadPumpDispatch(t *testing.T) {
+	// Arrange
+	stub := newStubConn()
+	msg := []byte(`{"type":"place_wager","data":{"amount":50}}`)
+	delivered := false
+	blockCh := make(chan struct{})
+	stub.readMessageFunc = func() (int, []byte, error) {
+		if !delivered {
+			delivered = true
+			return websocket.TextMessage, msg, nil
+		}
+		<-blockCh
+		return 0, nil, io.EOF
+	}
+	cfg := DefaultClientConfig()
+	c := NewClient(stub, Identity{UserID: "u1"}, cfg)
+
+	type call struct {
+		c   *Client
+		env Envelope
+	}
+	calls := make(chan call, 4)
+	handler := func(client *Client, env Envelope) {
+		calls <- call{c: client, env: env}
+	}
+
+	// Act
+	go c.ReadPump(handler, nil)
+
+	// Assert
+	select {
+	case got := <-calls:
+		if got.c != c {
+			t.Errorf("handler called with client %p, want %p", got.c, c)
+		}
+		if got.env.Type != "place_wager" {
+			t.Errorf("Envelope.Type = %q, want %q", got.env.Type, "place_wager")
+		}
+		var data map[string]any
+		if err := json.Unmarshal(got.env.Data, &data); err != nil {
+			t.Fatalf("failed to unmarshal Data: %v", err)
+		}
+		want := map[string]any{"amount": float64(50)}
+		if len(data) != len(want) || data["amount"] != want["amount"] {
+			t.Errorf("Data = %+v, want %+v", data, want)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("handler was not called")
+	}
+
+	// Assert: exactly one call
+	select {
+	case extra := <-calls:
+		t.Fatalf("handler called a second time with %+v", extra)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(blockCh)
 }
 
 // waitFor polls cond until it's true or a timeout elapses, failing the
