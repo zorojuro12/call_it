@@ -120,6 +120,29 @@ func TestTopUpBalance(t *testing.T) {
 	}
 }
 
+func TestSetBalance(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	id := testID(t, "user")
+	mustCreateUser(t, store, id, 1000)
+
+	if err := store.SetBalance(ctx, id, 400); err != nil {
+		t.Fatalf("SetBalance(1000->400) = %v, want nil", err)
+	}
+	got, err := store.User(ctx, id)
+	if err != nil {
+		t.Fatalf("User() = %v, want nil", err)
+	}
+	if got.Balance != 400 {
+		t.Errorf("User().Balance = %d, want 400 (SetBalance must allow a decrease)", got.Balance)
+	}
+
+	if err := store.SetBalance(ctx, "no-such-user", 500); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetBalance(no-such-user) err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestTopUpBalance_AtOrAboveTarget(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

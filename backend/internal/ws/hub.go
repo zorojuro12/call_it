@@ -21,6 +21,16 @@ type hubShutdownCmd struct {
 	reply chan struct{}
 }
 
+type hubBroadcastCmd struct {
+	roomID  string
+	payload []byte
+}
+
+type hubNamesCmd struct {
+	roomID string
+	reply  chan map[string]string
+}
+
 // NewHub starts the hub's owner goroutine and returns immediately.
 func NewHub() *Hub {
 	h := &Hub{
@@ -54,6 +64,21 @@ func (h *Hub) run() {
 				}
 				rooms = make(map[string]*Room)
 				c.reply <- struct{}{}
+			case hubBroadcastCmd:
+				// A missing room is a silent no-op — a round settling
+				// just as its last player left is normal, not an
+				// error.
+				if room, ok := rooms[c.roomID]; ok {
+					room.Broadcast(c.payload)
+				}
+			case hubNamesCmd:
+				names := map[string]string{}
+				if room, ok := rooms[c.roomID]; ok {
+					for _, m := range room.Members() {
+						names[m.UserID] = m.DisplayName
+					}
+				}
+				c.reply <- names
 			}
 		case roomID := <-h.empty:
 			if room, ok := rooms[roomID]; ok && room.close() {
@@ -91,5 +116,20 @@ func (h *Hub) Shutdown() {
 func (h *Hub) RoomCount() int {
 	reply := make(chan int)
 	h.cmds <- hubRoomCountCmd{reply: reply}
+	return <-reply
+}
+
+// Broadcast sends payload to every client in roomID. Hub satisfies
+// round.Broadcaster via this method (and Names below).
+func (h *Hub) Broadcast(roomID string, payload []byte) {
+	h.cmds <- hubBroadcastCmd{roomID: roomID, payload: payload}
+}
+
+// Names resolves roomID's connected clients' display names by user ID.
+// A room with no members, or no room at all, returns an empty non-nil
+// map.
+func (h *Hub) Names(roomID string) map[string]string {
+	reply := make(chan map[string]string)
+	h.cmds <- hubNamesCmd{roomID: roomID, reply: reply}
 	return <-reply
 }

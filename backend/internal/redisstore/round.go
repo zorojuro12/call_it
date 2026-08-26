@@ -2,6 +2,8 @@ package redisstore
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -19,6 +21,8 @@ var lockRoundScript = redis.NewScript(lua.LockRound)
 type Round struct {
 	ID              string
 	RoomID          string
+	Question        string
+	Outcomes        []string
 	Status          domain.RoundStatus
 	LockAtMS        int64
 	OutcomeCount    int
@@ -26,27 +30,39 @@ type Round struct {
 }
 
 // CreateRound validates the outcome count, then writes the round hash
-// and pre-zeroes every pool field plus the total in one transaction, so
-// Pools never has to distinguish "no pool" from "zero pool".
-func (s *Store) CreateRound(ctx context.Context, roundID, roomID string, outcomeCount int, lockAt time.Time) error {
-	if err := domain.ValidateOutcomeCount(outcomeCount); err != nil {
+// (including its question and outcome labels — Amendment D4, so a
+// player who connects mid-round can still render what they are betting
+// on) and pre-zeroes every pool field plus the total in one
+// transaction, so Pools never has to distinguish "no pool" from "zero
+// pool".
+func (s *Store) CreateRound(ctx context.Context, roundID, roomID, question string, outcomes []string, lockAt time.Time) error {
+	if err := domain.ValidateOutcomeCount(len(outcomes)); err != nil {
 		return err
 	}
 
-	_, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	outcomesJSON, err := json.Marshal(outcomes)
+	if err != nil {
+		return fmt.Errorf("redisstore: create round %s: marshal outcomes: %w", roundID, err)
+	}
+
+	_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.HSet(ctx, RoundKey(roundID),
 			"room_id", roomID,
+			"question", question,
+			"outcomes", outcomesJSON,
 			"status", string(domain.RoundOpen),
-			"outcome_count", strconv.Itoa(outcomeCount),
+			"outcome_count", strconv.Itoa(len(outcomes)),
 			"lock_at_ms", strconv.FormatInt(lockAt.UnixMilli(), 10),
 		)
 
-		poolFields := make([]interface{}, 0, (outcomeCount+1)*2)
-		for i := 0; i < outcomeCount; i++ {
+		poolFields := make([]interface{}, 0, (len(outcomes)+1)*2)
+		for i := range outcomes {
 			poolFields = append(poolFields, strconv.Itoa(i), "0")
 		}
 		poolFields = append(poolFields, PoolTotalField, "0")
 		pipe.HSet(ctx, RoundPoolsKey(roundID), poolFields...)
+
+		pipe.Set(ctx, RoomRoundKey(roomID), roundID, 0)
 
 		return nil
 	})
@@ -54,6 +70,30 @@ func (s *Store) CreateRound(ctx context.Context, roundID, roomID string, outcome
 		return fmt.Errorf("redisstore: create round %s: %w", roundID, err)
 	}
 
+	return nil
+}
+
+// CurrentRound returns the room's current (non-terminal) round ID, or
+// ErrNotFound when the room has none.
+func (s *Store) CurrentRound(ctx context.Context, roomID string) (string, error) {
+	roundID, err := s.client.Get(ctx, RoomRoundKey(roomID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", fmt.Errorf("redisstore: current round for room %s: %w", roomID, ErrNotFound)
+	}
+	if err != nil {
+		return "", fmt.Errorf("redisstore: current round for room %s: %w", roomID, err)
+	}
+	return roundID, nil
+}
+
+// ClearCurrentRound deletes the room's current-round index. It is
+// idempotent — clearing an already-cleared room is not an error, since
+// the resolve path and the refund timer can both reach it for the same
+// round.
+func (s *Store) ClearCurrentRound(ctx context.Context, roomID string) error {
+	if err := s.client.Del(ctx, RoomRoundKey(roomID)).Err(); err != nil {
+		return fmt.Errorf("redisstore: clear current round for room %s: %w", roomID, err)
+	}
 	return nil
 }
 
@@ -87,9 +127,16 @@ func (s *Store) Round(ctx context.Context, roundID string) (Round, error) {
 		}
 	}
 
+	var outcomes []string
+	if err := json.Unmarshal([]byte(fields["outcomes"]), &outcomes); err != nil {
+		return Round{}, fmt.Errorf("redisstore: round %s: malformed outcomes %q: %w", roundID, fields["outcomes"], err)
+	}
+
 	return Round{
 		ID:              roundID,
 		RoomID:          fields["room_id"],
+		Question:        fields["question"],
+		Outcomes:        outcomes,
 		Status:          domain.RoundStatus(fields["status"]),
 		LockAtMS:        lockAtMS,
 		OutcomeCount:    outcomeCount,

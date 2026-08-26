@@ -54,6 +54,16 @@ func testID(t *testing.T, kind string) string {
 	return fmt.Sprintf("%s-%s-%d", kind, t.Name(), n)
 }
 
+// testOutcomes returns n placeholder outcome labels for CreateRound
+// calls that only care about the count, not the labels' content.
+func testOutcomes(n int) []string {
+	outcomes := make([]string, n)
+	for i := range outcomes {
+		outcomes[i] = fmt.Sprintf("outcome-%d", i)
+	}
+	return outcomes
+}
+
 // newTestStore returns a Store bound to the test database with a
 // per-test outbox stream name, so concurrent tests never read each
 // other's events. It is closed automatically via t.Cleanup.

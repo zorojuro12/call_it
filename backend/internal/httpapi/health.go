@@ -10,6 +10,8 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/auth"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 	"github.com/zorojuro12/call_it/backend/internal/room"
+	"github.com/zorojuro12/call_it/backend/internal/round"
+	"github.com/zorojuro12/call_it/backend/internal/wager"
 	"github.com/zorojuro12/call_it/backend/internal/ws"
 )
 
@@ -30,6 +32,8 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 type Deps struct {
 	Accounts *account.Service
 	Rooms    *room.Service
+	Rounds   *round.Service
+	Wagers   *wager.Service
 	Store    *redisstore.Store
 	Issuer   *auth.Issuer
 	Hub      *ws.Hub

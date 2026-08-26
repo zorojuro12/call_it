@@ -18,6 +18,8 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/httpapi"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 	"github.com/zorojuro12/call_it/backend/internal/room"
+	"github.com/zorojuro12/call_it/backend/internal/round"
+	"github.com/zorojuro12/call_it/backend/internal/wager"
 	"github.com/zorojuro12/call_it/backend/internal/ws"
 )
 
@@ -58,19 +60,32 @@ func run() error {
 	rooms := room.NewService(store, issuer)
 	hub := ws.NewHub()
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// roundsCtx is the base context every round's server-side timer
+	// runs against — not the shutdown-signal ctx above, so a round's
+	// clock isn't cancelled by the same signal that starts graceful
+	// shutdown; roundsCancel below stops every in-flight timer
+	// explicitly, after the server has stopped accepting new work but
+	// before the hub disconnects every client.
+	roundsCtx, roundsCancel := context.WithCancel(context.Background())
+	defer roundsCancel()
+	rounds := round.NewService(roundsCtx, store, hub)
+	wagers := wager.NewService(store, hub)
+
 	server := &http.Server{
 		Addr: fmt.Sprintf(":%d", cfg.Port),
 		Handler: httpapi.NewMux(httpapi.Deps{
 			Accounts: accounts,
 			Rooms:    rooms,
+			Rounds:   rounds,
+			Wagers:   wagers,
 			Store:    store,
 			Issuer:   issuer,
 			Hub:      hub,
 		}),
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	serverErr := make(chan error, 1)
 	go func() {
@@ -95,6 +110,7 @@ func run() error {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
+	roundsCancel()
 	hub.Shutdown()
 
 	logger.Info("server stopped cleanly")

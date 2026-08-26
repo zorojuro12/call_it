@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +11,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/zorojuro12/call_it/backend/internal/auth"
+	"github.com/zorojuro12/call_it/backend/internal/round"
+	"github.com/zorojuro12/call_it/backend/internal/wager"
 	"github.com/zorojuro12/call_it/backend/internal/ws"
 )
 
@@ -61,6 +65,70 @@ func TestWSRoute(t *testing.T) {
 			status = resp2.StatusCode
 		}
 		t.Fatalf("status = %d, want 401", status)
+	}
+}
+
+// TestSocketRoutesToServices proves Phase 4a's nil MessageHandler seam
+// has been replaced by the real router: a place_wager message now
+// reaches wager.Service.Place (which reports no_active_round, since no
+// round exists) instead of falling through to unknown_type.
+func TestSocketRoutesToServices(t *testing.T) {
+	// Arrange
+	deps := testDeps(t)
+	deps.Rounds = round.NewService(context.Background(), deps.Store, deps.Hub)
+	deps.Wagers = wager.NewService(deps.Store, deps.Hub)
+	mux := NewMux(deps)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	token, err := deps.Issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+
+	wsURL := strings.Replace(server.URL, "http://", "ws://", 1) + "/api/v1/socket?token=" + token
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	defer conn.Close()
+
+	// Act
+	payload, err := ws.Encode("place_wager", map[string]any{
+		"outcome": 0, "amount": 50, "idempotency_key": "11111111-1111-4111-8111-111111111111",
+	})
+	if err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		t.Fatalf("WriteMessage error: %v", err)
+	}
+
+	// Read until the error reply, skipping "connected" and
+	// "player_joined" (this client's own join broadcasts to itself
+	// too).
+	var env ws.Envelope
+	for {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("ReadMessage error: %v", err)
+		}
+		env, err = ws.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode error: %v", err)
+		}
+		if env.Type == ws.TypeError {
+			break
+		}
+	}
+
+	// Assert
+	var ev ws.ErrorEvent
+	if err := json.Unmarshal(env.Data, &ev); err != nil {
+		t.Fatalf("decode ErrorEvent: %v", err)
+	}
+	if ev.Code != "no_active_round" {
+		t.Errorf("Code = %q, want %q (not unknown_type)", ev.Code, "no_active_round")
 	}
 }
 
