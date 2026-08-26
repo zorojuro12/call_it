@@ -40,3 +40,23 @@ func (f *fakeProducer) lastBatch() []events.Event {
 	}
 	return f.calls[len(f.calls)-1]
 }
+
+// flatEvents concatenates every call's batch in call order, so a test
+// can assert cross-batch ordering.
+func (f *fakeProducer) flatEvents() []events.Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var all []events.Event
+	for _, batch := range f.calls {
+		all = append(all, batch...)
+	}
+	return all
+}
+
+// producerFunc adapts a plain function to Producer, letting a test hook
+// side effects (like cancelling a context) onto a successful produce.
+type producerFunc func(ctx context.Context, evs []events.Event) error
+
+func (f producerFunc) Produce(ctx context.Context, evs []events.Event) error {
+	return f(ctx, evs)
+}

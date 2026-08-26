@@ -119,3 +119,42 @@ func (r *Relay) readDecodeProduceAck(ctx context.Context, id string, count int64
 
 	return len(evs), nil
 }
+
+// blockInterval bounds each Run iteration's XREADGROUP block duration.
+// Kept at or under a second so a SIGTERM is not held past a deploy's
+// patience waiting for a blocking read to time out.
+const blockInterval = time.Second
+
+// Run drains every pending entry via Recover, then loops on Once until
+// ctx is cancelled. Draining first, before reading any new entry, keeps
+// ordering intact: rounds-settled must never reach Kafka ahead of the
+// wagers-placed entries it settles, and reading new work before the
+// backlog would invert exactly that. Returns nil on context
+// cancellation — a clean shutdown, not an error.
+func (r *Relay) Run(ctx context.Context) error {
+	if err := r.EnsureGroup(ctx); err != nil {
+		return err
+	}
+
+	for {
+		n, err := r.Recover(ctx, 100)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			break
+		}
+	}
+
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if _, err := r.Once(ctx, 100, blockInterval); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+	}
+}

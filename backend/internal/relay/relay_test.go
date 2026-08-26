@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -208,5 +209,74 @@ func TestOnceHaltsOnUndecodableEntry(t *testing.T) {
 	}
 	if pending.Count != 2 {
 		t.Errorf("XPENDING count = %d, want 2 (nothing acked on decode failure)", pending.Count)
+	}
+}
+
+func TestRunRecoversBeforeNewWork(t *testing.T) {
+	ctx := context.Background()
+	stream, group := testStreamAndGroup(t)
+
+	setup := New(testClient, stream, group, "consumer-1", nil)
+	if err := setup.EnsureGroup(ctx); err != nil {
+		t.Fatalf("EnsureGroup() = %v, want nil", err)
+	}
+
+	// Leave one entry pending: read it with a failing producer so it is
+	// never acked.
+	xaddWagerPlaced(t, ctx, stream) // the older, recovered entry
+	setup.producer = &fakeProducer{err: errors.New("broker down")}
+	if _, err := setup.Once(ctx, 10, time.Second); err == nil {
+		t.Fatalf("Once() with failing producer = nil error, want an error")
+	}
+
+	// A second, newer entry arrives after the first is already pending.
+	xaddRoundSettled(t, ctx, stream)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	var recorded []events.Event
+	var mu sync.Mutex
+	recording := producerFunc(func(_ context.Context, evs []events.Event) error {
+		mu.Lock()
+		recorded = append(recorded, evs...)
+		n := len(recorded)
+		mu.Unlock()
+		if n >= 2 {
+			cancel()
+		}
+		return nil
+	})
+
+	r := New(testClient, stream, group, "consumer-1", recording)
+
+	done := make(chan error, 1)
+	go func() { done <- r.Run(runCtx) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run() error = %v, want nil (context cancellation is a clean shutdown)", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not return within 5s of the context being cancelled")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(recorded) < 2 {
+		t.Fatalf("recorded %d events, want at least 2", len(recorded))
+	}
+	first, ok := recorded[0].(events.WagerPlaced)
+	if !ok {
+		t.Fatalf("first recorded event = %T, want events.WagerPlaced (the recovered pending entry)", recorded[0])
+	}
+	if first.IdempotencyKey != "idem-w1" {
+		t.Errorf("first recorded event idempotency key = %q, want %q", first.IdempotencyKey, "idem-w1")
+	}
+	second, ok := recorded[1].(events.RoundSettled)
+	if !ok {
+		t.Fatalf("second recorded event = %T, want events.RoundSettled (the new entry, read only after recovery)", recorded[1])
+	}
+	if second.IdempotencyKey != "idem-s1" {
+		t.Errorf("second recorded event idempotency key = %q, want %q", second.IdempotencyKey, "idem-s1")
 	}
 }
