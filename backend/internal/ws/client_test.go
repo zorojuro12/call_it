@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -444,6 +445,60 @@ func TestReadPumpPong(t *testing.T) {
 	}
 
 	close(blockCh)
+}
+
+func TestReadPumpOnClose(t *testing.T) {
+	// Arrange
+	stub := newStubConn()
+	stub.readMessageFunc = func() (int, []byte, error) {
+		return 0, nil, io.ErrUnexpectedEOF
+	}
+	cfg := DefaultClientConfig()
+	c := NewClient(stub, Identity{UserID: "u1"}, cfg)
+	var calls int32
+	onClose := func() { atomic.AddInt32(&calls, 1) }
+	done := make(chan struct{})
+
+	// Act
+	go func() {
+		c.ReadPump(nil, onClose)
+		close(done)
+	}()
+
+	// Assert
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("ReadPump did not return")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("onClose called %d times, want 1", got)
+	}
+	if got := stub.Closed(); got != 1 {
+		t.Fatalf("Close() called %d times, want 1", got)
+	}
+}
+
+func TestReadPumpOnCloseNilIsLegal(t *testing.T) {
+	// Arrange
+	stub := newStubConn()
+	stub.readMessageFunc = func() (int, []byte, error) {
+		return 0, nil, io.ErrUnexpectedEOF
+	}
+	cfg := DefaultClientConfig()
+	c := NewClient(stub, Identity{UserID: "u1"}, cfg)
+	done := make(chan struct{})
+
+	// Act & Assert: must not panic
+	go func() {
+		c.ReadPump(nil, nil)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("ReadPump did not return")
+	}
 }
 
 func readWithTimeout(t *testing.T, ch chan []byte) []byte {
