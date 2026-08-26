@@ -68,7 +68,7 @@ func setupWagerRoom(t *testing.T, store *Store, hostID string, buyIn domain.Toke
 	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), hostID, buyIn); err != nil {
 		t.Fatalf("CreateRoom() = %v, want nil", err)
 	}
-	if err := store.CreateRound(ctx, roundID, roomID, outcomeCount, lockAt); err != nil {
+	if err := store.CreateRound(ctx, roundID, roomID, "Question?", testOutcomes(outcomeCount), lockAt); err != nil {
 		t.Fatalf("CreateRound() = %v, want nil", err)
 	}
 	for userID, balance := range players {

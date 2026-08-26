@@ -3,6 +3,7 @@ package redisstore
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -16,8 +17,10 @@ func TestCreateRound(t *testing.T) {
 	roundID := testID(t, "round")
 	roomID := testID(t, "room")
 	lockAt := time.Now().Add(30 * time.Second)
+	question := "Will he clutch the 1v2?"
+	outcomes := []string{"Yes", "No", "Trade"}
 
-	if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
+	if err := store.CreateRound(ctx, roundID, roomID, question, outcomes, lockAt); err != nil {
 		t.Fatalf("CreateRound() = %v, want nil", err)
 	}
 
@@ -56,6 +59,12 @@ func TestCreateRound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Round() = %v, want nil", err)
 	}
+	if round.Question != question {
+		t.Errorf("Round().Question = %q, want %q", round.Question, question)
+	}
+	if !reflect.DeepEqual(round.Outcomes, outcomes) {
+		t.Errorf("Round().Outcomes = %v, want %v", round.Outcomes, outcomes)
+	}
 	if round.Status != domain.RoundOpen {
 		t.Errorf("Round().Status = %q, want %q", round.Status, domain.RoundOpen)
 	}
@@ -85,7 +94,7 @@ func TestCreateRound(t *testing.T) {
 
 	for _, n := range []int{1, 5} {
 		badRoundID := testID(t, "round")
-		err := store.CreateRound(ctx, badRoundID, roomID, n, lockAt)
+		err := store.CreateRound(ctx, badRoundID, roomID, "Question?", testOutcomes(n), lockAt)
 		if !errors.Is(err, domain.ErrInvalidOutcomeCount) {
 			t.Errorf("CreateRound() with outcomeCount %d error = %v, want ErrInvalidOutcomeCount", n, err)
 		}
@@ -176,7 +185,7 @@ func TestLockRound(t *testing.T) {
 	roomID := testID(t, "room")
 	lockAt := time.Now().Add(30 * time.Second)
 
-	if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
+	if err := store.CreateRound(ctx, roundID, roomID, "Question?", testOutcomes(3), lockAt); err != nil {
 		t.Fatalf("CreateRound() = %v, want nil", err)
 	}
 
@@ -221,7 +230,7 @@ func TestLockRound_AlreadyLocked(t *testing.T) {
 	roomID := testID(t, "room")
 	lockAt := time.Now().Add(30 * time.Second)
 
-	if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
+	if err := store.CreateRound(ctx, roundID, roomID, "Question?", testOutcomes(3), lockAt); err != nil {
 		t.Fatalf("CreateRound() = %v, want nil", err)
 	}
 	if err := store.LockRound(ctx, roundID); err != nil {
@@ -251,7 +260,7 @@ func TestLockRound_Terminal(t *testing.T) {
 			roomID := testID(t, "room")
 			lockAt := time.Now().Add(30 * time.Second)
 
-			if err := store.CreateRound(ctx, roundID, roomID, 3, lockAt); err != nil {
+			if err := store.CreateRound(ctx, roundID, roomID, "Question?", testOutcomes(3), lockAt); err != nil {
 				t.Fatalf("CreateRound() = %v, want nil", err)
 			}
 			if err := store.client.HSet(ctx, RoundKey(roundID), "status", terminalStatus).Err(); err != nil {
