@@ -3,6 +3,7 @@ package round
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -84,5 +85,56 @@ func TestTimerLocks(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no round_locked broadcast found for round %s in %+v", roundID, bc.Calls())
+	}
+}
+
+// TestLockedRejectsWagers proves the timer (CP1) and place_wager.lua's
+// own TIME check agree in practice — the lockout guarantee is spec §4's
+// client-latency defence and is worth one integration test rather than
+// trusting two mechanisms to line up. This test's meaningful pass
+// depends on CP1's implementation existing: if it failed, the defect
+// would be in the timer or the round's lock_at_ms, not here.
+func TestLockedRejectsWagers(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+
+	roomID, roundID, _ := openAndWatch(t, store, svc, "host1", 1000, 100*time.Millisecond)
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
+		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+
+	if _, err := store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 0, Amount: 50, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager() before lock = %v, want nil", err)
+	}
+
+	pollUntil(t, 2*time.Second, func() bool {
+		rd, err := store.Round(ctx, roundID)
+		return err == nil && rd.Status == domain.RoundLocked
+	})
+
+	balanceBefore, err := store.Balance(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("Balance() = %v, want nil", err)
+	}
+
+	_, err = store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 1, Amount: 50, IdempotencyKey: testID(t, "idem"),
+	})
+	if !errors.Is(err, redisstore.ErrPoolLocked) {
+		t.Fatalf("PlaceWager() after lock error = %v, want ErrPoolLocked", err)
+	}
+
+	balanceAfter, err := store.Balance(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("Balance() = %v, want nil", err)
+	}
+	if balanceAfter != balanceBefore {
+		t.Errorf("Balance() after rejected wager = %d, want unchanged %d", balanceAfter, balanceBefore)
 	}
 }
