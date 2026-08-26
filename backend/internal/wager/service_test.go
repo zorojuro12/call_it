@@ -162,3 +162,54 @@ func TestPlaceRejects(t *testing.T) {
 		})
 	}
 }
+
+func TestPlaceIdempotent(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID, _ := setupOpenRound(t, store, "host1", 1000, 2, map[string]domain.Tokens{"u1": 1000})
+
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc)
+
+	key := uuid.NewString()
+	first, err := svc.Place(ctx, Request{RoomID: roomID, UserID: "u1", Outcome: 0, Amount: 200, IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("Place() first = %v, want nil", err)
+	}
+	if first.Balance != 800 {
+		t.Fatalf("Place() first Balance = %d, want 800", first.Balance)
+	}
+
+	replay, err := svc.Place(ctx, Request{RoomID: roomID, UserID: "u1", Outcome: 0, Amount: 200, IdempotencyKey: key})
+	if err != nil {
+		t.Fatalf("Place() replay = %v, want nil", err)
+	}
+	if replay.Balance != 800 {
+		t.Errorf("Place() replay Balance = %d, want 800 (unchanged)", replay.Balance)
+	}
+	if replay.Total != 200 {
+		t.Errorf("Place() replay Total = %d, want 200 (unchanged)", replay.Total)
+	}
+	if replay.Bettors != 1 {
+		t.Errorf("Place() replay Bettors = %d, want 1 (unchanged)", replay.Bettors)
+	}
+
+	second, err := svc.Place(ctx, Request{RoomID: roomID, UserID: "u1", Outcome: 0, Amount: 200, IdempotencyKey: uuid.NewString()})
+	if err != nil {
+		t.Fatalf("Place() second (distinct key) = %v, want nil", err)
+	}
+	if second.Balance != 600 {
+		t.Errorf("Place() second Balance = %d, want 600", second.Balance)
+	}
+	if second.Total != 400 {
+		t.Errorf("Place() second Total = %d, want 400", second.Total)
+	}
+	if second.Bettors != 1 {
+		t.Errorf("Place() second Bettors = %d, want 1 (a repeat wagerer never moves the count)", second.Bettors)
+	}
+
+	_, err = svc.Place(ctx, Request{RoomID: roomID, UserID: "u1", Outcome: 0, Amount: 200, IdempotencyKey: "abc"})
+	if !errors.Is(err, ErrBadIdempotency) {
+		t.Fatalf("Place() with a non-UUIDv4 key error = %v, want ErrBadIdempotency", err)
+	}
+}

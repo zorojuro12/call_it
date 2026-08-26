@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 	"github.com/zorojuro12/call_it/backend/internal/round"
@@ -48,6 +49,11 @@ func NewService(store *redisstore.Store, b round.Broadcaster) *Service {
 // state. No Go-side balance or lockout check — place_wager.lua is the
 // authority on both.
 func (s *Service) Place(ctx context.Context, req Request) (Accepted, error) {
+	parsed, err := uuid.Parse(req.IdempotencyKey)
+	if err != nil || parsed.Version() != 4 {
+		return Accepted{}, ErrBadIdempotency
+	}
+
 	roundID := req.RoundID
 	if roundID == "" {
 		var err error
