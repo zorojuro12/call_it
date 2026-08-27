@@ -73,3 +73,70 @@ func TestMigration0002(t *testing.T) {
 		t.Fatalf("expected unique violation (23505), got: %v (type %T)", err, err)
 	}
 }
+
+// TestWriteBatch verifies that WriteBatch persists a transaction and its entries.
+func TestWriteBatch(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := New(pool)
+
+	// Build a wager transaction.
+	roomID := uuid.NewString()
+	roundID := uuid.NewString()
+	userID := uuid.NewString()
+	wager := Transaction{
+		IdempotencyKey: uuid.NewString(),
+		Kind:           "wager",
+		RoomID:         roomID,
+		RoundID:        roundID,
+		Entries: []Entry{
+			{
+				Account:   AccountRef{Kind: KindUserWallet, UserID: userID},
+				Direction: Debit,
+				Amount:    50,
+			},
+			{
+				Account:   AccountRef{Kind: KindRoundPool, RoomID: roomID},
+				Direction: Credit,
+				Amount:    50,
+			},
+		},
+	}
+
+	// Write the transaction.
+	written, err := repo.WriteBatch(ctx, []Transaction{wager})
+	if err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+
+	if written != 1 {
+		t.Errorf("expected written=1, got %d", written)
+	}
+
+	// Check transaction count.
+	txnCount, err := repo.TransactionCount(ctx, roomID)
+	if err != nil {
+		t.Fatalf("TransactionCount failed: %v", err)
+	}
+	if txnCount != 1 {
+		t.Errorf("expected 1 transaction, got %d", txnCount)
+	}
+
+	// Check wallet balance (D1 sign convention: debit is negative).
+	walletBalances, err := repo.WalletBalancesForRoom(ctx, roomID)
+	if err != nil {
+		t.Fatalf("WalletBalancesForRoom failed: %v", err)
+	}
+	if balance, ok := walletBalances[userID]; !ok || balance != -50 {
+		t.Errorf("expected wallet balance -50 for user, got %v (presence: %v)", balance, ok)
+	}
+
+	// Check pool balance.
+	poolBalance, err := repo.PoolBalance(ctx, roomID)
+	if err != nil {
+		t.Fatalf("PoolBalance failed: %v", err)
+	}
+	if poolBalance != 50 {
+		t.Errorf("expected pool balance 50, got %d", poolBalance)
+	}
+}
