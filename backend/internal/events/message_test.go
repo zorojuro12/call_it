@@ -157,3 +157,22 @@ func TestDecodeMessageUnknownTopic(t *testing.T) {
 		t.Errorf("DecodeMessage error message %q does not contain topic %q", err.Error(), topic)
 	}
 }
+
+func TestDecodeMessageRejectsUnknownField(t *testing.T) {
+	// Checkpoint 4: unknown JSON fields are rejected, not ignored
+	// This is the drift guard for a money wire format. A producer that renamed
+	// `amount` to `stake` would otherwise decode to `Amount: 0` and write a
+	// zero-token ledger entry rather than failing loudly.
+	payload := []byte(`{"room_id":"r1","round_id":"rd1","user_id":"u1","idempotency_key":"k1","outcome":1,"amount":50,"balance":950,"surprise":7}`)
+	ev, err := DecodeMessage(TopicWagersPlaced, payload)
+	if ev != nil {
+		t.Errorf("DecodeMessage returned non-nil event for unknown field: %#v", ev)
+	}
+	if err == nil {
+		t.Errorf("DecodeMessage returned nil error for unknown field")
+		return
+	}
+	if !strings.Contains(err.Error(), "surprise") {
+		t.Errorf("DecodeMessage error message %q does not contain unknown field name %q", err.Error(), "surprise")
+	}
+}
