@@ -15,9 +15,9 @@ import (
 )
 
 type fakConsumer struct {
-	msgs      []kafka.Message
-	idx       int
-	committed [][]kafka.Message
+	msgs          []kafka.Message
+	idx           int
+	committed     [][]kafka.Message
 	writeOccurred bool // flag set by writer before consumer commits
 }
 
@@ -48,9 +48,9 @@ func (f *fakConsumer) Commit(ctx context.Context, msgs ...kafka.Message) error {
 }
 
 type fakeWriter struct {
-	batches [][][]Entry // record each WriteBatch call and its transactions' entries
+	batches  [][][]Entry  // record each WriteBatch call and its transactions' entries
 	consumer *fakConsumer // reference to consumer to set write flag
-	err     error        // optional error to return
+	err      error        // optional error to return
 }
 
 func (f *fakeWriter) WriteBatch(ctx context.Context, txns []Transaction) (int, error) {
@@ -198,10 +198,10 @@ func TestWorkerOnceDoesNotCommitOnWriteFailure(t *testing.T) {
 
 func TestWorkerOnceHaltsOnUndecodable(t *testing.T) {
 	cases := []struct {
-		name     string
-		topic    string
-		value    []byte
-		wantErr  error
+		name    string
+		topic   string
+		value   []byte
+		wantErr error
 	}{
 		{
 			name:    "unknown topic",
@@ -210,9 +210,9 @@ func TestWorkerOnceHaltsOnUndecodable(t *testing.T) {
 			wantErr: events.ErrUnknownEventType,
 		},
 		{
-			name:  "invalid wager event",
-			topic: events.TopicWagersPlaced,
-			value: []byte(`{"room_id":"r","round_id":"rd","user_id":"u","idempotency_key":"k","outcome":0,"amount":0,"balance":10}`),
+			name:    "invalid wager event",
+			topic:   events.TopicWagersPlaced,
+			value:   []byte(`{"room_id":"r","round_id":"rd","user_id":"u","idempotency_key":"k","outcome":0,"amount":0,"balance":10}`),
 			wantErr: events.ErrInvalidEvent,
 		},
 	}
@@ -283,7 +283,7 @@ func TestWorkerRunLoopsUntilCancellation(t *testing.T) {
 		}()
 
 		// Wait for at least 2 batches
-		for batchCounter.count < 2 {
+		for batchCounter.Count() < 2 {
 			select {
 			case <-done:
 				t.Fatal("Run returned before we got 2 batches")
@@ -362,4 +362,8 @@ type countingWriter struct {
 func (cw *countingWriter) WriteBatch(ctx context.Context, txns []Transaction) (int, error) {
 	atomic.AddInt64(&cw.count, 1)
 	return len(txns), nil
+}
+
+func (cw *countingWriter) Count() int64 {
+	return atomic.LoadInt64(&cw.count)
 }
