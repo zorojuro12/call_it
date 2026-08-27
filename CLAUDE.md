@@ -19,14 +19,24 @@ Go 1.22.10 (backend) · Redis 7.2 (atomic Lua, rate limiting) · Kafka 3.7
 KRaft-mode (event backbone, Phase 5+) · PostgreSQL 16 (double-entry ledger,
 Phase 5+) · Next.js/React (frontend, Phase 6+) · Docker Compose (local dev).
 
-**Never run `go get -u`.** Two dependencies are pinned because newer versions
-declare a `go` directive above 1.22.10 and `go get` will silently rewrite this
-module's directive to accept them, breaking CI: `go-redis/v9` **v9.18.0**
-(v9.19.0+ needs `go 1.24`) and `golang.org/x/crypto` **v0.33.0** (v0.34.0 needs
-`go 1.23.0`). Raising either means moving the Go toolchain and CI's
-`go-version` pin first. `golang-jwt/jwt/v5`, `google/uuid`, and
-`gorilla/websocket` are safe. Before adding any dependency, check its `go`
-directive. Verification log: `docs/project-history.md`.
+**Never run `go get -u`.** Five dependencies are pinned because newer
+versions declare a `go` directive above 1.22.10 and `go get` will silently
+rewrite this module's directive to accept them, breaking CI: `go-redis/v9`
+**v9.18.0** (v9.19.0+ needs `go 1.24`), `golang.org/x/crypto` **v0.33.0**
+(v0.34.0 needs `go 1.23.0`), `jackc/pgx/v5` **v5.7.4** (v5.7.5 needs `go
+1.23.0`), `segmentio/kafka-go` **v0.4.48** (v0.4.49 needs `go 1.23`), and
+`golang-migrate/migrate/v4` **v4.18.2** (v4.18.3 needs `go 1.23.0`) — the
+last three landed in Phase 5a, the first phase where *every* new
+dependency hit this wall (Go 1.22 is past upstream EOL, so it's a real
+Phase 7 candidate now, not a theoretical one). Raising the toolchain means
+moving CI's `go-version` pin first. `golang-jwt/jwt/v5`, `google/uuid`,
+and `gorilla/websocket` are safe. **A version-less `go get` on a
+multi-package module can still upgrade the parent past its pin** — Phase
+5a hit this getting `golang-migrate/migrate/v4/database/postgres` and
+`.../source/iofs` without repeating `@v4.18.2` on each; always pin every
+`go get` target explicitly, subpackages included. Before adding any
+dependency, check its `go` directive. Verification log:
+`docs/project-history.md`.
 
 Monorepo: `backend/`, `frontend/` (not yet scaffolded — Phase 6), root
 `docker-compose.yml`.

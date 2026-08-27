@@ -141,6 +141,15 @@ multiple API instances, and makes R3's "no client-latency exploit"
 guarantee structural rather than merely intended. Redis 7 replicates
 scripts by effects, so calling `TIME` inside a script is safe.
 
+**`wager-outbox`'s consumer group.** Added Phase 5a: `cmd/relay` reads the
+stream through a single named consumer group, `redisstore.OutboxGroup`
+(`"relay"`), created via `XGROUPCREATE ... MKSTREAM` starting from stream
+id `0` rather than `$` — `$` would skip every entry already written by a
+running API process before the relay's first start, silently losing money
+movements. Not a Redis key by `keys.go`'s own rule (a consumer group name
+is metadata on the stream, not a separate key), but recorded here since it
+governs how the stream is read.
+
 ---
 
 ## 5. Lua script contracts
@@ -204,12 +213,43 @@ them, not the script:
   credits still balance exactly. Without this the double-entry invariant
   would fail on nearly every round.
 
+**Amendment E1 (Phase 5a) — the outbox event carries per-user payout
+detail.** This section originally specified "one outbox event" without
+fixing its payload; as built in Phase 2 it carried only
+`type, round_id, dust, winning_outcome, idempotency_key`. That's fatal to
+Phase 5b: a double-entry settlement transaction needs one credit line per
+winner, and the Redis wagers hash — the only other source for that
+detail — is exactly the state being settled and may be gone by the time a
+consumer processes the event. The event now also carries `room_id` (the
+Kafka partition key, §7) and `total`, plus a `payouts` field holding a
+JSON array of `{"user_id": string, "amount": int}`. Go authors this JSON
+from the same `settlement.Payouts` slice that drives the script's
+alternating-ARGV credit tail — the two cannot drift, since both come from
+one function call — and the script only ever echoes the JSON into the
+`XADD`, never parses or builds it. See
+`docs/plans/2026-08-26-phase-5a-outbox-kafka.md`'s Amendment E1 for the
+full reasoning.
+
 ### `refund_round.lua`
 
-The host-disconnect and 60-second-timeout path. Also idempotent. Unlike
-settlement there is nothing to compute — refunding is the identity function
-on stakes — so this script reads the wagers hash inside its own atomic unit
-rather than taking amounts from Go.
+The host-disconnect and 60-second-timeout path. Also idempotent.
+
+**Amendment E2 (Phase 5a) — amounts now come from Go, symmetric with
+settlement.** Originally this script read the wagers hash itself via
+`HGETALL` and derived amounts in Lua, since refunding is the identity
+function on stakes and there was nothing for Go to compute. E1's
+per-user payout requirement supersedes that: emitting the payout JSON
+would otherwise require building it inside a script, which E1 explicitly
+rejects. `Store.RefundRound` now reads and aggregates stakes in Go (one
+payout per user, summing stakes across outcomes) before calling the
+script, which becomes apply-only like `settle_round.lua` — crediting from
+ARGV, CASing status, and emitting the enriched event. This is safe from
+the same read-then-write race settlement already tolerates: `RefundRound`
+checks `round.Status == locked` **before** reading stakes, and
+`place_wager.lua` already rejects wagers on a locked round, so the hash
+cannot grow between the check and the read. See
+`docs/plans/2026-08-26-phase-5a-outbox-kafka.md`'s Amendment E2 for the
+full reasoning and the safety argument.
 
 ### Phase 3 additions (Amendment B6)
 
@@ -271,6 +311,17 @@ Keying by `room_id` yields per-room ordering with cross-room parallelism.
 Ordering matters concretely here: a settlement must never be processed
 before the wagers it settles. Kafka runs single-node in **KRaft mode** (no
 Zookeeper) to keep local resource use manageable.
+
+**Amendment E3 (Phase 5a) — topics are created explicitly, not
+auto-created.** `docker-compose.yml` sets
+`KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"`, which would create both topics
+above on first produce with the broker default of **one** partition —
+and partition count cannot be raised to 6 afterward without a
+repartition (which reshuffles keys and breaks the per-room ordering this
+table exists to buy). `cmd/relay` therefore calls
+`events.KafkaProducer.EnsureTopics` at startup, which idempotently
+creates both topics with `Partitions = 6` via `Conn.CreateTopics` before
+any message is produced.
 
 ---
 
