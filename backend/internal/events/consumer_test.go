@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -20,16 +21,23 @@ func TestKafkaConsumerReadsMultipleTopicsUnderOneGroup(t *testing.T) {
 		t.Fatalf("EnsureTopics() = %v, want nil", err)
 	}
 
-	// Produce one message to each topic with a unique room ID so we can find them easily
-	roomID := testTopic(t, "room")
+	// RoomID, RoundID, and every UserID must be real UUIDs, not
+	// testTopic()'s "kind-testname-n" strings: internal/ledger's worker
+	// consumes this same shared topic from FirstOffset and writes these
+	// fields into PostgreSQL uuid columns (Task 6 discovery — the local
+	// Kafka topic retains every run's messages, so a non-UUID value
+	// produced here breaks that consumer's insert with SQLSTATE 22P02).
+	roomID := uuid.NewString()
+	roundID := uuid.NewString()
+	userID := uuid.NewString()
 	wager := WagerPlaced{
-		RoomID: roomID, RoundID: "rd1", UserID: "u1",
+		RoomID: roomID, RoundID: roundID, UserID: userID,
 		IdempotencyKey: testTopic(t, "idem-w"), Outcome: 0, Amount: 100, Balance: 900,
 	}
 	settled := RoundSettled{
-		RoomID: roomID, RoundID: "rd1", IdempotencyKey: testTopic(t, "idem-s"),
+		RoomID: roomID, RoundID: roundID, IdempotencyKey: testTopic(t, "idem-s"),
 		WinningOutcome: 0, Total: 100, Dust: 0,
-		Payouts: []Payout{{UserID: "u1", Amount: 100}}, Refunded: false,
+		Payouts: []Payout{{UserID: userID, Amount: 100}}, Refunded: false,
 	}
 
 	if err := p.Produce(ctx, []Event{wager, settled}); err != nil {
