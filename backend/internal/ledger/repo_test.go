@@ -140,3 +140,137 @@ func TestWriteBatch(t *testing.T) {
 		t.Errorf("expected pool balance 50, got %d", poolBalance)
 	}
 }
+
+// TestWriteBatchProvisionsAccountsOnce verifies that accounts are provisioned
+// once per identity even across multiple transactions and multiple batches.
+func TestWriteBatchProvisionsAccountsOnce(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := New(pool)
+
+	roomID := uuid.NewString()
+	roundID := uuid.NewString()
+	userID := uuid.NewString()
+
+	// Write three wager transactions for the same room, round, and user
+	// in a single batch.
+	txns := []Transaction{
+		{
+			IdempotencyKey: uuid.NewString(),
+			Kind:           "wager",
+			RoomID:         roomID,
+			RoundID:        roundID,
+			Entries: []Entry{
+				{Account: AccountRef{Kind: KindUserWallet, UserID: userID}, Direction: Debit, Amount: 10},
+				{Account: AccountRef{Kind: KindRoundPool, RoomID: roomID}, Direction: Credit, Amount: 10},
+			},
+		},
+		{
+			IdempotencyKey: uuid.NewString(),
+			Kind:           "wager",
+			RoomID:         roomID,
+			RoundID:        roundID,
+			Entries: []Entry{
+				{Account: AccountRef{Kind: KindUserWallet, UserID: userID}, Direction: Debit, Amount: 10},
+				{Account: AccountRef{Kind: KindRoundPool, RoomID: roomID}, Direction: Credit, Amount: 10},
+			},
+		},
+		{
+			IdempotencyKey: uuid.NewString(),
+			Kind:           "wager",
+			RoomID:         roomID,
+			RoundID:        roundID,
+			Entries: []Entry{
+				{Account: AccountRef{Kind: KindUserWallet, UserID: userID}, Direction: Debit, Amount: 10},
+				{Account: AccountRef{Kind: KindRoundPool, RoomID: roomID}, Direction: Credit, Amount: 10},
+			},
+		},
+	}
+
+	written, err := repo.WriteBatch(ctx, txns)
+	if err != nil {
+		t.Fatalf("WriteBatch failed: %v", err)
+	}
+	if written != 3 {
+		t.Errorf("expected written=3, got %d", written)
+	}
+
+	// Check that only one user_wallet account exists.
+	var userWalletCount int
+	err = pool.QueryRow(ctx,
+		`SELECT count(*) FROM accounts WHERE kind = 'user_wallet' AND user_id = $1`,
+		userID).Scan(&userWalletCount)
+	if err != nil {
+		t.Fatalf("failed to count user_wallet accounts: %v", err)
+	}
+	if userWalletCount != 1 {
+		t.Errorf("expected 1 user_wallet account, got %d", userWalletCount)
+	}
+
+	// Check that only one round_pool account exists.
+	var roundPoolCount int
+	err = pool.QueryRow(ctx,
+		`SELECT count(*) FROM accounts WHERE kind = 'round_pool' AND room_id = $1`,
+		roomID).Scan(&roundPoolCount)
+	if err != nil {
+		t.Fatalf("failed to count round_pool accounts: %v", err)
+	}
+	if roundPoolCount != 1 {
+		t.Errorf("expected 1 round_pool account, got %d", roundPoolCount)
+	}
+
+	// Check wallet balance.
+	walletBalances, err := repo.WalletBalancesForRoom(ctx, roomID)
+	if err != nil {
+		t.Fatalf("WalletBalancesForRoom failed: %v", err)
+	}
+	if balance, ok := walletBalances[userID]; !ok || balance != -30 {
+		t.Errorf("expected wallet balance -30, got %v (presence: %v)", balance, ok)
+	}
+
+	// Repeat with three separate batches and verify the same account counts.
+	roomID2 := uuid.NewString()
+	roundID2 := uuid.NewString()
+	userID2 := uuid.NewString()
+
+	for i := 0; i < 3; i++ {
+		txn := Transaction{
+			IdempotencyKey: uuid.NewString(),
+			Kind:           "wager",
+			RoomID:         roomID2,
+			RoundID:        roundID2,
+			Entries: []Entry{
+				{Account: AccountRef{Kind: KindUserWallet, UserID: userID2}, Direction: Debit, Amount: 10},
+				{Account: AccountRef{Kind: KindRoundPool, RoomID: roomID2}, Direction: Credit, Amount: 10},
+			},
+		}
+		written, err := repo.WriteBatch(ctx, []Transaction{txn})
+		if err != nil {
+			t.Fatalf("WriteBatch %d failed: %v", i+1, err)
+		}
+		if written != 1 {
+			t.Errorf("batch %d: expected written=1, got %d", i+1, written)
+		}
+	}
+
+	// Verify account counts are still 1 each.
+	err = pool.QueryRow(ctx,
+		`SELECT count(*) FROM accounts WHERE kind = 'user_wallet' AND user_id = $1`,
+		userID2).Scan(&userWalletCount)
+	if err != nil {
+		t.Fatalf("failed to count user_wallet accounts (batch test): %v", err)
+	}
+	if userWalletCount != 1 {
+		t.Errorf("(batch test) expected 1 user_wallet account, got %d", userWalletCount)
+	}
+
+	err = pool.QueryRow(ctx,
+		`SELECT count(*) FROM accounts WHERE kind = 'round_pool' AND room_id = $1`,
+		roomID2).Scan(&roundPoolCount)
+	if err != nil {
+		t.Fatalf("failed to count round_pool accounts (batch test): %v", err)
+	}
+	if roundPoolCount != 1 {
+		t.Errorf("(batch test) expected 1 round_pool account, got %d", roundPoolCount)
+	}
+}
