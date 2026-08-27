@@ -274,3 +274,106 @@ func TestWriteBatchProvisionsAccountsOnce(t *testing.T) {
 		t.Errorf("(batch test) expected 1 round_pool account, got %d", roundPoolCount)
 	}
 }
+
+// TestWriteBatchIsIdempotent verifies that a replayed transaction is absorbed
+// silently without duplicating entries.
+func TestWriteBatchIsIdempotent(t *testing.T) {
+	pool := getTestPool(t)
+	ctx := context.Background()
+	repo := New(pool)
+
+	roomID := uuid.NewString()
+	roundID := uuid.NewString()
+	userID := uuid.NewString()
+
+	// Write one wager transaction.
+	txn := Transaction{
+		IdempotencyKey: uuid.NewString(),
+		Kind:           "wager",
+		RoomID:         roomID,
+		RoundID:        roundID,
+		Entries: []Entry{
+			{Account: AccountRef{Kind: KindUserWallet, UserID: userID}, Direction: Debit, Amount: 50},
+			{Account: AccountRef{Kind: KindRoundPool, RoomID: roomID}, Direction: Credit, Amount: 50},
+		},
+	}
+
+	written, err := repo.WriteBatch(ctx, []Transaction{txn})
+	if err != nil {
+		t.Fatalf("first WriteBatch failed: %v", err)
+	}
+	if written != 1 {
+		t.Errorf("first batch: expected written=1, got %d", written)
+	}
+
+	// Replay the same transaction.
+	written, err = repo.WriteBatch(ctx, []Transaction{txn})
+	if err != nil {
+		t.Fatalf("second WriteBatch (replay) failed: %v", err)
+	}
+	if written != 0 {
+		t.Errorf("replay: expected written=0, got %d", written)
+	}
+
+	// Verify transaction count is still 1.
+	txnCount, err := repo.TransactionCount(ctx, roomID)
+	if err != nil {
+		t.Fatalf("TransactionCount failed: %v", err)
+	}
+	if txnCount != 1 {
+		t.Errorf("replay: expected 1 transaction, got %d", txnCount)
+	}
+
+	// Verify wallet balance is still -50.
+	walletBalances, err := repo.WalletBalancesForRoom(ctx, roomID)
+	if err != nil {
+		t.Fatalf("WalletBalancesForRoom failed: %v", err)
+	}
+	if balance, ok := walletBalances[userID]; !ok || balance != -50 {
+		t.Errorf("replay: expected wallet balance -50, got %v (presence: %v)", balance, ok)
+	}
+
+	// Verify ledger_entries were not duplicated (should be 2, not 4).
+	var entryCount int
+	err = pool.QueryRow(ctx,
+		`SELECT count(*) FROM ledger_entries
+		  WHERE transaction_id = (SELECT id FROM transactions WHERE idempotency_key = $1)`,
+		txn.IdempotencyKey).Scan(&entryCount)
+	if err != nil {
+		t.Fatalf("failed to count ledger entries: %v", err)
+	}
+	if entryCount != 2 {
+		t.Errorf("replay: expected 2 ledger entries, got %d", entryCount)
+	}
+
+	// Test: one batch containing the same transaction twice (Kafka duplicate in one fetch).
+	roomID2 := uuid.NewString()
+	roundID2 := uuid.NewString()
+	userID2 := uuid.NewString()
+	txn2 := Transaction{
+		IdempotencyKey: uuid.NewString(),
+		Kind:           "wager",
+		RoomID:         roomID2,
+		RoundID:        roundID2,
+		Entries: []Entry{
+			{Account: AccountRef{Kind: KindUserWallet, UserID: userID2}, Direction: Debit, Amount: 50},
+			{Account: AccountRef{Kind: KindRoundPool, RoomID: roomID2}, Direction: Credit, Amount: 50},
+		},
+	}
+
+	written, err = repo.WriteBatch(ctx, []Transaction{txn2, txn2})
+	if err != nil {
+		t.Fatalf("WriteBatch with duplicate in batch failed: %v", err)
+	}
+	if written != 1 {
+		t.Errorf("duplicate-in-batch: expected written=1, got %d", written)
+	}
+
+	txnCount2, err := repo.TransactionCount(ctx, roomID2)
+	if err != nil {
+		t.Fatalf("TransactionCount (duplicate test) failed: %v", err)
+	}
+	if txnCount2 != 1 {
+		t.Errorf("duplicate-in-batch: expected 1 transaction, got %d", txnCount2)
+	}
+}
