@@ -291,6 +291,15 @@ Installed: `golang-patterns`, `golang-testing`, `docker-patterns`,
 **deliberately dormant** — don't enable it without re-reading
 `dev-workflow-guide.md` §9.
 
+`delegating-plan-tasks` (added ahead of Phase 5b) changes *where* a plan
+task's turns execute — one cold subagent per task instead of inline — and
+nothing else about the plan format, checkpoint discipline, or commit
+granularity. It is invoked from `executing-plans` Step 2, per task, and only
+for tasks a plan's header marks for delegation; a phase's flagship
+correctness work stays inline. `subagent-driven-development` remains
+declined — the objection was its ceremony, not delegation
+(`dev-workflow-guide.md` §9).
+
 **Run the `security-reviewer` agent before closing any phase that touches
 auth, money movement, or a network surface.** Past findings, and the three
 items open by design (login timing, room-code modulo bias, reconnect ending a

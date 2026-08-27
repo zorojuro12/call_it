@@ -1,6 +1,14 @@
 # Phase 5b — Double-Entry Ledger Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use the `executing-plans` skill to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Delegation:** Tasks 1–5 are delegated, one subagent per task, via the
+> `delegating-plan-tasks` skill. **Task 6 is executed inline** — it is this
+> phase's flagship correctness work (parent plan §6 calls the reconciliation
+> test "the evidence behind the 0.00% double-spend claim"), cross-task
+> continuity genuinely pays there, and it is the wrong place to absorb the
+> risk of a process experiment. Register the `tok/CP` prediction and its
+> guardrails in the journal **before** dispatching Task 1.
 
 **Goal:** Turn the Kafka events Phase 5a durably produces into double-entry
 PostgreSQL ledger rows, and prove — with a test that races real concurrent

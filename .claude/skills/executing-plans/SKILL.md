@@ -12,9 +12,13 @@ Load plan, review critically, execute all tasks, report when complete.
 **Announce at start:** "I'm using the executing-plans skill to implement this plan."
 
 **Note:** Upstream recommends `subagent-driven-development` (a fresh subagent
-per task) where subagents are available. That skill is deliberately not
-installed in this project — inline execution is the default here, for tighter
-control over what runs. This skill is the execution path for `call_it`.
+per task) where subagents are available. That skill is still deliberately not
+installed here — the objection was always its ceremony, never delegation
+itself (`docs/dev-workflow-guide.md` §9). Delegation without the ceremony now
+exists as the project-local `delegating-plan-tasks` skill, invoked per task
+from Step 2 below. **Inline execution remains the default**; a plan opts
+individual tasks into delegation in its header. This skill is the execution
+path for `call_it` either way.
 
 ## The Process
 
@@ -33,9 +37,19 @@ control over what runs. This skill is the execution path for `call_it`.
 
 For each task:
 1. Mark as in_progress
-2. Follow each step exactly (plan has bite-sized steps)
-3. Run verifications as specified
-4. Mark as completed
+2. If the plan's header marks this task for delegation, use the
+   `delegating-plan-tasks` skill — one subagent for the whole task, then
+   verify at the task boundary per that skill's Rule 2 (full suite plus
+   `git log --oneline dev..HEAD`, without re-reading the work). Otherwise
+   execute inline.
+3. Follow each step exactly (plan has bite-sized steps)
+4. Run verifications as specified
+5. Mark as completed
+
+Dispatch delegated tasks strictly one at a time. Plan tasks are not
+independent: each consumes the previous task's `Produces` interfaces and
+commits to the same branch, so parallel dispatch races the branch and briefs
+later tasks against interfaces that do not exist yet.
 
 ### Step 3: Complete Development
 
