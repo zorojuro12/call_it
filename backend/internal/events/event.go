@@ -62,9 +62,9 @@ func (e WagerPlaced) Key() string          { return e.IdempotencyKey }
 // This is the Kafka wire format — renaming a field changes the wire protocol.
 // Do not reorder fields; Go marshals in declaration order and tests pin it.
 type RoundSettled struct {
-	RoomID         string   `json:"room_id"`
-	RoundID        string   `json:"round_id"`
-	IdempotencyKey string   `json:"idempotency_key"`
+	RoomID         string `json:"room_id"`
+	RoundID        string `json:"round_id"`
+	IdempotencyKey string `json:"idempotency_key"`
 	// WinningOutcome is -1 for a refund. 0 is a valid outcome index and
 	// would be indistinguishable from a real outcome-0 win, so -1 is the
 	// sentinel for "no winning outcome" rather than the empty value.
