@@ -75,9 +75,13 @@ func transactionForWager(e events.WagerPlaced) Transaction {
 // - CP5: Handles zero-total settlements (rounds that lock with no wagers)
 // - CP6: Verifies arithmetic before building entries (payouts+dust == total)
 func transactionForSettlement(e events.RoundSettled) (Transaction, error) {
-	// CP6: Verify arithmetic before building the transaction. A violation means
-	// the event was corrupted between Redis and this consumer. This is a
-	// verification of the event, not a second implementation of the payout formula.
+	// CP6: Verify arithmetic before building the transaction. domain.Settle
+	// guarantees Σ payouts + dust == Σ stakes with a fuzz test, so a violation
+	// here means the event was corrupted between Redis and this consumer. The
+	// deferred trigger would also reject it at COMMIT as an opaque database
+	// error naming a transaction ID; failing here names the arithmetic instead.
+	// This is a verification of the event, not a second implementation of the
+	// payout formula — do not compute payouts here, only verify the sum.
 	sum := e.Dust
 	for _, p := range e.Payouts {
 		sum += p.Amount
