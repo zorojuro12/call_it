@@ -68,11 +68,16 @@ func transactionForWager(e events.WagerPlaced) Transaction {
 }
 
 // transactionForSettlement maps a settlement or refund to a balanced transaction.
-// Refunds are identified by Refunded: true.
-// A settlement with no wagers (Total: 0) produces a zero-entry transaction.
-// The dust entry is omitted when Dust is zero.
+// This implementation handles all settlement variants:
+// - CP2: Maps a resolved settlement to pool debit, payout credits, and dust credit
+// - CP3: Omits dust entry when Dust is zero (ledger_entries.amount CHECK (amount > 0))
+// - CP4: Records refunds with kind "refund" vs "settlement" (Refunded: true)
+// - CP5: Handles zero-total settlements (rounds that lock with no wagers)
+// - CP6: Verifies arithmetic before building entries (payouts+dust == total)
 func transactionForSettlement(e events.RoundSettled) (Transaction, error) {
-	// Verify arithmetic before building the transaction
+	// CP6: Verify arithmetic before building the transaction. A violation means
+	// the event was corrupted between Redis and this consumer. This is a
+	// verification of the event, not a second implementation of the payout formula.
 	sum := e.Dust
 	for _, p := range e.Payouts {
 		sum += p.Amount
@@ -81,6 +86,7 @@ func transactionForSettlement(e events.RoundSettled) (Transaction, error) {
 		return Transaction{}, fmt.Errorf("%w: round %s total %d but payouts+dust %d", ErrUnbalanced, e.RoundID, e.Total, sum)
 	}
 
+	// CP4: Kind distinguishes resolved vs refunded in the ledger
 	kind := "settlement"
 	if e.Refunded {
 		kind = "refund"
@@ -88,7 +94,8 @@ func transactionForSettlement(e events.RoundSettled) (Transaction, error) {
 
 	var entries []Entry
 
-	// Pool debit (tokens leaving the pool)
+	// CP2/CP5: Pool debit (tokens leaving the pool). Only added if Total > 0
+	// so a round that locks with no wagers produces a zero-entry transaction.
 	if e.Total > 0 {
 		entries = append(entries, Entry{
 			Account:   AccountRef{Kind: KindRoundPool, RoomID: e.RoomID},
@@ -97,7 +104,7 @@ func transactionForSettlement(e events.RoundSettled) (Transaction, error) {
 		})
 	}
 
-	// Payout credits (tokens into user wallets)
+	// CP2: Payout credits (tokens into user wallets), in event order
 	for _, payout := range e.Payouts {
 		entries = append(entries, Entry{
 			Account:   AccountRef{Kind: KindUserWallet, UserID: payout.UserID},
@@ -106,7 +113,9 @@ func transactionForSettlement(e events.RoundSettled) (Transaction, error) {
 		})
 	}
 
-	// Dust credit (rounding remainder to system)
+	// CP2/CP3: Dust credit (rounding remainder to system).
+	// Only added if Dust > 0. Zero dust is common (exactly-divisible rounds)
+	// and would violate ledger_entries.amount CHECK (amount > 0) constraint.
 	if e.Dust > 0 {
 		entries = append(entries, Entry{
 			Account:   AccountRef{Kind: KindSystemDust},
