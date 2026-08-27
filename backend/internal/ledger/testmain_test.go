@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 
 	"github.com/zorojuro12/call_it/backend/internal/migrate"
 )
@@ -16,6 +18,15 @@ import (
 // testDSN points at callit_test — every test in this package runs
 // against it, never the maintenance database or the dev database.
 var testDSN string
+
+// testRedisAddr and testKafkaBrokers are read by reconcile_test.go's
+// fixture, which needs its own redisstore.Store and relay/Kafka
+// connections on top of the PostgreSQL setup below. DB 15, never DB 0 —
+// the same convention redisstore and relay's own suites use.
+const testRedisDB = 15
+
+var testRedisAddr string
+var testKafkaBrokers []string
 
 // TestMain mirrors redisstore's DB-15 convention: these tests fail
 // rather than skip when PostgreSQL is unreachable, since a suite whose
@@ -55,6 +66,41 @@ func TestMain(m *testing.M) {
 		log.Fatalf("ledger: migrate.Up failed: %v", err)
 	}
 	migratePool.Close()
+
+	// Redis probe (DB 15) — reconcile_test.go's fixture drives a real
+	// redisstore.Store and relay through this database. Fail rather than
+	// skip: the reconciliation suite's whole purpose is proving zero
+	// double-spend across Redis and PostgreSQL, so it must not report
+	// PASS while executing nothing.
+	testRedisAddr = os.Getenv("REDIS_ADDR")
+	if testRedisAddr == "" {
+		testRedisAddr = "localhost:6379"
+	}
+	redisClient := redis.NewClient(&redis.Options{Addr: testRedisAddr, DB: testRedisDB})
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		log.Fatalf("ledger: cannot reach Redis at %s (db %d): %v — run `make up` and retry", testRedisAddr, testRedisDB, err)
+	}
+	if err := redisClient.FlushDB(ctx).Err(); err != nil {
+		log.Fatalf("ledger: FLUSHDB on db %d failed: %v", testRedisDB, err)
+	}
+	if err := redisClient.Close(); err != nil {
+		log.Fatalf("ledger: closing Redis probe client failed: %v", err)
+	}
+
+	// Kafka probe — a bare TCP dial to the first broker, mirroring
+	// internal/events' TestMain.
+	kafkaAddr := os.Getenv("KAFKA_BROKERS")
+	if kafkaAddr == "" {
+		kafkaAddr = "localhost:9092"
+	}
+	testKafkaBrokers = strings.Split(kafkaAddr, ",")
+	kconn, err := kafka.DialContext(ctx, "tcp", testKafkaBrokers[0])
+	if err != nil {
+		log.Fatalf("ledger: cannot reach Kafka at %s: %v — run `make up-full` and retry", testKafkaBrokers[0], err)
+	}
+	if err := kconn.Close(); err != nil {
+		log.Fatalf("ledger: closing Kafka dial probe failed: %v", err)
+	}
 
 	os.Exit(m.Run())
 }
