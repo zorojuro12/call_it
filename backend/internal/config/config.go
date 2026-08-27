@@ -231,3 +231,67 @@ func LoadRelay(lookup LookupFunc) (RelayConfig, error) {
 
 	return cfg, nil
 }
+
+// LedgerConfig holds cmd/ledger-worker's configuration surface. Like
+// MigrateConfig and RelayConfig, it does not require JWT_SECRET — the
+// ledger worker neither issues nor verifies a token, and requiring one
+// would hand a non-auth binary a credential it has no use for.
+type LedgerConfig struct {
+	PostgresDSN   string
+	KafkaBrokers  []string
+	ConsumerGroup string
+	LogLevel      string
+	Env           string
+}
+
+// LoadLedger reads the ledger worker's configuration via lookup.
+func LoadLedger(lookup LookupFunc) (LedgerConfig, error) {
+	cfg := LedgerConfig{
+		KafkaBrokers:  []string{"localhost:9092"},
+		ConsumerGroup: "ledger-writer",
+		LogLevel:      "info",
+		Env:           "development",
+	}
+
+	dsn, ok := lookup("POSTGRES_DSN")
+	if !ok || dsn == "" {
+		return LedgerConfig{}, fmt.Errorf("config: POSTGRES_DSN is required")
+	}
+	cfg.PostgresDSN = dsn
+
+	if v, ok := lookup("KAFKA_BROKERS"); ok {
+		if v == "" {
+			return LedgerConfig{}, fmt.Errorf("config: KAFKA_BROKERS must not be empty")
+		}
+		brokers := strings.Split(v, ",")
+		for _, b := range brokers {
+			if b == "" {
+				return LedgerConfig{}, fmt.Errorf("config: KAFKA_BROKERS %q contains an empty element", v)
+			}
+		}
+		cfg.KafkaBrokers = brokers
+	}
+
+	if v, ok := lookup("LEDGER_GROUP"); ok {
+		if v == "" {
+			return LedgerConfig{}, fmt.Errorf("config: LEDGER_GROUP must not be empty")
+		}
+		cfg.ConsumerGroup = v
+	}
+
+	if v, ok := lookup("LOG_LEVEL"); ok {
+		if !validLogLevels[v] {
+			return LedgerConfig{}, fmt.Errorf("config: LOG_LEVEL %q is not one of debug|info|warn|error", v)
+		}
+		cfg.LogLevel = v
+	}
+
+	if v, ok := lookup("ENV"); ok {
+		if !validEnvs[v] {
+			return LedgerConfig{}, fmt.Errorf("config: ENV %q is not one of development|production|test", v)
+		}
+		cfg.Env = v
+	}
+
+	return cfg, nil
+}
