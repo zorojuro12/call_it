@@ -96,8 +96,10 @@ func transactionForSettlement(e events.RoundSettled) (Transaction, error) {
 
 	var entries []Entry
 
-	// CP2/CP5: Pool debit (tokens leaving the pool). Only added if Total > 0
-	// so a round that locks with no wagers produces a zero-entry transaction.
+	// CP2/CP5: Pool debit (tokens leaving the pool). Only added if Total > 0.
+	// CP5: A round that locks with no wagers and then auto-refunds (60s timeout)
+	// produces a zero-entry transaction. The transaction row is still written
+	// so that every terminal event has exactly one row and replay dedupes uniformly.
 	if e.Total > 0 {
 		entries = append(entries, Entry{
 			Account:   AccountRef{Kind: KindRoundPool, RoomID: e.RoomID},
