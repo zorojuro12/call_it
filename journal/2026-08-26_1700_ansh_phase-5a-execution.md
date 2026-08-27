@@ -131,13 +131,24 @@ Kafka producer (Task 5), and CI/security/close-out wiring (Task 6).
 
 ## Open Questions / Blockers
 
-- **`tok/CP` for this phase is not measured in this entry.** The
-  pre-registered bar (`< 4.6M`, Phase 2 as the honest control) needs
-  `phase_compare.py` run against this session's logs, which this session
-  doesn't have direct access to — a future session (or the user, from
-  outside this conversation) should run it and amend this entry or the
-  parent plan with the actual figure before treating 5a as a settled data
-  point for the delegation question.
+- **~~`tok/CP` for this phase is not measured in this entry.~~ MEASURED
+  2026-08-26 — `5.77M/CP`.** 144.2M tokens over 630 turns / 25 checkpoints,
+  bounded from the `/executing-plans` invocation (23:13:05Z) to the close-out
+  commit `a127858` (00:08:12Z), subagent log included. Full write-up in
+  `journal/2026-08-26_1915_ansh_phase-5a-token-measurement.md`.
+
+  **This does not fail the pre-registered bar — the bar didn't apply.**
+  `< 4.6M` was registered for a *delegated* 5a. Delegation was deferred, so
+  5a ran inline and is a **control**, not a test. Read it as the inline
+  baseline for an infrastructure phase on the current codebase: 25% above
+  Phase 2 (4.61M) at near-identical turn efficiency (22.4 vs 20.6 turns/CP),
+  because per-turn context is now larger, not because execution was less
+  disciplined.
+
+  **`phase_compare.py` did not exist.** Three journal entries referenced it
+  as though it did; the methodology was living in prose and being re-derived
+  each time. Now committed at `scripts/phase_compare.py` with both hard-won
+  rules encoded — bound both ends, include `subagents/*.jsonl`.
 - **CI's Kafka step is still the least-verified part of the plan** in the
   sense that it's only been run via local `docker compose` commands
   mirroring the workflow, not an actual GitHub Actions run. The `services:`
