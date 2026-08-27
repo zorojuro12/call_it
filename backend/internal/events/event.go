@@ -39,14 +39,16 @@ type Payout struct {
 }
 
 // WagerPlaced is a single wager hitting a round's pool.
+// This is the Kafka wire format — renaming a field changes the wire protocol.
+// Do not reorder fields; Go marshals in declaration order and tests pin it.
 type WagerPlaced struct {
-	RoomID         string
-	RoundID        string
-	UserID         string
-	IdempotencyKey string
-	Outcome        int
-	Amount         int64
-	Balance        int64
+	RoomID         string `json:"room_id"`
+	RoundID        string `json:"round_id"`
+	UserID         string `json:"user_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+	Outcome        int    `json:"outcome"`
+	Amount         int64  `json:"amount"`
+	Balance        int64  `json:"balance"`
 }
 
 func (e WagerPlaced) Topic() string        { return TopicWagersPlaced }
@@ -57,18 +59,20 @@ func (e WagerPlaced) Key() string          { return e.IdempotencyKey }
 // round_settled and round_refunded — distinguished by Refunded. They
 // carry identical fields and produce identical ledger shapes in Phase
 // 5b, so two structs would be two copies of one thing.
+// This is the Kafka wire format — renaming a field changes the wire protocol.
+// Do not reorder fields; Go marshals in declaration order and tests pin it.
 type RoundSettled struct {
-	RoomID         string
-	RoundID        string
-	IdempotencyKey string
+	RoomID         string   `json:"room_id"`
+	RoundID        string   `json:"round_id"`
+	IdempotencyKey string   `json:"idempotency_key"`
 	// WinningOutcome is -1 for a refund. 0 is a valid outcome index and
 	// would be indistinguishable from a real outcome-0 win, so -1 is the
 	// sentinel for "no winning outcome" rather than the empty value.
-	WinningOutcome int
-	Total          int64
-	Dust           int64
-	Payouts        []Payout
-	Refunded       bool
+	WinningOutcome int      `json:"winning_outcome"`
+	Total          int64    `json:"total"`
+	Dust           int64    `json:"dust"`
+	Payouts        []Payout `json:"payouts"`
+	Refunded       bool     `json:"refunded"`
 }
 
 func (e RoundSettled) Topic() string        { return TopicRoundsSettled }
