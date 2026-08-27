@@ -2,6 +2,7 @@ package redisstore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -10,6 +11,54 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 	lua "github.com/zorojuro12/call_it/backend/scripts/lua"
 )
+
+// wirePayout is the outbox event's JSON shape for one payout. Kept
+// separate from domain.Payout so the domain type never grows wire-format
+// tags (Amendment E1).
+type wirePayout struct {
+	UserID string `json:"user_id"`
+	Amount int64  `json:"amount"`
+}
+
+// aggregateStakes sums stakes per user into one payout per account,
+// since a ledger credit line is per account, not per stake — a player
+// with stakes on two different outcomes of a refunded round gets one
+// combined credit. The result is sorted ascending by user ID because
+// ReadStakes returns stakes already sorted that way, and the same round
+// refunded twice must produce identical output.
+func aggregateStakes(stakes []domain.Stake) ([]domain.Payout, domain.Tokens) {
+	index := make(map[string]int, len(stakes))
+	payouts := make([]domain.Payout, 0, len(stakes))
+	var total domain.Tokens
+
+	for _, st := range stakes {
+		i, seen := index[st.UserID]
+		if !seen {
+			i = len(payouts)
+			index[st.UserID] = i
+			payouts = append(payouts, domain.Payout{UserID: st.UserID})
+		}
+		payouts[i].Amount += st.Amount
+		total += st.Amount
+	}
+
+	return payouts, total
+}
+
+// marshalPayouts renders payouts as the outbox wire format. An empty
+// slice marshals to "[]", never "null" — the payouts field always
+// carries a JSON array, even when settlement produced no payouts.
+func marshalPayouts(payouts []domain.Payout) (string, error) {
+	wire := make([]wirePayout, len(payouts))
+	for i, p := range payouts {
+		wire[i] = wirePayout{UserID: p.UserID, Amount: int64(p.Amount)}
+	}
+	b, err := json.Marshal(wire)
+	if err != nil {
+		return "", fmt.Errorf("redisstore: marshal payouts: %w", err)
+	}
+	return string(b), nil
+}
 
 var settleRoundScript = redis.NewScript(lua.SettleRound)
 var refundRoundScript = redis.NewScript(lua.RefundRound)
@@ -92,6 +141,16 @@ func (s *Store) SettleRound(ctx context.Context, roundID string, winningOutcome 
 		resolvedOutcomeArg = ""
 	}
 
+	var total domain.Tokens
+	for _, st := range stakes {
+		total += st.Amount
+	}
+
+	payoutsJSON, err := marshalPayouts(settlement.Payouts)
+	if err != nil {
+		return domain.Settlement{}, fmt.Errorf("redisstore: settle round %s: %w", roundID, err)
+	}
+
 	keys := []string{RoundKey(roundID), RoomWalletsKey(round.RoomID), s.outboxStream}
 	argv := []interface{}{
 		terminalStatus,
@@ -99,6 +158,9 @@ func (s *Store) SettleRound(ctx context.Context, roundID string, winningOutcome 
 		strconv.FormatInt(int64(settlement.Dust), 10),
 		idempotencyKey,
 		roundID,
+		round.RoomID,
+		strconv.FormatInt(int64(total), 10),
+		payoutsJSON,
 	}
 	for _, p := range settlement.Payouts {
 		argv = append(argv, p.UserID, strconv.FormatInt(int64(p.Amount), 10))
@@ -124,17 +186,50 @@ func (s *Store) SettleRound(ctx context.Context, roundID string, winningOutcome 
 }
 
 // RefundRound refunds every stake on a locked round's timeout/disconnect
-// path. Unlike SettleRound there is nothing for Go to compute —
-// refunding is the identity function on stakes — so refund_round.lua
-// reads the wagers hash inside its own atomic unit.
+// path. Refunding is the identity function on stakes, but the outbox
+// event still needs a per-user payout breakdown (Amendment E1), so Go
+// now reads and aggregates stakes itself, symmetric with SettleRound
+// (Amendment E2).
 func (s *Store) RefundRound(ctx context.Context, roundID, idempotencyKey string) (domain.Tokens, error) {
 	round, err := s.Round(ctx, roundID)
 	if err != nil {
 		return 0, fmt.Errorf("redisstore: refund round %s: %w", roundID, err)
 	}
 
-	keys := []string{RoundKey(roundID), RoomWalletsKey(round.RoomID), RoundWagersKey(roundID), s.outboxStream}
-	argv := []interface{}{idempotencyKey, roundID}
+	// Checked here too, not just in the script: an unlocked round should
+	// fail before Go reads stakes, never after. The read below is
+	// deliberately placed inside this locked branch rather than before
+	// the switch — reading stakes on an open round could be applied to a
+	// since-locked round (place_wager.lua rejects new wagers on a locked
+	// round, but a read taken before the lock predates that guarantee)
+	// and would silently drop every wager placed in the gap between the
+	// read and the lock. No test can catch a refactor that hoists this
+	// read out of the switch, so this ordering is the guard.
+	var payouts []domain.Payout
+	var total domain.Tokens
+	switch round.Status {
+	case domain.RoundResolved, domain.RoundRefunded:
+		return 0, fmt.Errorf("redisstore: refund round %s: %w", roundID, ErrAlreadySettled)
+	case domain.RoundLocked:
+		stakes, err := s.ReadStakes(ctx, roundID)
+		if err != nil {
+			return 0, fmt.Errorf("redisstore: refund round %s: %w", roundID, err)
+		}
+		payouts, total = aggregateStakes(stakes)
+	default:
+		return 0, fmt.Errorf("redisstore: refund round %s: %w", roundID, ErrNotLocked)
+	}
+
+	payoutsJSON, err := marshalPayouts(payouts)
+	if err != nil {
+		return 0, fmt.Errorf("redisstore: refund round %s: %w", roundID, err)
+	}
+
+	keys := []string{RoundKey(roundID), RoomWalletsKey(round.RoomID), s.outboxStream}
+	argv := []interface{}{idempotencyKey, roundID, round.RoomID, strconv.FormatInt(int64(total), 10), payoutsJSON}
+	for _, p := range payouts {
+		argv = append(argv, p.UserID, strconv.FormatInt(int64(p.Amount), 10))
+	}
 
 	res, err := refundRoundScript.Run(ctx, s.client, keys, argv...).Result()
 	if err != nil {
@@ -151,14 +246,6 @@ func (s *Store) RefundRound(ctx context.Context, roundID, idempotencyKey string)
 	if reply[0] != "OK" {
 		return 0, mapSettleStatus(reply)
 	}
-	if len(reply) < 2 {
-		return 0, fmt.Errorf("redisstore: refund round %s: malformed reply %v", roundID, reply)
-	}
 
-	total, err := strconv.ParseInt(reply[1], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("redisstore: refund round %s: malformed total %q: %w", roundID, reply[1], err)
-	}
-
-	return domain.Tokens(total), nil
+	return total, nil
 }
