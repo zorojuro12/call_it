@@ -176,3 +176,184 @@ func TestDecodeMessageRejectsUnknownField(t *testing.T) {
 		t.Errorf("DecodeMessage error message %q does not contain unknown field name %q", err.Error(), "surprise")
 	}
 }
+
+func TestDecodeMessageValidation(t *testing.T) {
+	// Checkpoint 5: money-invalid payloads are rejected at the wire boundary
+	tests := []struct {
+		name     string
+		topic    string
+		payload  string
+		wantErr  bool
+		errField string
+	}{
+		// Valid positive controls
+		{
+			name: "valid wager",
+			topic: TopicWagersPlaced,
+			payload: `{"room_id":"r1","round_id":"rd1","user_id":"u1","idempotency_key":"k1","outcome":1,"amount":50,"balance":950}`,
+			wantErr: false,
+		},
+		{
+			name: "valid settlement",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"rd1","idempotency_key":"k2","winning_outcome":1,"total":100,"dust":2,"payouts":[{"user_id":"u1","amount":98}],"refunded":false}`,
+			wantErr: false,
+		},
+		{
+			name: "valid refund with no payouts",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"rd1","idempotency_key":"k3","winning_outcome":-1,"total":0,"dust":0,"payouts":[],"refunded":true}`,
+			wantErr: false,
+		},
+		// WagerPlaced validation cases
+		{
+			name: "wager with empty room_id",
+			topic: TopicWagersPlaced,
+			payload: `{"room_id":"","round_id":"rd1","user_id":"u1","idempotency_key":"k1","outcome":1,"amount":50,"balance":950}`,
+			wantErr: true,
+			errField: "room_id",
+		},
+		{
+			name: "wager with empty round_id",
+			topic: TopicWagersPlaced,
+			payload: `{"room_id":"r1","round_id":"","user_id":"u1","idempotency_key":"k1","outcome":1,"amount":50,"balance":950}`,
+			wantErr: true,
+			errField: "round_id",
+		},
+		{
+			name: "wager with empty user_id",
+			topic: TopicWagersPlaced,
+			payload: `{"room_id":"r1","round_id":"rd1","user_id":"","idempotency_key":"k1","outcome":1,"amount":50,"balance":950}`,
+			wantErr: true,
+			errField: "user_id",
+		},
+		{
+			name: "wager with empty idempotency_key",
+			topic: TopicWagersPlaced,
+			payload: `{"room_id":"r1","round_id":"rd1","user_id":"u1","idempotency_key":"","outcome":1,"amount":50,"balance":950}`,
+			wantErr: true,
+			errField: "idempotency_key",
+		},
+		{
+			name: "wager with zero amount",
+			topic: TopicWagersPlaced,
+			payload: `{"room_id":"r1","round_id":"rd1","user_id":"u1","idempotency_key":"k1","outcome":1,"amount":0,"balance":950}`,
+			wantErr: true,
+			errField: "amount",
+		},
+		{
+			name: "wager with negative amount",
+			topic: TopicWagersPlaced,
+			payload: `{"room_id":"r1","round_id":"rd1","user_id":"u1","idempotency_key":"k1","outcome":1,"amount":-50,"balance":950}`,
+			wantErr: true,
+			errField: "amount",
+		},
+		{
+			name: "wager with negative outcome",
+			topic: TopicWagersPlaced,
+			payload: `{"room_id":"r1","round_id":"rd1","user_id":"u1","idempotency_key":"k1","outcome":-1,"amount":50,"balance":950}`,
+			wantErr: true,
+			errField: "outcome",
+		},
+		{
+			name: "wager with negative balance",
+			topic: TopicWagersPlaced,
+			payload: `{"room_id":"r1","round_id":"rd1","user_id":"u1","idempotency_key":"k1","outcome":1,"amount":50,"balance":-1}`,
+			wantErr: true,
+			errField: "balance",
+		},
+		// RoundSettled validation cases
+		{
+			name: "settlement with empty room_id",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"","round_id":"rd1","idempotency_key":"k2","winning_outcome":1,"total":100,"dust":2,"payouts":[{"user_id":"u1","amount":98}],"refunded":false}`,
+			wantErr: true,
+			errField: "room_id",
+		},
+		{
+			name: "settlement with empty round_id",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"","idempotency_key":"k2","winning_outcome":1,"total":100,"dust":2,"payouts":[{"user_id":"u1","amount":98}],"refunded":false}`,
+			wantErr: true,
+			errField: "round_id",
+		},
+		{
+			name: "settlement with empty idempotency_key",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"rd1","idempotency_key":"","winning_outcome":1,"total":100,"dust":2,"payouts":[{"user_id":"u1","amount":98}],"refunded":false}`,
+			wantErr: true,
+			errField: "idempotency_key",
+		},
+		{
+			name: "settlement with negative total",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"rd1","idempotency_key":"k2","winning_outcome":1,"total":-1,"dust":2,"payouts":[{"user_id":"u1","amount":98}],"refunded":false}`,
+			wantErr: true,
+			errField: "total",
+		},
+		{
+			name: "settlement with negative dust",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"rd1","idempotency_key":"k2","winning_outcome":1,"total":100,"dust":-1,"payouts":[{"user_id":"u1","amount":98}],"refunded":false}`,
+			wantErr: true,
+			errField: "dust",
+		},
+		{
+			name: "settlement with zero payout amount",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"rd1","idempotency_key":"k2","winning_outcome":1,"total":100,"dust":2,"payouts":[{"user_id":"u1","amount":0}],"refunded":false}`,
+			wantErr: true,
+			errField: "amount",
+		},
+		{
+			name: "settlement with empty payout user",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"rd1","idempotency_key":"k2","winning_outcome":1,"total":100,"dust":2,"payouts":[{"user_id":"","amount":98}],"refunded":false}`,
+			wantErr: true,
+			errField: "user_id",
+		},
+		{
+			name: "settlement resolved with no outcome",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"rd1","idempotency_key":"k2","winning_outcome":-1,"total":100,"dust":2,"payouts":[{"user_id":"u1","amount":98}],"refunded":false}`,
+			wantErr: true,
+			errField: "winning_outcome",
+		},
+		{
+			name: "refund carrying an outcome",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"rd1","idempotency_key":"k3","winning_outcome":1,"total":100,"dust":0,"payouts":[{"user_id":"u1","amount":100}],"refunded":true}`,
+			wantErr: true,
+			errField: "winning_outcome",
+		},
+		{
+			name: "refund carrying dust",
+			topic: TopicRoundsSettled,
+			payload: `{"room_id":"r1","round_id":"rd1","idempotency_key":"k3","winning_outcome":-1,"total":100,"dust":1,"payouts":[{"user_id":"u1","amount":100}],"refunded":true}`,
+			wantErr: true,
+			errField: "dust",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ev, err := DecodeMessage(tt.topic, []byte(tt.payload))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DecodeMessage error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidEvent) {
+					t.Errorf("DecodeMessage error = %v, want errors.Is(err, ErrInvalidEvent)", err)
+				}
+				if tt.errField != "" && !strings.Contains(err.Error(), tt.errField) {
+					t.Errorf("DecodeMessage error %q does not contain field name %q", err.Error(), tt.errField)
+				}
+			} else {
+				if ev == nil {
+					t.Errorf("DecodeMessage returned nil event")
+				}
+			}
+		})
+	}
+}
