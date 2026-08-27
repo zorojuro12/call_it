@@ -86,7 +86,9 @@ func transactionForSettlement(e events.RoundSettled) (Transaction, error) {
 		return Transaction{}, fmt.Errorf("%w: round %s total %d but payouts+dust %d", ErrUnbalanced, e.RoundID, e.Total, sum)
 	}
 
-	// CP4: Kind distinguishes resolved vs refunded in the ledger
+	// CP4: Kind distinguishes resolved vs refunded in the ledger. Both emit
+	// the same entry shape (pool debit, payouts, dust), but the Kind field
+	// allows an auditor to read transactions.kind without joining other tables.
 	kind := "settlement"
 	if e.Refunded {
 		kind = "refund"
