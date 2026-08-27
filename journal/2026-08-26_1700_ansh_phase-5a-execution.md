@@ -3,19 +3,24 @@
 **Status:** Phase 5a complete. All 6 tasks, 25 planned checkpoints plus one
 unplanned coverage checkpoint, executed inline on branch `phase-5a-outbox-kafka`
 off `dev`. Full suite green (`go test ./... -race -cover -p 1`), `go vet`/`gofmt`
-clean, security review clean (no CRITICAL/HIGH). Branch not yet merged — this
-entry closes the plan's Task 6, next step is `finishing-a-development-branch`.
+clean, security review clean (no CRITICAL/HIGH). Ran
+`finishing-a-development-branch`; **explicitly kept the branch as-is rather
+than merging** (option 3) and pushed it to `origin` for backup/visibility —
+not yet integrated into `dev`.
 **Decided:** Executed inline per the plan's own instruction — the delegation
 skill described in `journal/2026-08-26_1404_ansh_subagent-delegation-proposal.md`
 was never written (confirmed absent from `.claude/skills/` before starting),
 so per the plan's Execution notes that's not an oversight to route around, it
 means the experiment stays deferred. No delegation attempted this session.
+Branch merge deliberately deferred at close-out — a separate decision from
+the user, made after the plan's own checkpoints were done.
 **Spec:** Updated — parent plan §4 (added the `wager-outbox` consumer group),
 §5 (Amendments E1/E2 rewrite the `settle_round.lua`/`refund_round.lua`
 sections), §7 (Amendment E3 next to the Kafka topology table). `CLAUDE.md`
 Stack section gained three pinned dependencies and a new `go get` gotcha.
-**Next:** Hand off to `finishing-a-development-branch` to merge into `dev`
-(`--no-ff`, no PR, per `CLAUDE.md`). Then Phase 5b (double-entry ledger writer
+**Next:** Merge `phase-5a-outbox-kafka` into `dev` (`--no-ff`, no PR, per
+`CLAUDE.md`) whenever that's decided — nothing technical is blocking it, tests
+are green on the branch as pushed. Then Phase 5b (double-entry ledger writer
 + reconciliation test) — the flagship correctness work the plan says to keep
 inline regardless of how delegation experiments land elsewhere.
 **Blocked on:** Nothing.
@@ -158,7 +163,7 @@ Gotchas updated for the full-stack `make test`/`make down`.
 
 ## Next Step
 
-`finishing-a-development-branch` — verify tests, merge `phase-5a-outbox-kafka`
-into `dev` with `--no-ff`, delete the branch. Then decide Phase 5b's plan
-(double-entry ledger writer, reconciliation test) via `writing-plans`, per the
-parent plan's Phase 5 split.
+Branch is pushed and green but **not merged** — kept as-is on request. Merge
+`phase-5a-outbox-kafka` into `dev` with `--no-ff` whenever that's decided, then
+plan Phase 5b (double-entry ledger writer, reconciliation test) via
+`writing-plans`, per the parent plan's Phase 5 split.
