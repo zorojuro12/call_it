@@ -7,6 +7,7 @@ package events
 
 import (
 	"encoding/json"
+	"fmt"
 )
 
 // DecodeMessage decodes a Kafka message value into a typed Event by routing
@@ -26,6 +27,6 @@ func DecodeMessage(topic string, value []byte) (Event, error) {
 		}
 		return s, nil
 	default:
-		return nil, ErrUnknownEventType
+		return nil, fmt.Errorf("%w: topic %q", ErrUnknownEventType, topic)
 	}
 }

@@ -2,7 +2,9 @@ package events
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -134,5 +136,24 @@ func TestDecodeMessage(t *testing.T) {
 				t.Errorf("DecodeMessage got %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDecodeMessageUnknownTopic(t *testing.T) {
+	// Checkpoint 3: an unrecognised topic is an error, never a skip
+	topic := "some-other-topic"
+	ev, err := DecodeMessage(topic, []byte("{}"))
+	if ev != nil {
+		t.Errorf("DecodeMessage returned non-nil event for unknown topic: %#v", ev)
+	}
+	if err == nil {
+		t.Errorf("DecodeMessage returned nil error for unknown topic")
+		return
+	}
+	if !errors.Is(err, ErrUnknownEventType) {
+		t.Errorf("DecodeMessage error = %v, want errors.Is(err, ErrUnknownEventType)", err)
+	}
+	if !strings.Contains(err.Error(), topic) {
+		t.Errorf("DecodeMessage error message %q does not contain topic %q", err.Error(), topic)
 	}
 }
