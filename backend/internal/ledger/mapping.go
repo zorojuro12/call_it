@@ -114,7 +114,7 @@ func transactionForSettlement(e events.RoundSettled) (Transaction, error) {
 	}
 
 	// CP2/CP3: Dust credit (rounding remainder to system).
-	// Only added if Dust > 0. Zero dust is common (exactly-divisible rounds)
+	// CP3: Only added if Dust > 0. Zero dust is common (exactly-divisible rounds)
 	// and would violate ledger_entries.amount CHECK (amount > 0) constraint.
 	if e.Dust > 0 {
 		entries = append(entries, Entry{
