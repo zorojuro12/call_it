@@ -259,12 +259,19 @@ turn and shouldn't sit in context for a stack the project isn't touching yet.
   `dev-workflow-guide.md` §9 — it was evaluated and declined for this project
   (redundant with memory + journal, statistically rather than
   judgment-curated).
-- **Declined:** `subagent-driven-development`, same section. Note its stated
-  revisit trigger — "a phase's implementation genuinely exhausts context
-  before completing" — **has now fired** (Phase 3). See
-  `journal/2026-08-26_0250_ansh_tuned-plan-experiment-verdict.md` for the
-  measurements and why a thin project-local delegation skill is preferred over
-  installing SDD itself.
+- **Declined:** `subagent-driven-development`, same section. Its stated
+  revisit trigger fired at Phase 5b, and the response was **not** to install
+  it — see `journal/2026-08-26_0250_ansh_tuned-plan-experiment-verdict.md`
+  for why a thin project-local delegation skill was preferred instead. That
+  skill, `.claude/skills/delegating-plan-tasks/SKILL.md`, now exists, is
+  wired into `executing-plans` Step 2 (invoked per task, only when a plan's
+  header opts that task in — inline stays the default), and has run once:
+  Phase 5b Tasks 1–5, 3.0× token saving and 9× fewer turns per checkpoint
+  against the Phase 5a inline control, both pre-registered bars cleared.
+  One process gap surfaced (a subagent misreported having kept
+  commit-per-checkpoint discipline) and was patched the same day — see
+  `dev-workflow-guide.md` §9's "Update 2026-08-27" note for the full
+  account.
 
 ---
 
