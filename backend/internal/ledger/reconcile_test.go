@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -366,5 +367,86 @@ func TestReconcileConservation(t *testing.T) {
 
 	if total := walletSum + poolBal + dust; total != 0 {
 		t.Errorf("token conservation for room %s: Σwallets(%d) + pool(%d) + dust(%d) = %d, want 0", fx.roomID, walletSum, poolBal, dust, total)
+	}
+}
+
+// drainWorkerUntilEmpty loops worker.Once until it reports two
+// consecutive zero-message cycles, bounded by a 60-second deadline —
+// the same "empty" signal drainReconcile uses for the relay, applied to
+// a worker with nothing left upstream to fetch.
+func drainWorkerUntilEmpty(t *testing.T, ctx context.Context, worker *Worker) {
+	t.Helper()
+
+	deadline := time.Now().Add(60 * time.Second)
+	consecutiveEmpty := 0
+	for consecutiveEmpty < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("drainWorkerUntilEmpty: worker did not empty within 60s")
+		}
+		onceCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		n, err := worker.Once(onceCtx)
+		cancel()
+		if err != nil {
+			t.Fatalf("worker.Once() error = %v", err)
+		}
+		if n == 0 {
+			consecutiveEmpty++
+		} else {
+			consecutiveEmpty = 0
+		}
+	}
+}
+
+// TestReconcileReplay is the at-least-once guarantee end to end: Kafka
+// may redeliver any message any number of times, and the
+// idempotency_key UNIQUE constraint is the single mechanism that
+// absorbs it. A second worker on a fresh consumer group re-reads every
+// message from the beginning of both topics and must change nothing.
+func TestReconcileReplay(t *testing.T) {
+	ctx := context.Background()
+	pool := getTestPool(t)
+	repo := New(pool)
+
+	fx := setupReconcileFixture(t, ctx, true)
+	r := setupReconcileRelay(t, ctx)
+	worker := setupReconcileWorker(t, repo)
+
+	wantTxns := reconcilePlayers*reconcileWagersPerPlayer + 1
+	drainReconcile(t, ctx, r, worker, repo, fx.roomID, wantTxns)
+
+	wantCount, err := repo.TransactionCount(ctx, fx.roomID)
+	if err != nil {
+		t.Fatalf("TransactionCount() error = %v", err)
+	}
+	wantBalances, err := repo.WalletBalancesForRoom(ctx, fx.roomID)
+	if err != nil {
+		t.Fatalf("WalletBalancesForRoom() error = %v", err)
+	}
+
+	replayWorker := setupReconcileWorker(t, repo)
+	drainWorkerUntilEmpty(t, ctx, replayWorker)
+
+	gotCount, err := repo.TransactionCount(ctx, fx.roomID)
+	if err != nil {
+		t.Fatalf("TransactionCount() after replay error = %v", err)
+	}
+	if gotCount != wantCount {
+		t.Errorf("TransactionCount(%s) after replay = %d, want unchanged %d", fx.roomID, gotCount, wantCount)
+	}
+
+	gotBalances, err := repo.WalletBalancesForRoom(ctx, fx.roomID)
+	if err != nil {
+		t.Fatalf("WalletBalancesForRoom() after replay error = %v", err)
+	}
+	if !reflect.DeepEqual(gotBalances, wantBalances) {
+		t.Errorf("WalletBalancesForRoom(%s) after replay = %+v, want unchanged %+v", fx.roomID, gotBalances, wantBalances)
+	}
+
+	poolBal, err := repo.PoolBalance(ctx, fx.roomID)
+	if err != nil {
+		t.Fatalf("PoolBalance() after replay error = %v", err)
+	}
+	if poolBal != 0 {
+		t.Errorf("PoolBalance(%s) after replay = %d, want 0", fx.roomID, poolBal)
 	}
 }
