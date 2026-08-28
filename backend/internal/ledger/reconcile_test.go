@@ -267,3 +267,56 @@ func TestReconcileSequential(t *testing.T) {
 		}
 	}
 }
+
+// TestReconcileConcurrent is the double-spend proof: place_wager.lua is
+// atomic, the outbox XADD is inside that same atomic unit, and
+// idempotency_key is unique per wager, so 40 concurrent wagers across 8
+// goroutines must produce exactly 40 wager transactions plus 1
+// settlement — never more (a duplicate slipped the unique constraint)
+// and never fewer (one was lost).
+func TestReconcileConcurrent(t *testing.T) {
+	ctx := context.Background()
+	pool := getTestPool(t)
+	repo := New(pool)
+
+	fx := setupReconcileFixture(t, ctx, true)
+	r := setupReconcileRelay(t, ctx)
+	worker := setupReconcileWorker(t, repo)
+
+	wantTxns := reconcilePlayers*reconcileWagersPerPlayer + 1
+	drainReconcile(t, ctx, r, worker, repo, fx.roomID, wantTxns)
+
+	count, err := repo.TransactionCount(ctx, fx.roomID)
+	if err != nil {
+		t.Fatalf("TransactionCount() error = %v", err)
+	}
+	if count != wantTxns {
+		t.Fatalf("TransactionCount(%s) = %d, want exactly %d", fx.roomID, count, wantTxns)
+	}
+
+	balances, err := repo.WalletBalancesForRoom(ctx, fx.roomID)
+	if err != nil {
+		t.Fatalf("WalletBalancesForRoom() error = %v", err)
+	}
+
+	for _, userID := range fx.playerIDs {
+		redisBal, err := fx.store.Balance(ctx, fx.roomID, userID)
+		if err != nil {
+			t.Fatalf("Balance(%s) error = %v", userID, err)
+		}
+		opening, err := fx.store.OpeningStake(ctx, fx.roomID, userID)
+		if err != nil {
+			t.Fatalf("OpeningStake(%s) error = %v", userID, err)
+		}
+
+		ledgerBal, ok := balances[userID]
+		if !ok {
+			t.Fatalf("WalletBalancesForRoom missing player %s — a missing key is a lost wager, not a zero balance", userID)
+		}
+
+		want := int64(redisBal) - int64(opening)
+		if ledgerBal != want {
+			t.Errorf("player %s: ledger balance = %d, want %d (redis %d - opening %d)", userID, ledgerBal, want, redisBal, opening)
+		}
+	}
+}
