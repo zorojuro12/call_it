@@ -320,3 +320,51 @@ func TestReconcileConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestReconcileConservation asserts the round_pool account returns to
+// zero and dust is exactly what domain.Settle computed. A lost
+// wager_placed event leaves the pool short by that amount and a
+// duplicated one leaves it long — neither necessarily shows up in a
+// per-user wallet comparison if the corresponding settlement credit is
+// also affected, but both show up here.
+func TestReconcileConservation(t *testing.T) {
+	ctx := context.Background()
+	pool := getTestPool(t)
+	repo := New(pool)
+
+	fx := setupReconcileFixture(t, ctx, true)
+	r := setupReconcileRelay(t, ctx)
+	worker := setupReconcileWorker(t, repo)
+
+	wantTxns := reconcilePlayers*reconcileWagersPerPlayer + 1
+	drainReconcile(t, ctx, r, worker, repo, fx.roomID, wantTxns)
+
+	poolBal, err := repo.PoolBalance(ctx, fx.roomID)
+	if err != nil {
+		t.Fatalf("PoolBalance() error = %v", err)
+	}
+	if poolBal != 0 {
+		t.Errorf("PoolBalance(%s) = %d, want 0 — every token that entered the round's pool must leave it", fx.roomID, poolBal)
+	}
+
+	dust, err := repo.DustForRoom(ctx, fx.roomID)
+	if err != nil {
+		t.Fatalf("DustForRoom() error = %v", err)
+	}
+	if dust != int64(fx.settlement.Dust) {
+		t.Errorf("DustForRoom(%s) = %d, want %d (domain.Settlement.Dust)", fx.roomID, dust, int64(fx.settlement.Dust))
+	}
+
+	balances, err := repo.WalletBalancesForRoom(ctx, fx.roomID)
+	if err != nil {
+		t.Fatalf("WalletBalancesForRoom() error = %v", err)
+	}
+	var walletSum int64
+	for _, bal := range balances {
+		walletSum += bal
+	}
+
+	if total := walletSum + poolBal + dust; total != 0 {
+		t.Errorf("token conservation for room %s: Σwallets(%d) + pool(%d) + dust(%d) = %d, want 0", fx.roomID, walletSum, poolBal, dust, total)
+	}
+}
