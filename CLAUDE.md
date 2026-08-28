@@ -53,15 +53,21 @@ make up          # docker compose up -d          — Redis + PostgreSQL only (Ph
 make up-full     # docker compose --profile full up -d — adds Kafka (Phase 5+)
 make down        # docker compose down
 make test-unit   # cd backend && go test ./... -race -cover -p 1 — assumes Redis is already up
+make migrate     # cd backend && go run ./cmd/migrate $(ARGS) — applies the ledger schema; `ARGS=down` reverts
+make ledger-worker # cd backend && go run ./cmd/ledger-worker — Kafka → PostgreSQL ledger writer (Phase 5b); run `make migrate` first, this binary never migrates
 ```
 
 `make test` now brings up the **full stack** — Redis, PostgreSQL, and
 Kafka — and waits for all three to report healthy before running Go
-(Phase 5a). `internal/redisstore`, `internal/migrate`, and
-`internal/events`' integration tests **fail rather than skip** when their
-respective dependency is unreachable — a suite whose whole purpose is
+(Phase 5a). `internal/redisstore`, `internal/migrate`, `internal/events`,
+and `internal/ledger`'s integration tests **fail rather than skip** when
+their respective dependency is unreachable — a suite whose whole purpose is
 proving zero double-spend, or that a migration/event actually reaches its
-target, must not report PASS while executing nothing. `redisstore` runs
+target, must not report PASS while executing nothing. `internal/ledger`
+runs against its own **`callit_test`** PostgreSQL database (dropped and
+recreated per run, migrated fresh) plus Redis **DB 15** and the real Kafka
+broker — its reconciliation suite is the one place all three
+infrastructure dependencies are live in the same test run. `redisstore` runs
 against Redis **DB 15**, never DB 0, so a run can't touch local dev state;
 `REDIS_ADDR` (default `localhost:6379`), `POSTGRES_DSN` (default
 `postgres://callit:callit@localhost:5432/callit?sslmode=disable`), and
@@ -83,8 +89,9 @@ default — the process fails fast without it) and, optionally,
 `JWT_TTL` (default `2h`, valid `1m`–`24h`). Example:
 `JWT_SECRET=$(openssl rand -hex 32) go run ./cmd/api`.
 
-`make migrate` and `make loadtest` exist as stubs — no migrations or k6
-scripts exist yet (Phase 5 and Phase 7 respectively).
+`make loadtest` exists as a stub — no k6 scripts exist yet (Phase 7).
+`make migrate` and `make ledger-worker` are real as of Phase 5a/5b
+respectively.
 
 CI (`.github/workflows/ci.yml`) runs `go vet`, `gofmt -l` (fails on any
 unformatted file), `go build`, and `go test -race -cover -p 1`, in that
@@ -186,6 +193,34 @@ red.
   `domain.ApplySessionResult` floors the persistent balance at 0 — don't
   "fix" this by debiting at join time, that would double-count against
   the floor rule.
+- **Ledger sign convention (Phase 5b, `internal/ledger`): `credit` = tokens
+  in, `debit` = tokens out.** An account's balance is `Σ credits − Σ
+  debits`, and every transaction satisfies `Σ debits == Σ credits` —
+  enforced by a `DEFERRABLE INITIALLY DEFERRED` constraint trigger at
+  COMMIT, not application code. Deliberately not the classical accounting
+  convention (where a debit increases an asset account): that would make
+  every reader first decide whether a user wallet is an asset or a
+  liability. One rule — money in is a credit — removes the question.
+- **The ledger records outbox movements only; a `user_wallet` ledger
+  balance is a net session delta, not an absolute holding.** Joining a
+  room is not an outbox event (`Store.JoinRoom` is a Go pipeline,
+  `redisstore/room.go:114`, not a Lua script), so the opening stake never
+  reaches Kafka or the ledger. The reconciliation identity is
+  `redis_wallet(user, room) − opening_stake(user, room) ==
+  ledger_balance(user, room)` — do not "fix" a reconciliation check by
+  comparing the ledger directly to the absolute Redis wallet, that
+  comparison is false by construction.
+- **Kafka broker access is equivalent to ledger-write access.**
+  `cmd/ledger-worker` writes PostgreSQL money rows from any message on the
+  `wagers-placed`/`rounds-settled` topics without authenticating the
+  producer — the wire-format validation (`internal/events.DecodeMessage`)
+  rejects a malformed message, but not one from an unauthorized producer.
+  Restricting who can produce to these topics is a network/broker-config
+  concern, not application code, and must hold for that reason: local dev
+  runs Kafka PLAINTEXT with no ACLs (a recorded decision, `docs/project-history.md`),
+  so this invariant is currently enforced by topology alone (only
+  `cmd/relay` produces) rather than by the broker. Revisit before any
+  shared or production deployment.
 
 (These bind Phases 1-5 as they're built; Phase 0 — config and health check —
 doesn't yet touch most of them. See the plan for full context on each.)
@@ -214,7 +249,9 @@ Phase 5 adds:
 ├── cmd/relay/             # Redis Stream → Kafka outbox relay
 ├── cmd/ledger-worker/     # Kafka → PostgreSQL ledger writer
 ├── internal/events/       # event schemas, Kafka producer/consumer
-├── internal/ledger/       # PostgreSQL double-entry repository
+├── internal/ledger/       # PostgreSQL double-entry repository, the pure
+│                          #   event→transaction mapping, and the Kafka
+│                          #   consume loop that feeds it
 └── migrations/            # NNNN_name.up.sql / .down.sql — this naming is the convention
 ```
 

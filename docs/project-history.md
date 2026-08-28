@@ -134,6 +134,57 @@ turns a non-string Redis stream value into `""` before handing it to
 codebase writes strings) case. Left as-is — fixing it would be speculative
 hardening against a value shape nothing in this codebase produces.
 
+### Phase 5b — `internal/ledger`, `internal/events` (Kafka consumer), `cmd/ledger-worker`
+
+Scoped to the four surfaces the plan named. No CRITICAL. One HIGH raised,
+investigated, and **not reproducible** — the rest are MEDIUM/LOW, one fixed
+and two accepted.
+
+- **`internal/events/message.go` decoding attacker-influenceable JSON** —
+  clear on the field-substitution path: `DisallowUnknownFields` plus this
+  phase's own validation correctly rejects a renamed field rather than
+  silently decoding it to zero (`TestDecodeMessageRejectsUnknownField`).
+  One MEDIUM accepted: `RoundSettled.Payouts` has no slice-length cap, so a
+  message with an extreme payout count could pressure memory before
+  `ledger.TransactionFor`'s balance check rejects it. Accepted rather than
+  fixed — this attack surface is the same one the trust-boundary finding
+  below already covers (Kafka broker access), and a size cap on top of a
+  documented, topology-enforced trust boundary is defense-in-depth on an
+  already-mitigated path. Candidate for Phase 7 if broker ACLs are ever
+  relaxed. One LOW-MEDIUM noted and accepted: extreme values near
+  `int64` max could in principle overflow the `Dust + Σpayouts` sum before
+  the equality-against-`Total` check catches it; the check itself provides
+  defense-in-depth, and no path in this codebase produces amounts anywhere
+  near that range.
+- **`internal/ledger/repo.go` SQL construction** — clear. Every query in
+  `WriteBatch` and the four read methods uses `$N` positional parameters;
+  no string concatenation or identifier interpolation anywhere in the
+  package.
+- **`cmd/ledger-worker/main.go` credential surface** — clear.
+  `config.LoadLedger` does not require `JWT_SECRET` (the worker neither
+  issues nor verifies tokens). The HIGH finding — that a `pgxpool.New`/
+  `pool.Ping` connection error could surface the DSN's password — was
+  **investigated and not reproduced**: this is the same question Phase 5a's
+  review already answered for `internal/migrate`'s connection path, and the
+  answer is unchanged. Verified empirically again here against both an
+  unreachable host and a wrong-password auth failure against the real local
+  Postgres; pgx's error formatting includes `user=` and `database=` but
+  never the password (`failed to connect to `user=callit database=callit`:
+  ...`, and `failed SASL auth: FATAL: password authentication failed for
+  user "callit"` — no password value in either). Every default DSN in this
+  repo remains unambiguously local-dev-shaped; revisit if that changes.
+- **The trust boundary: an unauthenticated Kafka consumer writing money
+  rows** — this is a real, MEDIUM, now-fixed gap, but the fix is
+  documentation, not code. `cmd/ledger-worker` writes a PostgreSQL
+  transaction from any message on `wagers-placed`/`rounds-settled` without
+  authenticating the producer — wire-format validation rejects a malformed
+  message, not one from an unauthorized producer. Nothing in `CLAUDE.md`
+  said so explicitly before this phase. Now recorded as a Critical
+  Invariant: broker access is ledger-write access, currently enforced by
+  topology alone (only `cmd/relay` produces) rather than by the broker,
+  since local dev runs Kafka PLAINTEXT with no ACLs (Phase 5a's recorded
+  decision, above). Revisit before any shared or production deployment.
+
 ### Open by design, deferred to Phase 7 hardening
 
 1. **Login timing.** The unknown-email path skips argon2id and so responds
@@ -143,6 +194,14 @@ hardening against a value shape nothing in this codebase produces.
    secret; authorization rests on the JWT.
 3. **Reconnect ends a session.** `EndSession` fires on socket disconnect, so a
    dropped player restarts at the room buy-in. Resume needs a grace window.
+4. **`RoundSettled.Payouts` has no slice-length cap (Phase 5b).** A message
+   with an extreme payout count pressures memory before
+   `ledger.TransactionFor`'s balance check rejects it. Deferred because the
+   only path to an attacker-controlled `Payouts` array is already Kafka
+   broker access, which Phase 5b's Critical Invariants now document as
+   ledger-write access — a size cap is defense-in-depth on an
+   already-mitigated path. Revisit if broker ACLs are ever relaxed from
+   today's topology-only enforcement.
 
 ---
 
@@ -167,6 +226,16 @@ Suspect a real gap? Check the `-coverpkg` profile first.
 remainder is defensive `if err != nil` branches after a Redis call,
 unreachable without fault-injecting the connection itself. Dead-but-safe —
 don't chase them with a fake Redis to flip the percentage.
+
+**`internal/ledger` (Phase 5b) carries the same class of gap as
+`redisstore`, now over `pgx`.** Merged-profile figure (`go test ./... -coverpkg=./...`,
+lines attributed to `internal/ledger` deduplicated across every test
+binary that instruments it): **85.8%**; `internal/events` (also touched
+this phase): **89.6%**. Both clear the 80% floor. The uncovered lines in
+`internal/ledger/repo.go` are exclusively the `err != nil` branches after
+`Query`/`QueryRow`/`Scan`/`rows.Err()` — unreachable without fault-injecting
+the PostgreSQL connection mid-call, same as `redisstore`'s accepted gap.
+Don't chase them with a fault-injecting pool to flip the percentage.
 
 **`cmd/*` at 0% is expected**, not a gap: thin wiring with no branching logic.
 
