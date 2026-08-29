@@ -323,10 +323,16 @@ yet. Check the parent plan §9's "Tooling to import" column before starting a
 phase.
 
 Installed: `golang-patterns`, `golang-testing`, `docker-patterns`,
-`redis-patterns`, `api-design`, `postgres-patterns`, `database-migrations`
-(the last two ahead of Phase 5). `continuous-learning-v2` is present but
-**deliberately dormant** — don't enable it without re-reading
-`dev-workflow-guide.md` §9.
+`redis-patterns`, `api-design`, `postgres-patterns`, `database-migrations`,
+`react-patterns`, `nextjs-turbopack`, `accessibility` (the last three ahead
+of Phase 6, per the plan §9 row's "Tooling to import" column — staged
+before Phase 6 planning starts, not yet exercised by any code). Matching
+rule packs `.claude/rules/ecc/react/` and `.claude/rules/ecc/typescript/`
+installed alongside them (`react` matches spec §2's explicit "React 19 /
+Next.js"; `typescript` added on the assumption a Next.js scaffold defaults
+to TS — confirm or correct this when Phase 6's plan fixes the actual stack).
+`continuous-learning-v2` is present but **deliberately dormant** — don't
+enable it without re-reading `dev-workflow-guide.md` §9.
 
 `delegating-plan-tasks` (added ahead of Phase 5b) changes *where* a plan
 task's turns execute — one cold subagent per task instead of inline — and
