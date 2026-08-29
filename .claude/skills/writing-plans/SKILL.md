@@ -108,6 +108,12 @@ checkpoints into one commit.)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use the `executing-plans` skill to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Delegation (optional):** [Omit this line entirely for a fully inline
+plan — that is still the default and needs no extra step. Only add it if
+Self-Review's delegation check below found qualifying tasks: name them,
+e.g. "Tasks 1–5 are delegated, one subagent per task, via the
+`delegating-plan-tasks` skill. Task N is executed inline — [one line why]."]
+
 **Goal:** [One sentence describing what this builds]
 
 **Architecture:** [2-3 sentences about approach]
@@ -239,6 +245,17 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in Task 3 but `clearFullLayers()` in Task 7 is a bug.
 
+**4. Delegation eligibility (optional):** For each task, apply
+`delegating-plan-tasks`' "What to Delegate, and What Not To" rule —
+mechanical against a clear, already-known contract (a repository over a
+known schema, a config surface, a decode/validate layer, a binary wiring
+existing pieces together) vs. the phase's flagship correctness work (the
+test that is *evidence* for a claim the project makes — keep that inline,
+cross-task continuity pays there and it's the wrong place to absorb a
+process experiment). Tag qualifying tasks in the header's `**Delegation:**`
+line. **Skip this check entirely for a plan you want to keep fully
+inline** — it's the only optional item in this list.
+
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
 ## Where a Plan Stops
@@ -278,9 +295,14 @@ carries its own Global Constraints and any amendments it makes to a parent plan
 or spec. See `docs/dev-workflow-guide.md` for this project's two-model loop.
 
 (Upstream also offers a subagent-driven mode — a fresh subagent per task with
-two-stage review. That skill isn't installed in this project; inline execution
-is the deliberate default. Install `subagent-driven-development` from the
-superpowers checkout if that changes.)
+two-stage review. `subagent-driven-development` is still declined here — the
+objection was always its ceremony, not delegation itself
+(`docs/dev-workflow-guide.md` §9). Delegation without the ceremony exists as
+the project-local `delegating-plan-tasks` skill, invoked from `executing-plans`
+Step 2 for whichever tasks this plan's header opts in via Self-Review's
+delegation check above. **Inline execution remains the default** — a plan
+that skips that check, or writes no `**Delegation:**` line, runs entirely
+inline exactly as before.)
 
 ## Relationship to the portable copy
 

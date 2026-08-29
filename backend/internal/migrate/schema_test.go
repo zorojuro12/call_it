@@ -128,8 +128,12 @@ func seedAccountAndTransaction(t *testing.T, ctx context.Context, pool *pgxpool.
 
 	acctA, acctB, txID := uuid.New(), uuid.New(), uuid.New()
 
+	// acctB uses 'room_escrow', not 'system_dust': migration 0002 makes
+	// system_dust a global singleton via accounts_system_singleton_key, and
+	// this helper is called multiple times per test run. room_escrow carries
+	// no such constraint and this helper only needs a second distinct account.
 	_, err := pool.Exec(ctx,
-		`INSERT INTO accounts (id, kind) VALUES ($1, 'user_wallet'), ($2, 'system_dust')`,
+		`INSERT INTO accounts (id, kind) VALUES ($1, 'user_wallet'), ($2, 'room_escrow')`,
 		acctA, acctB,
 	)
 	if err != nil {

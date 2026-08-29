@@ -1,4 +1,4 @@
-.PHONY: up up-full down test test-unit lint build migrate loadtest
+.PHONY: up up-full down test test-unit lint build migrate ledger-worker loadtest
 
 # Core services only (Redis, PostgreSQL) — what Phases 0-4 need.
 up:
@@ -44,6 +44,12 @@ build:
 # docker-compose.yml's postgres service. `make migrate ARGS=down` reverts it.
 migrate:
 	cd backend && go run ./cmd/migrate $(ARGS)
+
+# Runs the Kafka → PostgreSQL ledger writer. Requires POSTGRES_DSN — e.g.
+# postgres://callit:callit@localhost:5432/callit?sslmode=disable. Apply the
+# schema with `make migrate` first; this binary never migrates.
+ledger-worker:
+	cd backend && go run ./cmd/ledger-worker
 
 loadtest:
 	@echo "no k6 scripts yet — added in Phase 7"

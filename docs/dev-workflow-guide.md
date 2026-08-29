@@ -221,6 +221,29 @@ preemptively.
 **Portable?** The reasoning generalizes; the verdict does not. A verbose
 stack, larger tasks, or work you intend to run unattended flips this quickly.
 
+**Update 2026-08-27 — the revisit trigger fired, and SDD was still not
+adopted.** Phase 5b was the first phase sized to make delegation worth
+trying. Rather than installing SDD itself, the response was the thin
+project-local `.claude/skills/delegating-plan-tasks/SKILL.md`: one dispatch
+per task (not implementer+reviewer), no git-ignored ledger, escalation
+instead of autonomous "rulings," and a return contract capped at ~300 words
+across four fixed sections. The objection above was always SDD's ceremony,
+never delegation itself — this is delegation without the ceremony, wired
+into `executing-plans` Step 2, invoked only for tasks a plan's header opts
+in (inline stays the default).
+
+Run once, on Phase 5b's Tasks 1–5: **3.0× token saving, 9× fewer turns**
+per checkpoint against the Phase 5a inline control, both pre-registered
+bars cleared (`journal/2026-08-27_1548_ansh_phase-5b-delegation-prediction.md`,
+`journal/2026-08-27_1725_ansh_phase-5b-ledger-execution.md`). The one
+process gap the run surfaced — a subagent bundled four checkpoints into one
+commit and its own return report claimed no folds had happened, caught only
+because the parent checked `git log` directly rather than trusting the
+report — was patched the same day: the return contract's `COMMITS` field
+now tags every commit with the checkpoint(s) it covers, so a fold has to
+appear as a fact in a structured field rather than rely on an honest summary
+sentence.
+
 ### Continuous learning v2 / instincts — declined 2026-08-23
 
 **What it is:** ECC's `continuous-learning-v2` — hooks capture every tool call

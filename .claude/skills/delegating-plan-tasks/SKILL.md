@@ -87,20 +87,27 @@ re-accumulates in the parent and you have paid the cold start for nothing.
 Require exactly four sections, and cap the whole return at ~300 words:
 
 ```
-COMMITS:    one line per commit — `<sha> <subject>`
+COMMITS:    one line per commit — `<sha> <subject> — CPn` (or `CPn–CPm` if
+            more than one checkpoint landed in that commit). Every
+            checkpoint in the task must be named against exactly one line.
 INTERFACES: what was actually produced — exact signatures, only where they
             differ from the plan's Produces block. "As planned" is a
             complete answer.
-DEVIATIONS: anything done differently from the plan, and why. Includes
-            checkpoints that collapsed because an earlier one already
-            implemented them.
+DEVIATIONS: anything done differently from the plan, and why. State
+            explicitly whether every checkpoint landed in its own commit.
+            If not, name which checkpoints shared a commit and why — this
+            must agree with the CPn ranges in COMMITS above; the parent
+            checks both against `git log --oneline` and treats a mismatch
+            as a defect in the report, not just in the commits.
 DEFECTS:    bugs found in existing code, plan contradictions hit, or
             "none".
 ```
 
 `INTERFACES` is load-bearing: the next task's brief is only accurate if the
 previous task reported what it really built. `DEVIATIONS` is what keeps the
-journal honest at close-out.
+journal honest at close-out — the `CPn` tag on every `COMMITS` line exists so
+a fold shows up as a fact in that section (a `CP2–CP5` range against one
+sha), not just as an honesty test on the summary sentence below it.
 
 No narrative. No "what I learned". No restating the plan back.
 

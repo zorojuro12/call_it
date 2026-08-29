@@ -298,6 +298,43 @@ summing their `ledger_entries`, and that total tokens across the system are
 conserved. This test is the evidence behind the 0.00% double-spend claim
 and should be built deliberately rather than assumed.
 
+**Amendment F2 (Phase 5b) — migration `0002` adds identity and lookup
+indexes, one of them a correctness-at-scale requirement, not a nicety.**
+`accounts` had no unique constraint on its natural keys at all, so account
+provisioning (deterministic UUIDv5 IDs, `ON CONFLICT (id) DO NOTHING`) had
+no enforcing constraint behind it — `0002` adds three partial unique
+indexes (`accounts_user_wallet_key`, `accounts_round_pool_key`,
+`accounts_system_singleton_key`) that make a drifted account ID rejected
+rather than merely unlikely. The other two indexes
+(`ledger_entries_transaction_id_idx`, `ledger_entries_account_id_idx`)
+exist because `assert_transaction_balanced()` does a per-row
+`WHERE transaction_id = ...` lookup on every entry insert — without an
+index that's a sequential scan of the whole `ledger_entries` table per
+insert, quadratic over the load the flagship reconciliation test itself
+generates (Task 3 CP1).
+
+**Amendment F3 (Phase 5b) — the reconciliation identity carries the
+opening-stake term, and the k6 run is an in-process load generator.**
+`Store.JoinRoom` is a Go pipeline (`redisstore/room.go:114`), not a Lua
+script, so a session's opening stake never reaches the outbox — the ledger
+records outbox movements only. The identity this section's flagship test
+actually proves is therefore
+
+```
+redis_wallet(user, room) − opening_stake(user, room) == ledger_balance(user, room)
+```
+
+not the literal `redis_wallet == ledger_balance` above, which is false by
+the opening stake (D2, `docs/plans/2026-08-27-phase-5b-ledger.md`). The
+alternative — an atomic `system_mint → user_wallet` grant on join — was
+rejected as out of scope: it would mean rewriting a Phase 4 write path
+(`JoinRoom`) into Lua to improve a Phase 5b assertion. Recorded as a Phase 7
+candidate, not built here. Separately, "after a k6 run" is satisfied by an
+in-process concurrent Go load generator (8 goroutines, 40 wagers) rather
+than k6 itself, since k6 arrives in Phase 7 — the reconciliation test
+(`internal/ledger/reconcile_test.go`) is the same shape the eventual k6-driven
+version will assert against.
+
 ---
 
 ## 7. Kafka topology
@@ -311,6 +348,33 @@ Keying by `room_id` yields per-room ordering with cross-room parallelism.
 Ordering matters concretely here: a settlement must never be processed
 before the wagers it settles. Kafka runs single-node in **KRaft mode** (no
 Zookeeper) to keep local resource use manageable.
+
+**Amendment F1 (Phase 5b) — the wire format is pinned by explicit JSON
+tags, and one field name diverges from the Redis outbox.**
+`events.KafkaProducer.Produce` marshals with `json.Marshal(ev)`, and before
+this phase neither `WagerPlaced` nor `RoundSettled` carried JSON tags — the
+wire format was Go field spelling (`"RoomID"`, `"IdempotencyKey"`), decided
+implicitly and breakable by any field rename. `WagerPlaced` and
+`RoundSettled` now carry explicit `snake_case` tags, asserted byte-for-byte
+by `internal/events/message_test.go`, and `DecodeMessage` rejects unknown
+fields (`DisallowUnknownFields`) so a producer that renamed a field fails
+loudly instead of decoding to a zero value. One intentional divergence: the
+Redis outbox field for the wagering user is `user`
+(`scripts/lua/place_wager.lua`), but the Kafka field is `user_id`, matching
+`Payout`'s existing tag. The Kafka format is internally consistent; the
+Redis stream format is unchanged.
+
+**Ordering caveat (Phase 5b discovery) — cross-topic ordering is not
+guaranteed and does not need to be.** This table's "ordering matters
+concretely" statement is true for the *transient sign* of a room's
+`round_pool` ledger account, not for any final balance: `wagers-placed` and
+`rounds-settled` are separate topics with no mutual ordering guarantee, so
+a settlement can be consumed before the wagers it settles. Every
+transaction is internally balanced regardless of arrival order — a
+settlement written first drives `round_pool` transiently negative, and the
+wagers that follow bring it back to zero. `internal/ledger`'s worker
+therefore needs no cross-topic sequencing (D4,
+`docs/plans/2026-08-27-phase-5b-ledger.md`).
 
 **Amendment E3 (Phase 5a) — topics are created explicitly, not
 auto-created.** `docker-compose.yml` sets
@@ -360,7 +424,7 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 4a | **WebSocket transport** ✅ | Authenticated room socket (JWT verified at handshake, no per-message lookup), per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, join/leave presence broadcast | 3 | None new |
 | 4b | **Round lifecycle** ✅ | Rounds, wagers, live odds, server-side lock timer and 60-second auto-refund fallback, host-resolve settlement reveal, session-end persistence, playable end to end from a CLI client | 4a | None new |
 | 5a | **Outbox → Kafka + ledger schema** | Outbox relay binary (`cmd/relay`), `wagers-placed`/`rounds-settled` producers, `internal/events` schemas, PostgreSQL migrations, ledger schema, deferred constraint trigger | 2, 4b | `postgres-patterns`, `database-migrations` skills |
-| 5b | **Double-entry ledger** | `cmd/ledger-worker` consumer, `internal/ledger` repository, idempotent replay on the `idempotency_key` unique constraint, Redis↔PostgreSQL reconciliation test | 5a | None new |
+| 5b | **Double-entry ledger** ✅ | `cmd/ledger-worker` consumer, `internal/ledger` repository, idempotent replay on the `idempotency_key` unique constraint, Redis↔PostgreSQL reconciliation test | 5a | None new |
 | 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
 | 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5b, 6 | None new — spec already names k6 directly |
 | 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7 | Decide when unblocked |
