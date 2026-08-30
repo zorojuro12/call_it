@@ -239,6 +239,14 @@ Don't chase them with a fault-injecting pool to flip the percentage.
 
 **`cmd/*` at 0% is expected**, not a gap: thin wiring with no branching logic.
 
+**Frontend coverage (Phase 6a): 97.4% statements / 95.9% branches**,
+measured by `vitest run --coverage` (`@vitest/coverage-v8`) over `lib/**`
+and `components/**` only — `app/**` route files are excluded, the same
+allowance `cmd/*` has on the Go side. Comfortably clears the 80% floor;
+the handful of uncovered lines in `lib/session.ts` and `lib/socket.ts` are
+defensive branches (a corrupt `sessionStorage` read, an unregistered
+handler set) of the same class as `redisstore`'s accepted gap above.
+
 ---
 
 ## Tooling decisions
@@ -326,3 +334,21 @@ in `CLAUDE.md`'s Known Environment Gotchas.
   The `full` profile was also verified — Kafka in KRaft mode starts, reports
   `healthy`, ~290MB RSS. The whole compose file is confirmed working, not just
   YAML-valid.
+- **Playwright/Chromium, no sudo** (verified 2026-08-30, Phase 6a Task 9):
+  the plan's contingency — `npx playwright install chromium` (user-local
+  browser only, skipping `--with-deps`) — was never needed. Chromium
+  151.0.7922.34 downloaded and launched cleanly on the first attempt; the
+  two-browser E2E test ran to completion. CI's `frontend-e2e` job still
+  uses `--with-deps` since GitHub-hosted runners have sudo.
+- **A Hyper-V dynamic port exclusion can claim 6379** (hit 2026-08-30,
+  this machine, after a Windows/WSL restart): `docker compose up` failed
+  with "ports are not available... forbidden by its access permissions"
+  for Redis specifically, even though nothing was listening on it —
+  `netsh interface ipv4 show excludedportrange protocol=tcp` confirmed
+  6379 fell inside an OS-reserved range (`6303–6402`). The reliable fix is
+  an admin-PowerShell `net stop winnat && net start winnat`, but the
+  lighter fix taken here was to make `docker-compose.yml`'s Redis host
+  port configurable via `REDIS_HOST_PORT` (default unchanged at `6379`) —
+  set it and `REDIS_ADDR` together for any session hitting this. Not a
+  code or Docker bug; a local Windows networking quirk, most likely after
+  a restart.
