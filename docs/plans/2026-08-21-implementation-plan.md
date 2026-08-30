@@ -425,7 +425,7 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 4b | **Round lifecycle** ✅ | Rounds, wagers, live odds, server-side lock timer and 60-second auto-refund fallback, host-resolve settlement reveal, session-end persistence, playable end to end from a CLI client | 4a | None new |
 | 5a | **Outbox → Kafka + ledger schema** ✅ | Outbox relay binary (`cmd/relay`), `wagers-placed`/`rounds-settled` producers, `internal/events` schemas, PostgreSQL migrations, ledger schema, deferred constraint trigger | 2, 4b | `postgres-patterns`, `database-migrations` skills |
 | 5b | **Double-entry ledger** ✅ | `cmd/ledger-worker` consumer, `internal/ledger` repository, idempotent replay on the `idempotency_key` unique constraint, Redis↔PostgreSQL reconciliation test | 5a | None new |
-| 6a | **Frontend shell** | Next.js/TypeScript scaffold, typed REST + WebSocket clients, register/login, room creation and join-by-code, live presence roster — in a room and connected, no gameplay yet. Also the backend's browser-origin admission (CORS + WS `CheckOrigin`), without which no browser can reach the API at all | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
+| 6a | **Frontend shell** ✅ | Next.js/TypeScript scaffold, typed REST + WebSocket clients, register/login, room creation and join-by-code, live presence roster — in a room and connected, no gameplay yet. Also the backend's browser-origin admission (CORS + WS `CheckOrigin`), without which no browser can reach the API at all | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
 | 6b | **Gameplay UI** | Host console (open/resolve round), participant wager pad, live odds, lockout countdown, aggregate bettors counter, settlement reveal, Web Audio feedback | 6a | None new |
 | 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5b, 6b | None new — spec already names k6 directly |
 | 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7 | Decide when unblocked |
@@ -452,12 +452,10 @@ plumbing that can be verified structurally while 5b keeps the
 cross-cutting attention that kind of proof needs.
 
 **✅ marks a phase whose branch is merged into `dev` and whose tests were
-green at merge.** Phases 0–5b are done. 6a's implementation is complete
-and fully verified on `phase-6a-frontend-shell`
-(`docs/plans/2026-08-30-phase-6a-frontend-shell.md`) — all 9 tasks, full
-backend + frontend + E2E suites green, security review clean — but the
-branch has not been merged into `dev` yet by choice, so it stays
-unmarked until that happens.
+green at merge.** Phases 0–6a are done
+(`docs/plans/2026-08-30-phase-6a-frontend-shell.md`) — 6a's
+`phase-6a-frontend-shell` merged with `--no-ff`, full backend + frontend
++ E2E suites re-verified green on the merged result before merging.
 
 **Amendment discovered by 6a's own E2E acceptance test.** The WS join
 handler (`internal/ws/handler.go`, built in Phase 4a) only ever broadcast
