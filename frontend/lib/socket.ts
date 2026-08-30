@@ -22,8 +22,31 @@ export function toWebSocketUrl(baseUrl: string, token: string): string {
 export function openRoomSocket(token: string): RoomSocket {
   const ws = new WebSocket(toWebSocketUrl(API_BASE_URL, token));
   const handlers = new Map<string, Set<Handler>>();
+  const statusHandlers = new Set<(s: SocketStatus) => void>();
+  let status: SocketStatus = "connecting";
+  let closed = false;
+
+  function setStatus(next: SocketStatus) {
+    status = next;
+    for (const handler of statusHandlers) {
+      handler(status);
+    }
+  }
+
+  ws.onopen = () => setStatus("open");
+
+  // There is no reconnect timer, no backoff, and no retry — deliberate
+  // (Decisions §3, spec §4's known limitation): reconnecting would re-fire
+  // the backend's EndSession cycle and silently reset the player to the
+  // room buy-in, discarding their in-room result. 6a surfaces a closed
+  // status and stops.
+  ws.onclose = () => setStatus("closed");
 
   ws.onmessage = (event: MessageEvent<string>) => {
+    if (closed) {
+      return;
+    }
+
     let envelope: unknown;
     try {
       envelope = JSON.parse(event.data);
@@ -48,7 +71,6 @@ export function openRoomSocket(token: string): RoomSocket {
       try {
         handler(data);
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error(`socket: handler for "${type}" threw`, err);
       }
     }
@@ -66,13 +88,21 @@ export function openRoomSocket(token: string): RoomSocket {
         set?.delete(handler);
       };
     },
-    onStatus() {
-      return () => {};
+    onStatus(handler) {
+      statusHandlers.add(handler);
+      handler(status);
+      return () => {
+        statusHandlers.delete(handler);
+      };
     },
     send(type, data) {
       ws.send(JSON.stringify({ type, data }));
     },
     close() {
+      if (closed) {
+        return;
+      }
+      closed = true;
       ws.close();
     },
   };

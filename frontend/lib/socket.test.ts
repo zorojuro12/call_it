@@ -121,7 +121,7 @@ describe("envelope dispatch", () => {
 
   test("an envelope with no registered handler does not throw", async () => {
     const { openRoomSocket } = await import("./socket");
-    const socket = openRoomSocket("t1");
+    openRoomSocket("t1");
     const raw = instances[0];
 
     expect(() =>
@@ -183,5 +183,61 @@ describe("envelope dispatch", () => {
     raw.fireMessage(JSON.stringify({ type: "connected", data: {} }));
 
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe("status and no-reconnect", () => {
+  test("status transitions through connecting, open, closed", async () => {
+    const { openRoomSocket } = await import("./socket");
+    const socket = openRoomSocket("t1");
+    const raw = instances[0];
+
+    const seen: string[] = [];
+    socket.onStatus((s) => seen.push(s));
+
+    expect(seen).toEqual(["connecting"]);
+    raw.fireOpen();
+    expect(seen).toEqual(["connecting", "open"]);
+    raw.fireClose();
+    expect(seen).toEqual(["connecting", "open", "closed"]);
+  });
+
+  test("an unexpected close never opens a second socket, even after 30s", async () => {
+    vi.useFakeTimers();
+    const { openRoomSocket } = await import("./socket");
+    const socket = openRoomSocket("t1");
+    const raw = instances[0];
+
+    raw.fireClose();
+    expect(instances).toHaveLength(1);
+
+    vi.advanceTimersByTime(30_000);
+    expect(instances).toHaveLength(1);
+
+    socket.close();
+  });
+
+  test("a closed socket is inert to further messages", async () => {
+    const { openRoomSocket } = await import("./socket");
+    const socket = openRoomSocket("t1");
+    const raw = instances[0];
+
+    const handler = vi.fn();
+    socket.on("connected", handler);
+    socket.close();
+
+    raw.fireMessage(JSON.stringify({ type: "connected", data: {} }));
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  test("close() is idempotent", async () => {
+    const { openRoomSocket } = await import("./socket");
+    const socket = openRoomSocket("t1");
+
+    expect(() => {
+      socket.close();
+      socket.close();
+    }).not.toThrow();
   });
 });
