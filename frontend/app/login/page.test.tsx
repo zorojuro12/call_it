@@ -62,4 +62,74 @@ describe("login page", () => {
     expect(getAccountToken()).toBe("acc-tok");
     expect(push).toHaveBeenCalledWith("/host");
   });
+
+  test("an invalid-credentials failure shows the error and does not navigate", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "invalid_credentials",
+            message: "invalid email or password",
+          },
+        }),
+        { status: 401 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+    await user.type(screen.getByLabelText(/email/i), "a@b.test");
+    await user.type(screen.getByLabelText(/password/i), "wrongpassword1");
+    await user.click(screen.getByRole("button", { name: /log in/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/invalid email or password/i);
+    expect(push).not.toHaveBeenCalled();
+    expect(getAccountToken()).toBeNull();
+  });
+
+  test("a rate-limited failure shows the error and does not navigate", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: "rate_limited", message: "too many requests" },
+        }),
+        { status: 429 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+    await user.type(screen.getByLabelText(/email/i), "a@b.test");
+    await user.type(screen.getByLabelText(/password/i), "wrongpassword1");
+    await user.click(screen.getByRole("button", { name: /log in/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/too many/i);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  test("the submit button re-enables after a failed submit", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: "invalid_credentials", message: "invalid email or password" },
+        }),
+        { status: 401 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+    await user.type(screen.getByLabelText(/email/i), "a@b.test");
+    await user.type(screen.getByLabelText(/password/i), "wrongpassword1");
+    const button = screen.getByRole("button", { name: /log in/i });
+    await user.click(button);
+
+    await screen.findByRole("alert");
+    expect(button).toBeEnabled();
+  });
 });

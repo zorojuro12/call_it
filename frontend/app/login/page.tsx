@@ -3,26 +3,35 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { apiPost } from "@/lib/api";
+import { apiPost, ApiError } from "@/lib/api";
 import { setAccountToken } from "@/lib/session";
 import type { AuthResponse } from "@/lib/protocol";
+import { ErrorBanner } from "@/components/ErrorBanner";
 
 export default function Page() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
     setSubmitting(true);
 
-    const res = await apiPost<AuthResponse>("/api/v1/auth/login", {
-      email,
-      password,
-    });
-    setAccountToken(res.token);
-    router.push("/host");
+    try {
+      const res = await apiPost<AuthResponse>("/api/v1/auth/login", {
+        email,
+        password,
+      });
+      setAccountToken(res.token);
+      router.push("/host");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "login failed");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -58,6 +67,8 @@ export default function Page() {
             className="rounded border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
           />
         </label>
+
+        <ErrorBanner message={error} />
 
         <button
           type="submit"
