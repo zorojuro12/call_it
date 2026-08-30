@@ -18,6 +18,14 @@ function writeItem(key: string, value: string): void {
   }
 }
 
+function removeItem(key: string): void {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // Swallow: removal must never crash a page render.
+  }
+}
+
 export function setAccountToken(token: string): void {
   writeItem(ACCOUNT_TOKEN_KEY, token);
 }
@@ -32,4 +40,13 @@ export function setRoomToken(token: string): void {
 
 export function getRoomToken(): string | null {
   return readItem(ROOM_TOKEN_KEY);
+}
+
+export function clearRoomToken(): void {
+  removeItem(ROOM_TOKEN_KEY);
+}
+
+export function clearSession(): void {
+  removeItem(ACCOUNT_TOKEN_KEY);
+  removeItem(ROOM_TOKEN_KEY);
 }

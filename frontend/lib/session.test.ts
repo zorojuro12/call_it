@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getAccountToken, getRoomToken, setAccountToken, setRoomToken } from "./session";
+import {
+  clearRoomToken,
+  clearSession,
+  getAccountToken,
+  getRoomToken,
+  setAccountToken,
+  setRoomToken,
+} from "./session";
 
 describe("session token storage", () => {
   beforeEach(() => {
@@ -60,5 +67,36 @@ describe("session token storage", () => {
     // Assert
     expect(token).toBeNull();
     spy.mockRestore();
+  });
+
+  it("clears only the room token when leaving a room", () => {
+    // Arrange
+    setAccountToken("acc1");
+    setRoomToken("room1");
+
+    // Act
+    clearRoomToken();
+
+    // Assert
+    expect(getRoomToken()).toBeNull();
+    expect(getAccountToken()).toBe("acc1");
+  });
+
+  it("clears both tokens on logout", () => {
+    // Arrange
+    setAccountToken("acc1");
+    setRoomToken("room1");
+
+    // Act
+    clearSession();
+
+    // Assert
+    expect(getAccountToken()).toBeNull();
+    expect(getRoomToken()).toBeNull();
+  });
+
+  it("does not throw when clearing the room token on already-empty storage", () => {
+    // Arrange & Act & Assert
+    expect(() => clearRoomToken()).not.toThrow();
   });
 });
