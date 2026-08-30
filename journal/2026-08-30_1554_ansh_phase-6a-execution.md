@@ -1,9 +1,9 @@
-# 2026-08-30 — ansh — Executed Phase 6a (frontend shell) end to end, all 9 tasks through security review
+# 2026-08-30 — ansh — Executed Phase 6a (frontend shell) end to end, all 9 tasks through security review, merged into `dev`
 
-**Status:** All 9 tasks of `docs/plans/2026-08-30-phase-6a-frontend-shell.md` are implemented, tested, and committed on `phase-6a-frontend-shell` — backend CORS/origin admission (Task 1), the full `frontend/` scaffold (Tasks 2–8), the two-browser Playwright E2E test (Task 9 CP1), docs (CP2), and the security review (CP3, no CRITICAL/HIGH, two LOW fixed on the spot) are all done. Full backend suite, 60 frontend tests at 97.4% coverage, and the E2E test all green on the final boundary check. **Not merged into `dev`** — offered the standard 3-option integration menu (`finishing-a-development-branch`), user chose to keep the branch as-is rather than merge or open a PR. Branch pushed to `origin` at the user's request, unmerged.
+**Status:** All 9 tasks of `docs/plans/2026-08-30-phase-6a-frontend-shell.md` are implemented, tested, and committed on `phase-6a-frontend-shell` — backend CORS/origin admission (Task 1), the full `frontend/` scaffold (Tasks 2–8), the two-browser Playwright E2E test (Task 9 CP1), docs (CP2), and the security review (CP3, no CRITICAL/HIGH, two LOW fixed on the spot) are all done. Full backend suite, 60 frontend tests at 97.4% coverage, and the E2E test all green on the final boundary check. **Merged into `dev`** (`24296fe`, `--no-ff`). The standard 3-option integration menu (`finishing-a-development-branch`) was offered and first answered "keep the branch as-is"; the user reversed that a couple of minutes later in the same session, after this entry had already been finalized against the earlier answer. The branch was pushed to `origin` and then merged.
 **Decided:** Fixed a real backend gap found by the E2E test *in this phase*, not by amending the plan first — `internal/ws/handler.go` only ever broadcast future `player_joined`/`player_left`, so a client joining second never learned who was already in the room. User explicitly approved fixing it inline under Task 9's own "genuine integration defect" allowance rather than pausing to write a plan amendment first.
-**Spec:** No product spec change. Parent plan (`docs/plans/2026-08-21-implementation-plan.md`) §9 amended: a paragraph records the backend fix as a same-phase amendment discovered by the E2E test. **The 6a row is deliberately left unmarked (no ✅)** — this doc's own convention ties ✅ to "merged into `dev`," and an earlier pass in this session marked it ✅ prematurely (before the integration decision was made); corrected once the user chose not to merge.
-**Next:** Nothing pending from this session. Whenever `dev` integration happens: `git checkout dev && git merge --no-ff phase-6a-frontend-shell`, full suite, then mark the 6a row ✅ for real.
+**Spec:** No product spec change. Parent plan (`docs/plans/2026-08-21-implementation-plan.md`) §9 amended: a paragraph records the backend fix as a same-phase amendment discovered by the E2E test. **The 6a row is marked ✅** (`4e9ac61`). This doc's own convention ties ✅ to "merged into `dev`," so an early pass that marked it before the integration decision existed was premature and got reverted (`d13ab86`) — the mark went back on only once the merge actually landed.
+**Next:** Phase 6b (gameplay UI). No `6b` plan exists yet — it needs its own `writing-plans` pass before any code, same as every prior phase.
 **Blocked on:** Nothing.
 **Touches:** `backend/internal/config/`, `backend/internal/httpapi/cors.go`, `backend/internal/ws/handler.go`, `backend/cmd/api/main.go`, `frontend/` (all of it — new this phase), `docker-compose.yml`, `Makefile`, `.github/workflows/ci.yml`, `README.md`, `CLAUDE.md`, `docs/plans/2026-08-21-implementation-plan.md`, `docs/project-history.md`
 
@@ -17,6 +17,7 @@ Picked up mid-branch: the phase-6a plan already existed from the prior session (
 
 - **Fixed the newcomer-roster backend gap inline, in Task 9, rather than stopping to amend the plan first.** Asked the user directly (three options: fix now, stop and re-plan, or show the diff first); they chose "fix now." Reasoning recorded in the parent plan's new amendment paragraph rather than repeated here.
 - **Redis's compose host port made configurable via `REDIS_HOST_PORT`** (default unchanged at `6379`). This machine hit a Hyper-V dynamic port exclusion claiming 6379 after a Windows/WSL restart — not a code bug, but blocked `make up` outright. User explicitly preferred remapping the port over the admin-PowerShell `net stop winnat` fix.
+- **Reversed the integration decision after the fact.** The `finishing-a-development-branch` menu was answered "keep the branch as-is," and this entry plus the parent plan's ✅ removal were both committed against that answer (`d13ab86`). Two minutes later the user chose to merge after all, so `--no-ff` merge (`24296fe`) and ✅ restoration (`4e9ac61`) followed, and this entry was amended to match. Recorded because the reverted state is still visible in the commit history and would otherwise read as a contradiction.
 - **Split the E2E checkpoint's commit in two** (`fix: tell a newcomer...` then `test: prove two browsers...`) rather than one bundled commit, keeping the backend correctness fix and the frontend acceptance test as separately revertible units — matches this project's "one behavior, one commit" convention even though the plan's own checkpoint text implied a single commit.
 
 ## What Worked
@@ -64,12 +65,16 @@ All on `phase-6a-frontend-shell`, this session, in order:
 - `8bffb83` — fix: keep vitest and playwright out of each other's way
 - `f3ecd88` — docs: record Phase 6a's stack decision, targets, and origin invariant
 - `2f1132f` — fix: address Phase 6a security review findings
-- (this session, after the above) — docs: correct the premature 6a ✅ marking and finalize the journal entry
+- `d13ab86` — docs: correct the premature 6a ✅ marking and finalize the journal entry
+- `24296fe` — Merge phase-6a-frontend-shell into dev (`--no-ff`, after the integration decision was reversed)
+- `4e9ac61` — docs: mark Phase 6a merged into dev (the ✅ restored, this time earned)
 
 ## Spec Changes
 
-None to `docs/specs/2026-08-21-callit-design.md`. Parent-plan §9 amended (backend-gap amendment paragraph, and a correction of a premature ✅ marking — see Decided/Spec above).
+None to `docs/specs/2026-08-21-callit-design.md`. Parent-plan §9 amended (backend-gap amendment paragraph, plus the ✅ marking removed and then restored — see Decided/Spec above).
 
 ## Next Step
 
-Nothing pending. `phase-6a-frontend-shell` is pushed to `origin`, unmerged, by the user's choice. Whenever integration happens: merge into `dev` with `--no-ff` (per `executing-plans`' own instruction, so the phase stays a visible merge commit), run the full suite on the merged result, then mark the 6a row ✅ for real.
+Phase 6b (gameplay UI): host console, wager pad, live odds, lockout countdown, aggregate bettors counter, settlement reveal, Web Audio. It depends only on 6a and imports no new tooling, but it has no plan yet — write one with `writing-plans` before touching code.
+
+The binding constraint to carry into that plan is the anonymity invariant: 6b renders the reveal **only** from `round_resolved`, and the sole permitted in-round progress signal is the aggregate bettors count (`SCARD` over `round:{roundID}:bettors`, host excluded from the denominator). No per-user wager state may be reconstructed client-side.
