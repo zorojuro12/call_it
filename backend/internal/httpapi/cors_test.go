@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,86 @@ func TestCORS(t *testing.T) {
 		}
 		if rec.Code != http.StatusOK {
 			t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
+		}
+	})
+
+	t.Run("an allowed preflight is answered 204 and never reaches the inner handler", func(t *testing.T) {
+		ran := false
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ran = true
+			w.WriteHeader(http.StatusOK)
+		})
+		handler := CORS([]string{"http://localhost:3000"})(inner)
+
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/rooms", nil)
+		req.Header.Set("Origin", "http://localhost:3000")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if ran {
+			t.Error("inner handler ran, want a short-circuited preflight")
+		}
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusNoContent)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
+			t.Errorf("Access-Control-Allow-Origin = %q, want the echoed origin", got)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "POST") {
+			t.Errorf("Access-Control-Allow-Methods = %q, want it to contain POST", got)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "Authorization") || !strings.Contains(got, "Content-Type") {
+			t.Errorf("Access-Control-Allow-Headers = %q, want Authorization and Content-Type", got)
+		}
+		if got := rec.Header().Get("Access-Control-Max-Age"); got == "" {
+			t.Error("Access-Control-Max-Age is empty, want it set")
+		}
+	})
+
+	t.Run("a disallowed preflight is still 204 but carries no allow-origin header", func(t *testing.T) {
+		ran := false
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ran = true
+			w.WriteHeader(http.StatusOK)
+		})
+		handler := CORS([]string{"http://localhost:3000"})(inner)
+
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/rooms", nil)
+		req.Header.Set("Origin", "http://evil.test")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if ran {
+			t.Error("inner handler ran, want a short-circuited preflight")
+		}
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("status = %d, want %d", rec.Code, http.StatusNoContent)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("Access-Control-Allow-Origin = %q, want none for a disallowed origin", got)
+		}
+	})
+
+	t.Run("an OPTIONS request with no Access-Control-Request-Method is not a preflight", func(t *testing.T) {
+		ran := false
+		inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ran = true
+			w.WriteHeader(http.StatusOK)
+		})
+		handler := CORS([]string{"http://localhost:3000"})(inner)
+
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/rooms", nil)
+		req.Header.Set("Origin", "http://localhost:3000")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if !ran {
+			t.Error("inner handler did not run, want a non-preflight OPTIONS to pass through")
 		}
 	})
 }
