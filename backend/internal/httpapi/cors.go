@@ -24,6 +24,12 @@ func CORS(origins []string) func(http.Handler) http.Handler {
 			origin := r.Header.Get("Origin")
 			if origin != "" && allowed[origin] {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
+				// Safe to set unconditionally alongside a specific echoed
+				// origin (never paired with "*") only because this app has
+				// no cookie-based credential for a browser to auto-attach —
+				// frontend/lib/api.ts always sends the JWT as an explicit
+				// Authorization header. A future cookie-based auth flow
+				// would need to re-review this line, not inherit it.
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
 

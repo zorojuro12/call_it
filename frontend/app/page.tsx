@@ -24,7 +24,7 @@ export default function Page() {
 
     try {
       const res = await apiPost<JoinRoomResponse>(
-        `/api/v1/rooms/${code}/participants`,
+        `/api/v1/rooms/${encodeURIComponent(code)}/participants`,
         { display_name: displayName },
         getAccountToken() ?? undefined,
       );

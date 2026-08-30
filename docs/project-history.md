@@ -185,6 +185,57 @@ and two accepted.
   since local dev runs Kafka PLAINTEXT with no ACLs (Phase 5a's recorded
   decision, above). Revisit before any shared or production deployment.
 
+### Phase 6a — browser origin admission (`httpapi.CORS`, `ws.WithAllowedOrigins`), `frontend/` token storage
+
+No CRITICAL or HIGH. All four surfaces the plan named to confirm held:
+
+- **`httpapi.CORS`** — clear. Origin is echoed only on an exact allowlist
+  match, never `*`; `config.loadAllowedOrigins` rejects a bare or
+  mixed-in wildcard in every environment; `Vary: Origin` is set
+  unconditionally; `Access-Control-Allow-Credentials: true` only appears
+  alongside a specific echoed origin, never unpaired or with `*`.
+- **`ws.WithAllowedOrigins`** — clear. A missing `Origin` header is allowed
+  deliberately for non-browser clients (`cmd/callit-cli`); a browser
+  cannot suppress `Origin` on a WebSocket handshake, so this isn't an
+  attacker-reachable bypass. The pre-existing same-origin default is
+  unchanged for the six call sites that pass no option.
+- **`sessionStorage` token storage** — holds as designed. XSS-readable
+  (same exposure `localStorage` would have), narrowed by dying with the
+  tab and never being auto-attached (`lib/api.ts` only ever sends the
+  token via an explicit `Authorization` header a caller supplies —
+  no interceptor, no cookie, no CSRF surface opened by enabling CORS).
+  The token's only non-header appearance is `lib/socket.ts`'s WebSocket
+  URL query parameter, a pre-existing backend contract
+  (`ws.ExtractToken`) since browsers cannot set headers on a WS
+  handshake — not new exposure from this diff.
+- **Token never reaches a log, error, or rendered URL** — clear. The
+  only `console.*` call in `frontend/` logs a caught handler exception,
+  never a token or envelope payload; no `dangerouslySetInnerHTML`
+  anywhere in the frontend; the host page's shareable link is built from
+  `window.location.origin` and the room code only, never the token.
+
+Two LOW findings, both fixed on the spot rather than deferred:
+
+- The landing page's join handler interpolated the user-typed room code
+  into the REST path unencoded. Not exploitable (a valid code is a fixed
+  server-generated alphabet, and the `Authorization` header is unaffected
+  by the path), but a `/` in typed input would 404 confusingly. Fixed:
+  `encodeURIComponent(code)`.
+- `Access-Control-Allow-Credentials: true` is set for every allowed
+  origin even though the app has no cookie-based credential today.
+  Harmless now, but the assumption it rests on ("no cookies, ever")
+  wasn't written down anywhere a future change would see it. Fixed: a
+  comment on the line in `cors.go` naming the assumption explicitly, so
+  a future cookie-based auth flow can't inherit it unreviewed.
+
+One more LOW, accepted rather than fixed: `loadAllowedOrigins`'s
+validation would accept a subdomain-wildcard-looking entry like
+`https://*.example.com` as a syntactically valid absolute URL (it has a
+scheme and a host), but `CORS`'s matching is a plain map lookup with no
+wildcard expansion, so such an entry simply never matches any real
+`Origin` and fails closed — an operator-misconfiguration footgun, not an
+exploitable gap.
+
 ### Open by design, deferred to Phase 7 hardening
 
 1. **Login timing.** The unknown-email path skips argon2id and so responds
