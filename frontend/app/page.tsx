@@ -1,13 +1,47 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { apiPost } from "@/lib/api";
+import { getAccountToken, setRoomSummary, setRoomToken } from "@/lib/session";
+import type { JoinRoomResponse } from "@/lib/protocol";
 
 export default function Page() {
+  const router = useRouter();
+  const [roomCode, setRoomCode] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+
+    const code = roomCode.trim().toUpperCase();
+
+    const res = await apiPost<JoinRoomResponse>(
+      `/api/v1/rooms/${code}/participants`,
+      { display_name: displayName },
+      getAccountToken() ?? undefined,
+    );
+    setRoomToken(res.token);
+    setRoomSummary({
+      room_id: res.room_id,
+      guest: res.guest,
+      session_balance: res.session_balance,
+      partial_buy_in: res.partial_buy_in,
+    });
+    router.push(`/room/${code}`);
+  }
+
   return (
     <main className="flex flex-1 flex-col items-center justify-center gap-8 px-4 py-16">
       <h1 className="text-4xl font-semibold tracking-tight">CallIt</h1>
 
-      <form className="flex w-full max-w-xs flex-col gap-4">
+      <form
+        onSubmit={handleSubmit}
+        className="flex w-full max-w-xs flex-col gap-4"
+      >
         <label className="flex flex-col gap-1 text-sm font-medium" htmlFor="room-code">
           Room code
           <input
@@ -15,13 +49,29 @@ export default function Page() {
             name="roomCode"
             type="text"
             autoComplete="off"
+            value={roomCode}
+            onChange={(e) => setRoomCode(e.target.value)}
             className="rounded border border-zinc-300 px-3 py-2 uppercase dark:border-zinc-700 dark:bg-zinc-900"
+          />
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm font-medium" htmlFor="display-name">
+          Display name
+          <input
+            id="display-name"
+            name="displayName"
+            type="text"
+            autoComplete="nickname"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            className="rounded border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
           />
         </label>
 
         <button
           type="submit"
-          className="rounded bg-zinc-950 px-4 py-2 font-medium text-white dark:bg-zinc-50 dark:text-black"
+          disabled={submitting}
+          className="rounded bg-zinc-950 px-4 py-2 font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
         >
           Join
         </button>
