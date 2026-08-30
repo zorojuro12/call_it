@@ -329,6 +329,93 @@ func TestPresenceLeave(t *testing.T) {
 	waitFor(t, func() bool { return hub.RoomCount() == 0 })
 }
 
+func TestHandlerAllowedOrigins(t *testing.T) {
+	// Arrange
+	issuer := newTestIssuer(t, time.Hour)
+	hub := NewHub()
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil, WithAllowedOrigins([]string{"http://localhost:3000"})))
+	defer server.Close()
+
+	token, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1", Guest: false})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+
+	t.Run("an allowed origin succeeds", func(t *testing.T) {
+		// Act
+		header := http.Header{"Origin": []string{"http://localhost:3000"}}
+		conn, resp, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+token, header)
+
+		// Assert
+		if err != nil {
+			t.Fatalf("Dial error: %v", err)
+		}
+		defer conn.Close()
+		if resp.StatusCode != http.StatusSwitchingProtocols {
+			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSwitchingProtocols)
+		}
+		env := mustReadEnvelope(t, conn, TypeConnected)
+		var got ConnectedEvent
+		if err := unmarshalData(env, &got); err != nil {
+			t.Fatalf("unmarshal ConnectedEvent: %v", err)
+		}
+	})
+
+	t.Run("a disallowed origin is rejected with 403", func(t *testing.T) {
+		// Act
+		header := http.Header{"Origin": []string{"http://evil.test"}}
+		_, resp, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+token, header)
+
+		// Assert
+		if err == nil {
+			t.Fatal("Dial error = nil, want a rejected upgrade")
+		}
+		if resp == nil || resp.StatusCode != http.StatusForbidden {
+			status := -1
+			if resp != nil {
+				status = resp.StatusCode
+			}
+			t.Fatalf("status = %d, want %d", status, http.StatusForbidden)
+		}
+	})
+
+	t.Run("no Origin header succeeds, for non-browser clients", func(t *testing.T) {
+		// Act
+		conn, resp, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+token, nil)
+
+		// Assert
+		if err != nil {
+			t.Fatalf("Dial error: %v", err)
+		}
+		defer conn.Close()
+		if resp.StatusCode != http.StatusSwitchingProtocols {
+			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSwitchingProtocols)
+		}
+	})
+
+	t.Run("with no WithAllowedOrigins option, the pre-existing same-origin default is preserved", func(t *testing.T) {
+		// Arrange
+		defaultServer := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
+		defer defaultServer.Close()
+
+		// Act
+		header := http.Header{"Origin": []string{"http://evil.test"}}
+		_, resp, err := websocket.DefaultDialer.Dial(wsURL(defaultServer.URL)+"?token="+token, header)
+
+		// Assert
+		if err == nil {
+			t.Fatal("Dial error = nil, want a rejected upgrade")
+		}
+		if resp == nil || resp.StatusCode != http.StatusForbidden {
+			status := -1
+			if resp != nil {
+				status = resp.StatusCode
+			}
+			t.Fatalf("status = %d, want %d", status, http.StatusForbidden)
+		}
+	})
+}
+
 func mustReadEnvelope(t *testing.T, conn *websocket.Conn, wantType string) Envelope {
 	t.Helper()
 	_, raw, err := conn.ReadMessage()

@@ -11,7 +11,31 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 )
 
-var upgrader = websocket.Upgrader{}
+// handlerOpts collects Handler's optional configuration, built from the
+// HandlerOption values passed to it.
+type handlerOpts struct {
+	allowedOrigins map[string]bool
+}
+
+// HandlerOption configures optional Handler behavior via the functional
+// options pattern (.claude/rules/ecc/golang/patterns.md), so existing
+// call sites that pass none keep compiling unchanged.
+type HandlerOption func(*handlerOpts)
+
+// WithAllowedOrigins restricts the WebSocket upgrade to browser requests
+// whose Origin header exactly matches one of origins. A request with no
+// Origin header (a non-browser client, such as cmd/callit-cli) is always
+// allowed — browsers always send Origin on a WebSocket handshake, so its
+// absence is not a bypass.
+func WithAllowedOrigins(origins []string) HandlerOption {
+	return func(o *handlerOpts) {
+		allowed := make(map[string]bool, len(origins))
+		for _, origin := range origins {
+			allowed[origin] = true
+		}
+		o.allowedOrigins = allowed
+	}
+}
 
 // SessionEnder folds a departing account holder's net session result
 // into their persistent balance — *round.Service satisfies this.
@@ -28,7 +52,23 @@ type SessionEnder interface {
 // called on disconnect to end the departing client's session; a nil
 // value skips that step (every existing 4a test that doesn't care
 // about it passes nil).
-func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageHandler, sessions SessionEnder) http.HandlerFunc {
+func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageHandler, sessions SessionEnder, opts ...HandlerOption) http.HandlerFunc {
+	var o handlerOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	upgrader := websocket.Upgrader{}
+	if o.allowedOrigins != nil {
+		upgrader.CheckOrigin = func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+			return o.allowedOrigins[origin]
+		}
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := ExtractToken(r)
 		if token == "" {

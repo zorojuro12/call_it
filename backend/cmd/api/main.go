@@ -75,13 +75,14 @@ func run() error {
 	wagers := wager.NewService(store, hub)
 
 	mux := httpapi.NewMux(httpapi.Deps{
-		Accounts: accounts,
-		Rooms:    rooms,
-		Rounds:   rounds,
-		Wagers:   wagers,
-		Store:    store,
-		Issuer:   issuer,
-		Hub:      hub,
+		Accounts:       accounts,
+		Rooms:          rooms,
+		Rounds:         rounds,
+		Wagers:         wagers,
+		Store:          store,
+		Issuer:         issuer,
+		Hub:            hub,
+		AllowedOrigins: cfg.AllowedOrigins,
 	})
 
 	server := &http.Server{
