@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiPost } from "./api";
+import { ApiError, apiGet, apiPost } from "./api";
 import type { CreateRoomResponse } from "./protocol";
 
 describe("apiPost", () => {
@@ -127,5 +127,62 @@ describe("apiPost", () => {
     expect(caught).toBeInstanceOf(ApiError);
     expect((caught as ApiError).code).toBe("network_error");
     expect((caught as ApiError).status).toBe(0);
+  });
+
+  it("attaches a bearer token to apiPost when supplied", async () => {
+    // Arrange
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { ok: true } }),
+    });
+
+    // Act
+    await apiPost("/api/v1/rooms", { buy_in: 1000 }, "tok123");
+
+    // Assert
+    const init = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe(
+      "Bearer tok123",
+    );
+  });
+
+  it("sends no Authorization header for apiPost when no token is supplied", async () => {
+    // Arrange
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { ok: true } }),
+    });
+
+    // Act
+    await apiPost("/api/v1/rooms", { buy_in: 1000 });
+
+    // Assert
+    const init = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    expect(
+      Object.prototype.hasOwnProperty.call(init.headers, "Authorization"),
+    ).toBe(false);
+  });
+
+  it("attaches a bearer token to apiGet with no request body", async () => {
+    // Arrange
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { ok: true } }),
+    });
+
+    // Act
+    await apiGet("/api/v1/whatever", "tok123");
+
+    // Assert
+    const call = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe(
+      "Bearer tok123",
+    );
+    expect(init.body).toBeUndefined();
   });
 });
