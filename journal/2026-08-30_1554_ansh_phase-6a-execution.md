@@ -1,9 +1,9 @@
-# 2026-08-30 — ansh — Executed Phase 6a (frontend shell) end to end, Tasks 1–9 through the E2E checkpoint
+# 2026-08-30 — ansh — Executed Phase 6a (frontend shell) end to end, all 9 tasks through security review
 
-**Status:** All 9 tasks of `docs/plans/2026-08-30-phase-6a-frontend-shell.md` are implemented and committed on `phase-6a-frontend-shell`. Backend CORS/origin admission (Task 1), the full `frontend/` scaffold (Tasks 2–8: typed REST/WS clients, session storage, register/login, room create/join, presence roster), and the two-browser Playwright E2E test (Task 9 CP1) are all green. Task 9 CP2 (docs) is this commit. **CP3 (security review) has not run yet** — that's the immediate next step, not yet started.
+**Status:** All 9 tasks of `docs/plans/2026-08-30-phase-6a-frontend-shell.md` are implemented, tested, and committed on `phase-6a-frontend-shell` — backend CORS/origin admission (Task 1), the full `frontend/` scaffold (Tasks 2–8), the two-browser Playwright E2E test (Task 9 CP1), docs (CP2), and the security review (CP3, no CRITICAL/HIGH, two LOW fixed on the spot) are all done. Full backend suite, 60 frontend tests at 97.4% coverage, and the E2E test all green on the final boundary check. **Not merged into `dev`** — offered the standard 3-option integration menu (`finishing-a-development-branch`), user chose to keep the branch as-is rather than merge or open a PR. Branch pushed to `origin` at the user's request, unmerged.
 **Decided:** Fixed a real backend gap found by the E2E test *in this phase*, not by amending the plan first — `internal/ws/handler.go` only ever broadcast future `player_joined`/`player_left`, so a client joining second never learned who was already in the room. User explicitly approved fixing it inline under Task 9's own "genuine integration defect" allowance rather than pausing to write a plan amendment first.
-**Spec:** No product spec change. Parent plan (`docs/plans/2026-08-21-implementation-plan.md`) §9 amended: 6a row marked ✅, and a new paragraph records the backend fix as a same-phase amendment discovered by the E2E test.
-**Next:** Run the `security-reviewer` agent (Task 9 CP3) over `git diff dev...HEAD`, specifically the CORS middleware, `ws.WithAllowedOrigins`, and the `sessionStorage` token-storage decision this plan flagged as not-yet-final. Then `finishing-a-development-branch` to merge into `dev`.
+**Spec:** No product spec change. Parent plan (`docs/plans/2026-08-21-implementation-plan.md`) §9 amended: a paragraph records the backend fix as a same-phase amendment discovered by the E2E test. **The 6a row is deliberately left unmarked (no ✅)** — this doc's own convention ties ✅ to "merged into `dev`," and an earlier pass in this session marked it ✅ prematurely (before the integration decision was made); corrected once the user chose not to merge.
+**Next:** Nothing pending from this session. Whenever `dev` integration happens: `git checkout dev && git merge --no-ff phase-6a-frontend-shell`, full suite, then mark the 6a row ✅ for real.
 **Blocked on:** Nothing.
 **Touches:** `backend/internal/config/`, `backend/internal/httpapi/cors.go`, `backend/internal/ws/handler.go`, `backend/cmd/api/main.go`, `frontend/` (all of it — new this phase), `docker-compose.yml`, `Makefile`, `.github/workflows/ci.yml`, `README.md`, `CLAUDE.md`, `docs/plans/2026-08-21-implementation-plan.md`, `docs/project-history.md`
 
@@ -41,13 +41,11 @@ Picked up mid-branch: the phase-6a plan already existed from the prior session (
 - **Backend:** full suite green (`go vet`, `gofmt -l`, `go test ./... -race -cover -p 1`). `internal/httpapi` 92.4%, `internal/ws` 93.6% (up from 93.1% — the new roster-snapshot test), everything else unchanged from Phase 5b.
 - **Frontend:** 60/60 Vitest tests green. Coverage over `lib/**`+`components/**`: 97.43% statements, 95.91% branches, 97.05% functions, 97.39% lines (`@vitest/coverage-v8`). `app/**` route files excluded by design, same allowance `cmd/*` has.
 - **E2E:** 1/1 Playwright test green — two isolated browser contexts, one room, host creates, guest joins, both see each other, guest leaving drops them from the host's roster.
-- **Not yet run:** the `security-reviewer` pass (Task 9 CP3) — CORS middleware, WS origin check, and the `sessionStorage` token-storage decision are all still open for that review, not yet independently checked.
+- **Security review (Task 9 CP3):** ran `security-reviewer` over `git diff dev...HEAD`, directed at the four points the plan named. No CRITICAL or HIGH. All four verdicts hold: CORS allow-origin correctness (no wildcard, credentials only paired with a specific echoed origin), `WithAllowedOrigins`' missing-`Origin` allowance (safe — a browser can't suppress it), the `sessionStorage` trade-off (XSS-readable but tab-scoped and never auto-attached, so enabling CORS didn't open a CSRF hole), and the token never reaching a log/error/rendered URL. Two LOW findings fixed on the spot: unencoded room code in a REST path (`encodeURIComponent`), and an undocumented assumption behind `Access-Control-Allow-Credentials: true` (added a comment naming it). Full findings and dispositions in `docs/project-history.md`'s Phase 6a security-review section.
 
 ## Open Questions / Blockers
 
-None blocking. Two things the next session (or the rest of this one) should close:
-- Task 9 CP3 (security review) — required by `CLAUDE.md` before any phase touching auth/money/a network surface can close, and this phase opens a new network surface (CORS) and introduces browser-side token storage.
-- The `sessionStorage` XSS trade-off (plan's Decisions §2) is explicitly *not* final — flagged for the security reviewer to accept or overturn, not assumed to pass.
+None. The `sessionStorage` XSS trade-off (plan's Decisions §2) was explicitly not assumed to pass — the security review confirmed it holds as designed, so this is resolved, not deferred.
 
 ## Relevant Commits
 
@@ -64,11 +62,14 @@ All on `phase-6a-frontend-shell`, this session, in order:
 - `25ca2e6` — fix: tell a newcomer about players already in the room
 - `7731dcc` — test: prove two browsers share one room end to end
 - `8bffb83` — fix: keep vitest and playwright out of each other's way
+- `f3ecd88` — docs: record Phase 6a's stack decision, targets, and origin invariant
+- `2f1132f` — fix: address Phase 6a security review findings
+- (this session, after the above) — docs: correct the premature 6a ✅ marking and finalize the journal entry
 
 ## Spec Changes
 
-None to `docs/specs/2026-08-21-callit-design.md`. Parent-plan §9 amended (6a row ✅, backend-gap amendment paragraph) — see Decided/Spec above.
+None to `docs/specs/2026-08-21-callit-design.md`. Parent-plan §9 amended (backend-gap amendment paragraph, and a correction of a premature ✅ marking — see Decided/Spec above).
 
 ## Next Step
 
-Run `security-reviewer` over `git diff dev...HEAD` per Task 9 CP3, directed at the four points the plan names (CORS allow-origin correctness, `WithAllowedOrigins` missing-header allowance, the `sessionStorage` trade-off, token never reaching a log/URL). Fix CRITICAL/HIGH findings, record MEDIUM/LOW in `docs/project-history.md`, then hand off to `finishing-a-development-branch`.
+Nothing pending. `phase-6a-frontend-shell` is pushed to `origin`, unmerged, by the user's choice. Whenever integration happens: merge into `dev` with `--no-ff` (per `executing-plans`' own instruction, so the phase stays a visible merge commit), run the full suite on the merged result, then mark the 6a row ✅ for real.
