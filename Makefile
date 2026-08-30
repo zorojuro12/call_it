@@ -1,4 +1,5 @@
-.PHONY: up up-full down test test-unit lint build migrate ledger-worker loadtest
+.PHONY: up up-full down test test-unit lint build migrate ledger-worker loadtest \
+        fe-install fe-dev fe-test fe-lint fe-build fe-e2e
 
 # Core services only (Redis, PostgreSQL) — what Phases 0-4 need.
 up:
@@ -53,3 +54,21 @@ ledger-worker:
 
 loadtest:
 	@echo "no k6 scripts yet — added in Phase 7"
+
+fe-install:
+	cd frontend && npm ci
+
+fe-dev:
+	cd frontend && npm run dev
+
+fe-test:
+	cd frontend && npx vitest run
+
+fe-lint:
+	cd frontend && npm run lint && npx tsc --noEmit
+
+fe-build:
+	cd frontend && npm run build
+
+fe-e2e:
+	cd frontend && npx playwright test
