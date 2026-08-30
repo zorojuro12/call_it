@@ -5,7 +5,10 @@ import Link from "next/link";
 import { openRoomSocket } from "@/lib/socket";
 import type { SocketStatus } from "@/lib/socket";
 import { getRoomSummary, getRoomToken } from "@/lib/session";
-import type { ConnectedEvent } from "@/lib/protocol";
+import type { ConnectedEvent, PresenceEvent } from "@/lib/protocol";
+import { PresenceRoster } from "@/components/PresenceRoster";
+
+type Player = { user_id: string; display_name: string };
 
 export default function Page({
   params,
@@ -14,7 +17,9 @@ export default function Page({
 }) {
   void params; // the room's identity comes from the token, never the URL
 
-  const [displayName, setDisplayName] = useState<string | null>(null);
+  const [selfId, setSelfId] = useState<string | null>(null);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [playerCount, setPlayerCount] = useState(0);
   const [status, setStatus] = useState<SocketStatus>("connecting");
 
   const roomToken = getRoomToken();
@@ -29,14 +34,34 @@ export default function Page({
     const socket = openRoomSocket(token);
 
     const offStatus = socket.onStatus((s) => setStatus(s));
+
     const offConnected = socket.on("connected", (data) => {
       const event = data as ConnectedEvent;
-      setDisplayName(event.display_name);
+      setSelfId(event.user_id);
+      setPlayers([{ user_id: event.user_id, display_name: event.display_name }]);
+      setPlayerCount(1);
+    });
+
+    const offJoined = socket.on("player_joined", (data) => {
+      const event = data as PresenceEvent;
+      setPlayers((prev) => [
+        ...prev.filter((p) => p.user_id !== event.user_id),
+        { user_id: event.user_id, display_name: event.display_name },
+      ]);
+      setPlayerCount(event.player_count);
+    });
+
+    const offLeft = socket.on("player_left", (data) => {
+      const event = data as PresenceEvent;
+      setPlayers((prev) => prev.filter((p) => p.user_id !== event.user_id));
+      setPlayerCount(event.player_count);
     });
 
     return () => {
       offStatus();
       offConnected();
+      offJoined();
+      offLeft();
       socket.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -55,8 +80,6 @@ export default function Page({
 
   return (
     <main className="flex flex-1 flex-col items-center gap-6 px-4 py-16">
-      {displayName && <p>{displayName}</p>}
-
       {summary && (
         <>
           <p className="text-2xl font-semibold">{summary.session_balance}</p>
@@ -69,6 +92,9 @@ export default function Page({
       )}
 
       <p>{status}</p>
+      <p>{playerCount}</p>
+
+      <PresenceRoster players={players} selfId={selfId} />
     </main>
   );
 }
