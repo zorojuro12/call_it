@@ -30,13 +30,14 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 // Deps are the constructed dependencies every handler needs. cmd/api
 // builds these once at startup and passes them to NewMux.
 type Deps struct {
-	Accounts *account.Service
-	Rooms    *room.Service
-	Rounds   *round.Service
-	Wagers   *wager.Service
-	Store    *redisstore.Store
-	Issuer   *auth.Issuer
-	Hub      *ws.Hub
+	Accounts       *account.Service
+	Rooms          *room.Service
+	Rounds         *round.Service
+	Wagers         *wager.Service
+	Store          *redisstore.Store
+	Issuer         *auth.Issuer
+	Hub            *ws.Hub
+	AllowedOrigins []string
 }
 
 // NewMux assembles the process's HTTP routes.

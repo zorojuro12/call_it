@@ -39,7 +39,7 @@ multi-package module can still upgrade the parent past its pin** — Phase
 dependency, check its `go` directive. Verification log:
 `docs/project-history.md`.
 
-Monorepo: `backend/`, `frontend/` (not yet scaffolded — created by Phase
+Monorepo: `backend/`, `frontend/` (Next.js App Router, scaffolded by Phase
 6a Task 2), root `docker-compose.yml`.
 
 ## Build & Test
@@ -98,6 +98,26 @@ CI (`.github/workflows/ci.yml`) runs `go vet`, `gofmt -l` (fails on any
 unformatted file), `go build`, and `go test -race -cover -p 1`, in that
 order, on push/PR to `main` and `dev`. Nothing merges with any of those
 red.
+
+**Frontend (Phase 6a+):**
+
+```bash
+make fe-install  # cd frontend && npm ci
+make fe-dev      # cd frontend && next dev
+make fe-test     # cd frontend && npx vitest run
+make fe-lint     # cd frontend && npm run lint && npx tsc --noEmit
+make fe-build    # cd frontend && npm run build
+make fe-e2e      # cd frontend && npx playwright test — needs the backend and Redis running
+```
+
+Coverage floor is 80% via `vitest run --coverage` over `lib/**` and
+`components/**`; `app/**` route files are thin wiring and excluded, the
+same allowance `cmd/*` has on the Go side. `next build`/`next start` fail
+fast without `NEXT_PUBLIC_API_BASE_URL` when `NODE_ENV=production` — CI's
+`frontend` job sets it for the build step. A separate `frontend-e2e` CI
+job runs Playwright against a live backend + Redis, installed with
+`--with-deps` (CI has sudo; local dev does not — see Known Environment
+Gotchas).
 
 ## Critical Invariants
 
@@ -224,6 +244,13 @@ red.
   so this invariant is currently enforced by topology alone (only
   `cmd/relay` produces) rather than by the broker. Revisit before any
   shared or production deployment.
+- **The browser origin allowlist has exactly one definition** (Phase 6a):
+  `config.Config.AllowedOrigins`, parsed once from `CORS_ALLOWED_ORIGINS`
+  and read by both `httpapi.CORS` (REST) and the WebSocket upgrader's
+  `CheckOrigin` (`ws.WithAllowedOrigins`). Two lists that must agree is the
+  shape this file already rejects for Redis keys
+  (`internal/redisstore/keys.go`) and the rate limiter — don't fork a
+  second list for either surface.
 
 (These bind Phases 1-5 as they're built; Phase 0 — config and health check —
 doesn't yet touch most of them. See the plan for full context on each.)
@@ -256,6 +283,17 @@ Phase 5 adds:
 │                          #   event→transaction mapping, and the Kafka
 │                          #   consume loop that feeds it
 └── migrations/            # NNNN_name.up.sql / .down.sql — this naming is the convention
+
+Phase 6a adds:
+frontend/                    # Next.js App Router, TypeScript strict, Tailwind
+├── app/                     # pages — thin, compose lib/ and components/
+├── lib/
+│   ├── protocol.ts          # types mirroring Go wire structs — no logic
+│   ├── api.ts               # REST client, envelope unwrap, ApiError
+│   ├── session.ts           # sessionStorage wrapper — account token, room token, room summary
+│   └── socket.ts            # WebSocket client, typed on(type, handler) dispatch table
+├── components/               # PresenceRoster, ErrorBanner — reused by 6b unchanged
+└── e2e/                      # Playwright acceptance tests
 ```
 
 **`relay` and `ledger-worker` are separate binaries under `cmd/` deliberately** —
@@ -327,10 +365,9 @@ phase.
 
 Installed: `golang-patterns`, `golang-testing`, `docker-patterns`,
 `redis-patterns`, `api-design`, `postgres-patterns`, `database-migrations`,
-`react-patterns`, `nextjs-turbopack`, `accessibility` (the last three ahead
-of Phase 6a, per the plan §9 row's "Tooling to import" column — staged
-before Phase 6 planning started, and not yet exercised by any code: no
-frontend exists until Phase 6a Task 2). Matching rule packs
+`react-patterns`, `nextjs-turbopack`, `accessibility` (the last three staged
+ahead of Phase 6a, per the plan §9 row's "Tooling to import" column, and now
+exercised — Phase 6a built the real `frontend/` tree). Matching rule packs
 `.claude/rules/ecc/react/` and `.claude/rules/ecc/typescript/` installed
 alongside them. **The `typescript` pack's provisional status is resolved:**
 it was installed on the assumption a Next.js scaffold defaults to TS, and

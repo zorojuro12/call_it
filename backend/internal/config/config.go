@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -26,13 +27,14 @@ const (
 // WebSocket server never writes PostgreSQL directly); those surfaces
 // belong to MigrateConfig and RelayConfig, the binaries that do.
 type Config struct {
-	Port      int
-	Env       string
-	LogLevel  string
-	RedisAddr string
-	RedisDB   int
-	JWTSecret string        // REQUIRED — no default, min 32 bytes
-	JWTTTL    time.Duration // default 2h, valid 1m..24h
+	Port           int
+	Env            string
+	LogLevel       string
+	RedisAddr      string
+	RedisDB        int
+	JWTSecret      string        // REQUIRED — no default, min 32 bytes
+	JWTTTL         time.Duration // default 2h, valid 1m..24h
+	AllowedOrigins []string      // REQUIRED when Env == "production"; defaults to localhost:3000 otherwise
 }
 
 var validEnvs = map[string]bool{
@@ -107,6 +109,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		cfg.RedisDB = db
 	}
 
+	if err := loadAllowedOrigins(&cfg, lookup); err != nil {
+		return Config{}, err
+	}
+
 	v, ok := lookup("JWT_SECRET")
 	if !ok || v == "" {
 		return Config{}, fmt.Errorf("config: JWT_SECRET is required")
@@ -128,6 +134,43 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// loadAllowedOrigins parses CORS_ALLOWED_ORIGINS into cfg.AllowedOrigins.
+// Unset or empty is an error when cfg.Env is "production" — a production
+// deployment that forgets the variable must fail fast, exactly as
+// JWT_SECRET already does, rather than silently trust a dev origin.
+// Outside production it defaults to http://localhost:3000. A wildcard
+// entry is rejected outright, in every env, and every entry must parse as
+// an absolute URL with both a scheme and a host.
+func loadAllowedOrigins(cfg *Config, lookup LookupFunc) error {
+	raw, ok := lookup("CORS_ALLOWED_ORIGINS")
+	if !ok || strings.TrimSpace(raw) == "" {
+		if cfg.Env == "production" {
+			return fmt.Errorf("config: CORS_ALLOWED_ORIGINS is required when ENV=production")
+		}
+		cfg.AllowedOrigins = []string{"http://localhost:3000"}
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if p == "*" {
+			return fmt.Errorf("config: CORS_ALLOWED_ORIGINS must not contain a wildcard")
+		}
+		u, err := url.Parse(p)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return fmt.Errorf("config: CORS_ALLOWED_ORIGINS entry %q is not a valid absolute URL", p)
+		}
+		origins = append(origins, p)
+	}
+	cfg.AllowedOrigins = origins
+	return nil
 }
 
 // MigrateConfig holds the configuration surface for cmd/migrate. A

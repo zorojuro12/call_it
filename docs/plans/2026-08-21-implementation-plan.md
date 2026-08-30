@@ -452,8 +452,23 @@ plumbing that can be verified structurally while 5b keeps the
 cross-cutting attention that kind of proof needs.
 
 **✅ marks a phase whose branch is merged into `dev` and whose tests were
-green at merge.** Phases 0–5b are done; 6a is planned
-(`docs/plans/2026-08-30-phase-6a-frontend-shell.md`) but not started.
+green at merge.** Phases 0–5b are done. 6a's implementation is complete
+and fully verified on `phase-6a-frontend-shell`
+(`docs/plans/2026-08-30-phase-6a-frontend-shell.md`) — all 9 tasks, full
+backend + frontend + E2E suites green, security review clean — but the
+branch has not been merged into `dev` yet by choice, so it stays
+unmarked until that happens.
+
+**Amendment discovered by 6a's own E2E acceptance test.** The WS join
+handler (`internal/ws/handler.go`, built in Phase 4a) only ever broadcast
+*future* `player_joined`/`player_left` events — a client connecting second
+never learned who connected first. Invisible until 6a's two-browser test
+put a real second client in a room with an existing occupant; every
+earlier backend test connected clients into an already-instrumented
+sequence that never exercised this gap. Fixed in the same phase (`fix:
+tell a newcomer about players already in the room`): the newcomer is now
+sent one `player_joined` per pre-existing member, reusing the existing
+message type — no protocol version bump.
 
 **Phase 6 split into 6a/6b (added at Phase 6's planning pass).** Done
 *before* writing the detailed task breakdown, same as Phase 5's split and

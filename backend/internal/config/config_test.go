@@ -1,12 +1,15 @@
 package config
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
 
 const validJWTSecret = "01234567890123456789012345678901" // 34 bytes, comfortably >= 32
+
+var defaultOrigins = []string{"http://localhost:3000"}
 
 func TestLoad(t *testing.T) {
 	tests := []struct {
@@ -20,21 +23,22 @@ func TestLoad(t *testing.T) {
 		{
 			name: "all defaults when nothing set",
 			env:  map[string]string{},
-			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour, AllowedOrigins: defaultOrigins},
 		},
 		{
 			name: "explicit values override defaults",
 			env: map[string]string{
-				"PORT":      "9090",
-				"ENV":       "production",
-				"LOG_LEVEL": "debug",
+				"PORT":                 "9090",
+				"ENV":                  "production",
+				"LOG_LEVEL":            "debug",
+				"CORS_ALLOWED_ORIGINS": "https://callit.example",
 			},
-			want: Config{Port: 9090, Env: "production", LogLevel: "debug", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour},
+			want: Config{Port: 9090, Env: "production", LogLevel: "debug", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour, AllowedOrigins: []string{"https://callit.example"}},
 		},
 		{
 			name: "explicit redis addr overrides default",
 			env:  map[string]string{"REDIS_ADDR": "redis:6379"},
-			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "redis:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "redis:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour, AllowedOrigins: defaultOrigins},
 		},
 		{
 			name:    "empty redis addr fails fast",
@@ -44,7 +48,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "redis db at top of valid range",
 			env:  map[string]string{"REDIS_DB": "15"},
-			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 15, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 15, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour, AllowedOrigins: defaultOrigins},
 		},
 		{
 			name:    "redis db above valid range fails fast",
@@ -107,17 +111,17 @@ func TestLoad(t *testing.T) {
 		{
 			name: "JWT secret at exactly 32 bytes is accepted",
 			env:  map[string]string{"JWT_SECRET": strings.Repeat("b", 32)},
-			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: strings.Repeat("b", 32), JWTTTL: 2 * time.Hour},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: strings.Repeat("b", 32), JWTTTL: 2 * time.Hour, AllowedOrigins: defaultOrigins},
 		},
 		{
 			name: "no JWT TTL defaults to two hours",
 			env:  map[string]string{},
-			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour, AllowedOrigins: defaultOrigins},
 		},
 		{
 			name: "explicit JWT TTL overrides default",
 			env:  map[string]string{"JWT_TTL": "45m"},
-			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 45 * time.Minute},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 45 * time.Minute, AllowedOrigins: defaultOrigins},
 		},
 		{
 			name:          "JWT TTL below one minute fails fast",
@@ -136,6 +140,48 @@ func TestLoad(t *testing.T) {
 			env:           map[string]string{"JWT_TTL": "notaduration"},
 			wantErr:       true,
 			wantErrSubstr: "JWT_TTL",
+		},
+		{
+			name: "allowed origins default to localhost:3000 outside production",
+			env:  map[string]string{},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour, AllowedOrigins: defaultOrigins},
+		},
+		{
+			name: "allowed origins parse a comma-separated list",
+			env:  map[string]string{"CORS_ALLOWED_ORIGINS": "http://a.test,http://b.test"},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour, AllowedOrigins: []string{"http://a.test", "http://b.test"}},
+		},
+		{
+			name: "allowed origins trim whitespace around each entry",
+			env:  map[string]string{"CORS_ALLOWED_ORIGINS": "http://a.test , http://b.test"},
+			want: Config{Port: 8080, Env: "development", LogLevel: "info", RedisAddr: "localhost:6379", RedisDB: 0, JWTSecret: validJWTSecret, JWTTTL: 2 * time.Hour, AllowedOrigins: []string{"http://a.test", "http://b.test"}},
+		},
+		{
+			name:          "production requires allowed origins",
+			env:           map[string]string{"ENV": "production"},
+			wantErr:       true,
+			wantErrSubstr: "CORS_ALLOWED_ORIGINS",
+		},
+		{
+			name:          "production rejects an empty allowed-origins value",
+			env:           map[string]string{"ENV": "production", "CORS_ALLOWED_ORIGINS": ""},
+			wantErr:       true,
+			wantErrSubstr: "CORS_ALLOWED_ORIGINS",
+		},
+		{
+			name:    "a bare wildcard is rejected in every env",
+			env:     map[string]string{"CORS_ALLOWED_ORIGINS": "*"},
+			wantErr: true,
+		},
+		{
+			name:    "a wildcard mixed into a list is still rejected",
+			env:     map[string]string{"CORS_ALLOWED_ORIGINS": "http://a.test,*"},
+			wantErr: true,
+		},
+		{
+			name:    "an entry that is not an absolute URL is rejected",
+			env:     map[string]string{"CORS_ALLOWED_ORIGINS": "not-a-url"},
+			wantErr: true,
 		},
 	}
 
@@ -174,7 +220,7 @@ func TestLoad(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load() with env %v: unexpected error: %v", tt.env, err)
 			}
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Load() with env %v = %+v, want %+v", tt.env, got, tt.want)
 			}
 		})

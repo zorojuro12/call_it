@@ -74,17 +74,20 @@ func run() error {
 	rounds := round.NewService(roundsCtx, store, hub)
 	wagers := wager.NewService(store, hub)
 
+	mux := httpapi.NewMux(httpapi.Deps{
+		Accounts:       accounts,
+		Rooms:          rooms,
+		Rounds:         rounds,
+		Wagers:         wagers,
+		Store:          store,
+		Issuer:         issuer,
+		Hub:            hub,
+		AllowedOrigins: cfg.AllowedOrigins,
+	})
+
 	server := &http.Server{
-		Addr: fmt.Sprintf(":%d", cfg.Port),
-		Handler: httpapi.NewMux(httpapi.Deps{
-			Accounts: accounts,
-			Rooms:    rooms,
-			Rounds:   rounds,
-			Wagers:   wagers,
-			Store:    store,
-			Issuer:   issuer,
-			Hub:      hub,
-		}),
+		Addr:    fmt.Sprintf(":%d", cfg.Port),
+		Handler: httpapi.CORS(cfg.AllowedOrigins)(mux),
 	}
 
 	serverErr := make(chan error, 1)

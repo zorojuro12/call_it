@@ -33,7 +33,12 @@ func registerWSRoutes(mux *http.ServeMux, d Deps) {
 		sessions = d.Rounds
 	}
 
-	mux.Handle("GET /api/v1/socket", wsThrottle(d.Store, d.Issuer)(ws.Handler(d.Hub, d.Issuer, ws.DefaultClientConfig(), router.Handle, sessions)))
+	var opts []ws.HandlerOption
+	if len(d.AllowedOrigins) > 0 {
+		opts = append(opts, ws.WithAllowedOrigins(d.AllowedOrigins))
+	}
+
+	mux.Handle("GET /api/v1/socket", wsThrottle(d.Store, d.Issuer)(ws.Handler(d.Hub, d.Issuer, ws.DefaultClientConfig(), router.Handle, sessions, opts...)))
 }
 
 // wsThrottle limits WebSocket connection attempts through the shared
