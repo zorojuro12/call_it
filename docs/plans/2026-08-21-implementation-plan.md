@@ -417,13 +417,13 @@ MVP and contain the demo; 5 onward are separate milestones.
 
 | # | Phase | Deliverable | Depends on | Tooling to import (see `ecc-survey.md`) |
 |---|---|---|---|---|
-| 0 | **Foundations** | Monorepo skeleton, `docker-compose.yml` (Redis/PostgreSQL/Kafka-KRaft), Makefile, GitHub Actions CI, config loader with fail-fast validation, structured logging, `/healthz` | — | `golang-*` (patterns/testing/tdd/verification) rules + skills; `docker-patterns` skill — import *before* starting this phase, not after |
-| 1 | **Domain core (pure Go)** | Odds math, payout and dust distribution, round state machine, wallet rules (buy-in, 3× cap, partial buy-in, refill quota). No I/O; near-total unit coverage | 0 | None new — covered by Phase 0's Go tooling |
-| 2 | **Redis layer** | Key schema, four Lua scripts (`place_wager`, `lock_round`, `settle_round`, `refund_round`), Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 | `redis-patterns` skill |
+| 0 | **Foundations** ✅ | Monorepo skeleton, `docker-compose.yml` (Redis/PostgreSQL/Kafka-KRaft), Makefile, GitHub Actions CI, config loader with fail-fast validation, structured logging, `/healthz` | — | `golang-*` (patterns/testing/tdd/verification) rules + skills; `docker-patterns` skill — import *before* starting this phase, not after |
+| 1 | **Domain core (pure Go)** ✅ | Odds math, payout and dust distribution, round state machine, wallet rules (buy-in, 3× cap, partial buy-in, refill quota). No I/O; near-total unit coverage | 0 | None new — covered by Phase 0's Go tooling |
+| 2 | **Redis layer** ✅ | Key schema, four Lua scripts (`place_wager`, `lock_round`, `settle_round`, `refund_round`), Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 | `redis-patterns` skill |
 | 3 | **Auth + REST** ✅ | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 | `api-design` skill |
 | 4a | **WebSocket transport** ✅ | Authenticated room socket (JWT verified at handshake, no per-message lookup), per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, join/leave presence broadcast | 3 | None new |
 | 4b | **Round lifecycle** ✅ | Rounds, wagers, live odds, server-side lock timer and 60-second auto-refund fallback, host-resolve settlement reveal, session-end persistence, playable end to end from a CLI client | 4a | None new |
-| 5a | **Outbox → Kafka + ledger schema** | Outbox relay binary (`cmd/relay`), `wagers-placed`/`rounds-settled` producers, `internal/events` schemas, PostgreSQL migrations, ledger schema, deferred constraint trigger | 2, 4b | `postgres-patterns`, `database-migrations` skills |
+| 5a | **Outbox → Kafka + ledger schema** ✅ | Outbox relay binary (`cmd/relay`), `wagers-placed`/`rounds-settled` producers, `internal/events` schemas, PostgreSQL migrations, ledger schema, deferred constraint trigger | 2, 4b | `postgres-patterns`, `database-migrations` skills |
 | 5b | **Double-entry ledger** ✅ | `cmd/ledger-worker` consumer, `internal/ledger` repository, idempotent replay on the `idempotency_key` unique constraint, Redis↔PostgreSQL reconciliation test | 5a | None new |
 | 6a | **Frontend shell** | Next.js/TypeScript scaffold, typed REST + WebSocket clients, register/login, room creation and join-by-code, live presence roster — in a room and connected, no gameplay yet. Also the backend's browser-origin admission (CORS + WS `CheckOrigin`), without which no browser can reach the API at all | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
 | 6b | **Gameplay UI** | Host console (open/resolve round), participant wager pad, live odds, lockout countdown, aggregate bettors counter, settlement reveal, Web Audio feedback | 6a | None new |
@@ -450,6 +450,10 @@ work — the ledger writer and the reconciliation test §6 calls "the
 evidence behind the 0.00% double-spend claim" — into 5b alone, so 5a is
 plumbing that can be verified structurally while 5b keeps the
 cross-cutting attention that kind of proof needs.
+
+**✅ marks a phase whose branch is merged into `dev` and whose tests were
+green at merge.** Phases 0–5b are done; 6a is planned
+(`docs/plans/2026-08-30-phase-6a-frontend-shell.md`) but not started.
 
 **Phase 6 split into 6a/6b (added at Phase 6's planning pass).** Done
 *before* writing the detailed task breakdown, same as Phase 5's split and

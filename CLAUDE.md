@@ -17,7 +17,8 @@ tool selection; read this for "how work actually gets done in this repo."
 
 Go 1.22.10 (backend) · Redis 7.2 (atomic Lua, rate limiting) · Kafka 3.7
 KRaft-mode (event backbone, Phase 5+) · PostgreSQL 16 (double-entry ledger,
-Phase 5+) · Next.js/React (frontend, Phase 6+) · Docker Compose (local dev).
+Phase 5+) · Next.js/React 19 + TypeScript (frontend, Phase 6a+) · Docker
+Compose (local dev).
 
 **Never run `go get -u`.** Five dependencies are pinned because newer
 versions declare a `go` directive above 1.22.10 and `go get` will silently
@@ -38,8 +39,8 @@ multi-package module can still upgrade the parent past its pin** — Phase
 dependency, check its `go` directive. Verification log:
 `docs/project-history.md`.
 
-Monorepo: `backend/`, `frontend/` (not yet scaffolded — Phase 6), root
-`docker-compose.yml`.
+Monorepo: `backend/`, `frontend/` (not yet scaffolded — created by Phase
+6a Task 2), root `docker-compose.yml`.
 
 ## Build & Test
 
@@ -143,8 +144,10 @@ red.
   permitted in-round progress signal is an aggregate count of players
   who have wagered ("2/5 players have placed their bets") — denominator
   excludes the host, and it counts players, not wagers. Binds Phase 3
-  (REST payloads), Phase 4 (WebSocket broadcasts), and Phase 6 (the
-  frontend must not reconstruct per-user state client-side). Implemented
+  (REST payloads), Phase 4 (WebSocket broadcasts), and Phase 6a/6b (the
+  frontend must not reconstruct per-user state client-side — 6a receives
+  no wager data at all and must stay that way; 6b renders the reveal only
+  from `round_resolved`). Implemented
   as `round:{roundID}:bettors`, a Redis SET — `SCARD` is the numerator,
   and a player's repeat wager is a no-op `SADD` that doesn't move it.
 - **Settlement math is not duplicated in Lua.** `internal/domain.Settle`
@@ -325,12 +328,17 @@ phase.
 Installed: `golang-patterns`, `golang-testing`, `docker-patterns`,
 `redis-patterns`, `api-design`, `postgres-patterns`, `database-migrations`,
 `react-patterns`, `nextjs-turbopack`, `accessibility` (the last three ahead
-of Phase 6, per the plan §9 row's "Tooling to import" column — staged
-before Phase 6 planning starts, not yet exercised by any code). Matching
-rule packs `.claude/rules/ecc/react/` and `.claude/rules/ecc/typescript/`
-installed alongside them (`react` matches spec §2's explicit "React 19 /
-Next.js"; `typescript` added on the assumption a Next.js scaffold defaults
-to TS — confirm or correct this when Phase 6's plan fixes the actual stack).
+of Phase 6a, per the plan §9 row's "Tooling to import" column — staged
+before Phase 6 planning started, and not yet exercised by any code: no
+frontend exists until Phase 6a Task 2). Matching rule packs
+`.claude/rules/ecc/react/` and `.claude/rules/ecc/typescript/` installed
+alongside them. **The `typescript` pack's provisional status is resolved:**
+it was installed on the assumption a Next.js scaffold defaults to TS, and
+Phase 6a's plan confirmed that assumption — the stack is fixed as
+**TypeScript (`strict: true`) + the Next.js App Router + Tailwind**
+(`docs/plans/2026-08-30-phase-6a-frontend-shell.md`, "Decisions This Plan
+Fixes"). Both packs stay.
+
 `continuous-learning-v2` is present but **deliberately dormant** — don't
 enable it without re-reading `dev-workflow-guide.md` §9.
 

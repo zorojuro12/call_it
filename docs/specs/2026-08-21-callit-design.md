@@ -42,9 +42,10 @@ token gestures at each technology.
   link** generated at room creation.
 - **Guests**: no account. Provide only a display name. Get a session-scoped
   balance equal to the room's buy-in; wiped when the session ends.
-- **Account holders**: persistent identity (login mechanism — email or
-  OAuth — to be finalized during implementation planning). Persistent token
-  balance that carries across sessions.
+- **Account holders**: persistent identity. The login mechanism was left
+  open here and settled during planning as **email + password (argon2id,
+  JWT HS256)** — plan §2, implemented Phase 3. OAuth was not adopted.
+  Persistent token balance that carries across sessions.
 - **Room buy-in is host-configurable** at room creation time (not a fixed
   platform constant).
 - Account holders may stake **up to 3x the room's buy-in**, bounded by
@@ -66,14 +67,23 @@ token gestures at each technology.
   dependency graph only reaches Phases 0 and 2, not 5, so storing
   credentials in PostgreSQL would have pulled most of Phase 5's ledger
   schema forward. Whether accounts migrate to PostgreSQL alongside the
-  ledger, or stay in Redis with the ledger holding only monetary
-  history, is an open question for Phase 5's planning pass.
+  ledger was left open here and **resolved at Phase 5's planning pass:
+  they stay in Redis, and PostgreSQL holds monetary history only** (plan
+  §9, "Phase 5 note"). Credentials are not monetary history, and the
+  ledger references `user_id` as an opaque identifier it never joins on.
+  Revisit at Phase 7 — the real argument for migrating is foreign-key
+  integrity between ledger accounts and users, which is a hardening
+  concern.
 
 ### Refills
 
-- If an account holder's persistent balance drops below a low threshold
-  (exact value TBD in planning — e.g. 20% of the platform refill target),
-  they may **manually claim a refill**.
+- An account holder whose persistent balance is **below the platform
+  refill target** may **manually claim a refill**. The separate, lower
+  eligibility threshold this bullet originally proposed was **removed at
+  Phase 1's planning pass** (plan §8, `docs/plans/2026-08-23-phase-1-domain-core.md`
+  §A1–A3): it created a dead zone between the threshold and the target, and
+  the 3-per-week quota was always the real limiter. Eligibility is exactly
+  `balance < RefillTarget` — `domain.CanRefill`, `internal/domain/refill.go`.
 - A refill tops the account balance up to a **fixed platform-wide amount**
   (independent of any specific room's buy-in, since refills happen before
   a room is chosen).
@@ -230,7 +240,11 @@ that plan is the authoritative reference for each:
 
 - Account login mechanism → email + password, argon2id, JWT HS256
   (plan §2).
-- Refill threshold and platform-wide refill target → plan §8.
+- Refill eligibility and platform-wide refill target → plan §8. The
+  proposed separate threshold was removed rather than given a value; see
+  §3's Refills bullet above.
+- Whether persistent accounts migrate to PostgreSQL alongside the ledger →
+  **no**, they stay in Redis (plan §9, "Phase 5 note"). Revisit at Phase 7.
 - Redis key schema and Lua script contracts → plan §4 and §5.
 - Go WebSocket hub internals → plan §9, phase 4 (per-room owner goroutine,
   bounded send buffers, ping/pong heartbeat).

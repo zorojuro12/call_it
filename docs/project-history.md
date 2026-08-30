@@ -251,8 +251,18 @@ turn and shouldn't sit in context for a stack the project isn't touching yet.
   (before Phase 0) · `redis-patterns` (before Phase 2) · `api-design` (before
   Phase 3 — drove `/api/v1` versioning, resource naming like
   `POST .../participants` rather than a `/rooms/join` verb, and the
-  envelope/error-code conventions).
-- **Not yet installed:** `postgres-patterns`, `database-migrations` (Phase 5).
+  envelope/error-code conventions) · `postgres-patterns`,
+  `database-migrations` (before Phase 5a — drove the `NNNN_name.up.sql` /
+  `.down.sql` migration convention and the `DEFERRABLE INITIALLY DEFERRED`
+  balance trigger) · `react-patterns`, `nextjs-turbopack`, `accessibility`
+  plus the `react` and `typescript` rule packs (before Phase 6 planning,
+  commit `1a2c2f2`). The Phase 6 set is installed but **not yet exercised by
+  any code** — no frontend exists until Phase 6a Task 2 scaffolds one. The
+  `typescript` pack was installed on an assumption, which Phase 6a's plan
+  then confirmed: the stack is TypeScript + App Router + Tailwind.
+- **Not yet installed:** nothing. Every skill the plan §9 table names through
+  Phase 6b is in place; Phase 7 adds none ("None new — spec already names k6
+  directly").
 - **Dormant:** `continuous-learning-v2` is present under `.claude/skills/`
   from the bulk ECC install but deliberately off (`observer.enabled: false`,
   no hooks wired). Don't enable it without re-reading

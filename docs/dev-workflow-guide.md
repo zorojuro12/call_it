@@ -215,7 +215,9 @@ observed), and the per-task review gate.
 **Revisit when:** a phase's implementation genuinely exhausts context before
 completing — Phase 5 (Kafka + ledger + migrations + reconciliation) or Phase 6
 (Next.js frontend; JS/TS is far more verbose than Go) are the plausible
-candidates. Adopt with evidence about *which* phase forced it, not
+candidates. **Both have since been split** — 5 into 5a/5b, 6 into 6a/6b — which
+is the cheaper answer to the same pressure and was reached first in each case;
+weigh that before reading a large phase as evidence for SDD. Adopt with evidence about *which* phase forced it, not
 preemptively.
 
 **Portable?** The reasoning generalizes; the verdict does not. A verbose
