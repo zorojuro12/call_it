@@ -21,15 +21,57 @@ export function toWebSocketUrl(baseUrl: string, token: string): string {
 
 export function openRoomSocket(token: string): RoomSocket {
   const ws = new WebSocket(toWebSocketUrl(API_BASE_URL, token));
+  const handlers = new Map<string, Set<Handler>>();
+
+  ws.onmessage = (event: MessageEvent<string>) => {
+    let envelope: unknown;
+    try {
+      envelope = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+
+    if (
+      typeof envelope !== "object" ||
+      envelope === null ||
+      typeof (envelope as { type?: unknown }).type !== "string"
+    ) {
+      return;
+    }
+
+    const { type, data } = envelope as { type: string; data?: unknown };
+    const set = handlers.get(type);
+    if (!set) {
+      return;
+    }
+    for (const handler of set) {
+      try {
+        handler(data);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(`socket: handler for "${type}" threw`, err);
+      }
+    }
+  };
 
   return {
-    on() {
-      return () => {};
+    on(type, handler) {
+      let set = handlers.get(type);
+      if (!set) {
+        set = new Set();
+        handlers.set(type, set);
+      }
+      set.add(handler);
+      return () => {
+        set?.delete(handler);
+      };
     },
     onStatus() {
       return () => {};
     },
-    send() {},
+    send(type, data) {
+      ws.send(JSON.stringify({ type, data }));
+    },
     close() {
       ws.close();
     },
