@@ -102,4 +102,60 @@ describe("landing page", () => {
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers["Authorization"]).toBe("Bearer acc-tok");
   });
+
+  test("a room-not-found failure is surfaced and does not navigate", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: "room_not_found", message: "room not found" },
+        }),
+        { status: 404 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+    await user.type(screen.getByRole("textbox", { name: /room code/i }), "ZZZ999");
+    await user.type(screen.getByLabelText(/display name/i), "Ann");
+    await user.click(screen.getByRole("button", { name: /join/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/room not found/i);
+    expect(push).not.toHaveBeenCalled();
+    expect(getRoomToken()).toBeNull();
+  });
+
+  test("a partial buy-in still succeeds and navigates", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            room_id: "r1",
+            guest: true,
+            session_balance: 200,
+            partial_buy_in: true,
+            token: "room-tok",
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Page />);
+    await user.type(screen.getByRole("textbox", { name: /room code/i }), "ABC123");
+    await user.type(screen.getByLabelText(/display name/i), "Ann");
+    await user.click(screen.getByRole("button", { name: /join/i }));
+
+    expect(push).toHaveBeenCalledWith("/room/ABC123");
+    expect(getRoomToken()).toBe("room-tok");
+    expect(getRoomSummary()).toEqual({
+      room_id: "r1",
+      guest: true,
+      session_balance: 200,
+      partial_buy_in: true,
+    });
+  });
 });

@@ -3,35 +3,44 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { apiPost } from "@/lib/api";
+import { apiPost, ApiError } from "@/lib/api";
 import { getAccountToken, setRoomSummary, setRoomToken } from "@/lib/session";
 import type { JoinRoomResponse } from "@/lib/protocol";
+import { ErrorBanner } from "@/components/ErrorBanner";
 
 export default function Page() {
   const router = useRouter();
   const [roomCode, setRoomCode] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
     setSubmitting(true);
 
     const code = roomCode.trim().toUpperCase();
 
-    const res = await apiPost<JoinRoomResponse>(
-      `/api/v1/rooms/${code}/participants`,
-      { display_name: displayName },
-      getAccountToken() ?? undefined,
-    );
-    setRoomToken(res.token);
-    setRoomSummary({
-      room_id: res.room_id,
-      guest: res.guest,
-      session_balance: res.session_balance,
-      partial_buy_in: res.partial_buy_in,
-    });
-    router.push(`/room/${code}`);
+    try {
+      const res = await apiPost<JoinRoomResponse>(
+        `/api/v1/rooms/${code}/participants`,
+        { display_name: displayName },
+        getAccountToken() ?? undefined,
+      );
+      setRoomToken(res.token);
+      setRoomSummary({
+        room_id: res.room_id,
+        guest: res.guest,
+        session_balance: res.session_balance,
+        partial_buy_in: res.partial_buy_in,
+      });
+      router.push(`/room/${code}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "could not join room");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -67,6 +76,8 @@ export default function Page() {
             className="rounded border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
           />
         </label>
+
+        <ErrorBanner message={error} />
 
         <button
           type="submit"
