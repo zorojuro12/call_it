@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiPost } from "./api";
+import { ApiError, apiPost } from "./api";
 import type { CreateRoomResponse } from "./protocol";
 
 describe("apiPost", () => {
@@ -43,5 +43,89 @@ describe("apiPost", () => {
       "application/json",
     );
     expect(JSON.parse(init.body as string)).toEqual({ buy_in: 1000 });
+  });
+
+  it("rejects a 401 error envelope with a typed ApiError", async () => {
+    // Arrange
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({
+        error: {
+          code: "invalid_credentials",
+          message: "invalid email or password",
+        },
+      }),
+    });
+
+    // Act & Assert
+    await expect(
+      apiPost("/api/v1/auth/login", { email: "a", password: "b" }),
+    ).rejects.toMatchObject({
+      code: "invalid_credentials",
+      status: 401,
+      message: "invalid email or password",
+    });
+  });
+
+  it("rejects a 429 error envelope with a typed ApiError", async () => {
+    // Arrange
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({
+        error: { code: "rate_limited", message: "too many requests" },
+      }),
+    });
+
+    // Act & Assert
+    await expect(apiPost("/api/v1/rooms", {})).rejects.toMatchObject({
+      code: "rate_limited",
+      status: 429,
+    });
+  });
+
+  it("rejects a non-JSON error body as internal_error", async () => {
+    // Arrange
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => {
+        throw new SyntaxError("Unexpected token B in JSON");
+      },
+    });
+
+    // Act
+    let caught: unknown;
+    try {
+      await apiPost("/api/v1/rooms", {});
+    } catch (err) {
+      caught = err;
+    }
+
+    // Assert
+    expect(caught).toBeInstanceOf(ApiError);
+    expect((caught as ApiError).status).toBe(500);
+    expect((caught as ApiError).code).toBe("internal_error");
+  });
+
+  it("rejects a network failure as network_error", async () => {
+    // Arrange
+    (fetch as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new TypeError("Failed to fetch"),
+    );
+
+    // Act
+    let caught: unknown;
+    try {
+      await apiPost("/api/v1/rooms", {});
+    } catch (err) {
+      caught = err;
+    }
+
+    // Assert
+    expect(caught).toBeInstanceOf(ApiError);
+    expect((caught as ApiError).code).toBe("network_error");
+    expect((caught as ApiError).status).toBe(0);
   });
 });

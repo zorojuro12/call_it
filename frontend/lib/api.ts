@@ -35,19 +35,19 @@ async function handleResponse<T>(response: Response): Promise<T> {
     return body.data as T;
   }
 
+  let parsed: { error?: { code: string; message: string } } | undefined;
   try {
-    const body = await response.json();
-    if (body && body.error) {
-      throw new ApiError(
-        body.error.message,
-        body.error.code,
-        response.status,
-      );
-    }
-  } catch (err) {
-    if (err instanceof ApiError) {
-      throw err;
-    }
+    parsed = await response.json();
+  } catch {
+    parsed = undefined;
+  }
+
+  if (parsed && parsed.error) {
+    throw new ApiError(
+      parsed.error.message,
+      parsed.error.code,
+      response.status,
+    );
   }
 
   throw new ApiError("request failed", "internal_error", response.status);
