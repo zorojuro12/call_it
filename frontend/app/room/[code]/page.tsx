@@ -64,7 +64,6 @@ export default function Page({
       offLeft();
       socket.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!roomToken) {
