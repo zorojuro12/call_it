@@ -3,8 +3,10 @@ import {
   clearRoomToken,
   clearSession,
   getAccountToken,
+  getRoomSummary,
   getRoomToken,
   setAccountToken,
+  setRoomSummary,
   setRoomToken,
 } from "./session";
 
@@ -98,5 +100,81 @@ describe("session token storage", () => {
   it("does not throw when clearing the room token on already-empty storage", () => {
     // Arrange & Act & Assert
     expect(() => clearRoomToken()).not.toThrow();
+  });
+
+  it("returns null for the room summary on empty storage", () => {
+    // Arrange & Act
+    const summary = getRoomSummary();
+
+    // Assert
+    expect(summary).toBeNull();
+  });
+
+  it("round-trips a room summary through storage as a number, not a string", () => {
+    // Arrange
+    setRoomSummary({
+      room_id: "r1",
+      guest: true,
+      session_balance: 200,
+      partial_buy_in: true,
+    });
+
+    // Act
+    const summary = getRoomSummary();
+
+    // Assert
+    expect(summary).toEqual({
+      room_id: "r1",
+      guest: true,
+      session_balance: 200,
+      partial_buy_in: true,
+    });
+    expect(summary?.session_balance).toBe(200);
+  });
+
+  it("clears the room summary along with the room token", () => {
+    // Arrange
+    setAccountToken("acc1");
+    setRoomToken("room1");
+    setRoomSummary({
+      room_id: "r1",
+      guest: true,
+      session_balance: 200,
+      partial_buy_in: true,
+    });
+
+    // Act
+    clearRoomToken();
+
+    // Assert
+    expect(getRoomSummary()).toBeNull();
+    expect(getAccountToken()).toBe("acc1");
+  });
+
+  it("clears the room summary on logout", () => {
+    // Arrange
+    setRoomSummary({
+      room_id: "r1",
+      guest: true,
+      session_balance: 200,
+      partial_buy_in: true,
+    });
+
+    // Act
+    clearSession();
+
+    // Assert
+    expect(getRoomSummary()).toBeNull();
+  });
+
+  it("returns null for a corrupt stored room summary instead of throwing", () => {
+    // Arrange
+    sessionStorage.setItem("callit.room_summary", "not json");
+
+    // Act
+    const summary = getRoomSummary();
+
+    // Assert
+    expect(summary).toBeNull();
   });
 });
