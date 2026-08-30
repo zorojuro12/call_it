@@ -425,8 +425,9 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 4b | **Round lifecycle** ✅ | Rounds, wagers, live odds, server-side lock timer and 60-second auto-refund fallback, host-resolve settlement reveal, session-end persistence, playable end to end from a CLI client | 4a | None new |
 | 5a | **Outbox → Kafka + ledger schema** | Outbox relay binary (`cmd/relay`), `wagers-placed`/`rounds-settled` producers, `internal/events` schemas, PostgreSQL migrations, ledger schema, deferred constraint trigger | 2, 4b | `postgres-patterns`, `database-migrations` skills |
 | 5b | **Double-entry ledger** ✅ | `cmd/ledger-worker` consumer, `internal/ledger` repository, idempotent replay on the `idempotency_key` unique constraint, Redis↔PostgreSQL reconciliation test | 5a | None new |
-| 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
-| 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5b, 6 | None new — spec already names k6 directly |
+| 6a | **Frontend shell** | Next.js/TypeScript scaffold, typed REST + WebSocket clients, register/login, room creation and join-by-code, live presence roster — in a room and connected, no gameplay yet. Also the backend's browser-origin admission (CORS + WS `CheckOrigin`), without which no browser can reach the API at all | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
+| 6b | **Gameplay UI** | Host console (open/resolve round), participant wager pad, live odds, lockout countdown, aggregate bettors counter, settlement reveal, Web Audio feedback | 6a | None new |
+| 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5b, 6b | None new — spec already names k6 directly |
 | 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7 | Decide when unblocked |
 
 **Phase 5 split into 5a/5b (added at Phase 5's planning pass).** Done
@@ -449,6 +450,41 @@ work — the ledger writer and the reconciliation test §6 calls "the
 evidence behind the 0.00% double-spend claim" — into 5b alone, so 5a is
 plumbing that can be verified structurally while 5b keeps the
 cross-cutting attention that kind of proof needs.
+
+**Phase 6 split into 6a/6b (added at Phase 6's planning pass).** Done
+*before* writing the detailed task breakdown, same as Phase 5's split and
+for the same reason. The original Phase 6 row bundled a scaffold, an auth
+surface, room creation/joining, a socket client, the host console, the
+participant view, live odds, a countdown, and Web Audio — nine separable
+deliverables, more than Phase 3 carried when it became the most expensive
+phase measured.
+
+Split at **the same transport seam the backend already uses**, so each
+frontend half consumes exactly one backend half: 6a is everything up to
+and including an authenticated socket showing a live presence roster
+(the client-side counterpart of Phase 4a's pure transport, which carries
+zero game knowledge), and 6b is rounds, wagers, odds, and settlement over
+that socket (Phase 4b's counterpart). The seam is concrete on the client
+too, not just thematic: 6a builds `lib/socket.ts` with a typed
+`on(type, handler)` dispatch, and 6b registers gameplay handlers on it
+without reopening the transport.
+
+**6a also carries one backend task, deliberately.** The API has no CORS
+middleware and constructs a bare `websocket.Upgrader{}`, whose default
+`CheckOrigin` rejects any cross-origin browser upgrade — so a Next.js dev
+server on `:3000` can reach neither the REST API nor the socket on
+`:8080` today. That fix is a prerequisite of the frontend deliverable and
+is unverifiable without a browser client to prove it against, so it lands
+as 6a's Task 1 rather than a separate micro-phase. It is a network
+surface, so `security-reviewer` runs before 6a closes (`CLAUDE.md`).
+
+**Frontend stack fixed here (resolving `CLAUDE.md`'s open question).**
+TypeScript with `strict: true`, the Next.js **App Router**, and Tailwind
+— confirming the assumption under which `.claude/rules/ecc/typescript/`
+was installed in `1a2c2f2`. TypeScript earns its place on this project
+specifically: the socket protocol has eight message types carrying
+integer token amounts, and `lib/protocol.ts` mirrors Go structs that no
+compiler otherwise checks it against.
 
 **Phase 4 split into 4a/4b (added at Phase 4a close-out).** Scoping Phase 4
 as written above produced ~13 tasks / ~38 checkpoints — the shape this
