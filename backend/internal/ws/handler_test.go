@@ -252,6 +252,11 @@ func TestPresenceJoin(t *testing.T) {
 	// Assert: B receives its own connected event first
 	mustReadEnvelope(t, connB, TypeConnected)
 
+	// Assert: B's next message is the roster snapshot telling it about A,
+	// who was already in the room (TestPresenceJoinTellsNewcomerAboutExistingMembers
+	// covers this in isolation; this just consumes it in sequence here).
+	mustReadEnvelope(t, connB, TypePlayerJoined)
+
 	// Assert: A's next message is player_joined for B
 	env := mustReadEnvelope(t, connA, TypePlayerJoined)
 	var presence PresenceEvent
@@ -263,13 +268,73 @@ func TestPresenceJoin(t *testing.T) {
 		t.Fatalf("A's player_joined = %+v, want %+v", presence, want)
 	}
 
-	// Assert: B also receives the same player_joined broadcast
+	// Assert: B also receives the same player_joined broadcast, about itself
 	env = mustReadEnvelope(t, connB, TypePlayerJoined)
 	if err := unmarshalData(env, &presence); err != nil {
 		t.Fatalf("unmarshal PresenceEvent: %v", err)
 	}
 	if presence != want {
 		t.Fatalf("B's player_joined = %+v, want %+v", presence, want)
+	}
+}
+
+func TestPresenceJoinTellsNewcomerAboutExistingMembers(t *testing.T) {
+	// Arrange
+	issuer := newTestIssuer(t, time.Hour)
+	hub := NewHub()
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
+	defer server.Close()
+
+	tokenA, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+	tokenB, err := issuer.Issue(auth.Claims{UserID: "u2", DisplayName: "Grace", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+
+	// Act: A connects and drains its connected + self player_joined
+	connA, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+tokenA, nil)
+	if err != nil {
+		t.Fatalf("Dial A error: %v", err)
+	}
+	defer connA.Close()
+	connA.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mustReadEnvelope(t, connA, TypeConnected)
+	mustReadEnvelope(t, connA, TypePlayerJoined)
+
+	// Act: B connects into a room that already has A in it
+	connB, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+tokenB, nil)
+	if err != nil {
+		t.Fatalf("Dial B error: %v", err)
+	}
+	defer connB.Close()
+	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mustReadEnvelope(t, connB, TypeConnected)
+
+	// Assert: B's very next message tells it about A, the pre-existing
+	// member — not just future joins/leaves. Without this, a client that
+	// joins second never learns who is already in the room.
+	rosterEnv := mustReadEnvelope(t, connB, TypePlayerJoined)
+	var rosterPresence PresenceEvent
+	if err := unmarshalData(rosterEnv, &rosterPresence); err != nil {
+		t.Fatalf("unmarshal roster PresenceEvent: %v", err)
+	}
+	wantRoster := PresenceEvent{UserID: "u1", DisplayName: "Ada", PlayerCount: 2}
+	if rosterPresence != wantRoster {
+		t.Fatalf("B's roster player_joined = %+v, want %+v", rosterPresence, wantRoster)
+	}
+
+	// Assert: B's message after that is its own self-broadcast, unchanged.
+	selfEnv := mustReadEnvelope(t, connB, TypePlayerJoined)
+	var selfPresence PresenceEvent
+	if err := unmarshalData(selfEnv, &selfPresence); err != nil {
+		t.Fatalf("unmarshal self PresenceEvent: %v", err)
+	}
+	wantSelf := PresenceEvent{UserID: "u2", DisplayName: "Grace", PlayerCount: 2}
+	if selfPresence != wantSelf {
+		t.Fatalf("B's self player_joined = %+v, want %+v", selfPresence, wantSelf)
 	}
 }
 
@@ -304,6 +369,7 @@ func TestPresenceLeave(t *testing.T) {
 	}
 	connB.SetReadDeadline(time.Now().Add(2 * time.Second))
 	mustReadEnvelope(t, connB, TypeConnected)
+	mustReadEnvelope(t, connB, TypePlayerJoined) // B's roster snapshot, telling it about A
 	mustReadEnvelope(t, connB, TypePlayerJoined) // B's own broadcast, reaching B
 
 	mustReadEnvelope(t, connA, TypePlayerJoined) // A also hears B's join

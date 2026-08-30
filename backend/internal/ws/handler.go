@@ -103,6 +103,24 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 			RoomID:      claims.RoomID,
 			Guest:       claims.Guest,
 		}))
+
+		// Tell the newcomer about every member already in the room —
+		// player_joined broadcasts only ever announced future joins, so a
+		// client connecting second never otherwise learns who connected
+		// first. Reuses the existing message type/schema; sent directly to
+		// c, not broadcast, since every other member already knows about
+		// themselves.
+		for _, m := range room.Members() {
+			if m.UserID == claims.UserID {
+				continue
+			}
+			c.Send(mustEncode(TypePlayerJoined, PresenceEvent{
+				UserID:      m.UserID,
+				DisplayName: m.DisplayName,
+				PlayerCount: room.Count(),
+			}))
+		}
+
 		room.Broadcast(mustEncode(TypePlayerJoined, PresenceEvent{
 			UserID:      claims.UserID,
 			DisplayName: claims.DisplayName,
