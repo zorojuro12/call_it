@@ -152,4 +152,38 @@ describe("HostConsole", () => {
     await user.click(screen.getByRole("button", { name: "Open round" }));
     expect(onOpenRound).toHaveBeenCalledWith("Q?", ["A", "B"], 120000);
   });
+
+  test("shows a resolve picker only once locked, and resolves with the outcome index", async () => {
+    const user = userEvent.setup();
+    const onOpenRound = vi.fn();
+    const onResolve = vi.fn();
+
+    const { rerender } = render(
+      <HostConsole
+        phase="locked"
+        outcomes={["Home", "Away"]}
+        onOpenRound={onOpenRound}
+        onResolve={onResolve}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Question")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Away" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Away" }));
+    expect(onResolve).toHaveBeenCalledTimes(1);
+    expect(onResolve).toHaveBeenCalledWith(1);
+
+    rerender(
+      <HostConsole
+        phase="open"
+        outcomes={["Home", "Away"]}
+        onOpenRound={onOpenRound}
+        onResolve={onResolve}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Away" })).not.toBeInTheDocument();
+  });
 });

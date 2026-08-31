@@ -11,7 +11,12 @@ export type HostConsoleProps = {
   onResolve: (winningOutcome: number) => void;
 };
 
-export function HostConsole({ outcomes, onOpenRound }: HostConsoleProps): JSX.Element {
+export function HostConsole({
+  phase,
+  outcomes,
+  onOpenRound,
+  onResolve,
+}: HostConsoleProps): JSX.Element {
   const [question, setQuestion] = useState("");
   const [outcomeFields, setOutcomeFields] = useState<string[]>(["", ""]);
   const [lockSeconds, setLockSeconds] = useState("30");
@@ -52,6 +57,23 @@ export function HostConsole({ outcomes, onOpenRound }: HostConsoleProps): JSX.El
     setError(null);
     onOpenRound(trimmedQuestion, trimmedOutcomes, seconds * 1000);
   };
+
+  if (phase === "locked") {
+    return (
+      <div>
+        <p>Which outcome won?</p>
+        {outcomes.map((outcome, index) => (
+          <button key={outcome} type="button" onClick={() => onResolve(index)}>
+            {outcome}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  if (phase === "open") {
+    return <p>Round is open — waiting for lockout</p>;
+  }
 
   return (
     <div>
