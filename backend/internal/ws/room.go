@@ -18,7 +18,8 @@ type Room struct {
 }
 
 type joinCmd struct {
-	c *Client
+	c    *Client
+	done chan struct{}
 }
 
 type leaveCmd struct {
@@ -64,6 +65,7 @@ func (r *Room) run(onEmpty func(roomID string)) {
 		case joinCmd:
 			c.c.sync = r.sync
 			clients[c.c] = struct{}{}
+			close(c.done)
 		case leaveCmd:
 			removeAndNotify(clients, c.c, r.ID, onEmpty)
 		case broadcastCmd:
@@ -126,10 +128,15 @@ func membersOf(clients map[*Client]struct{}) []Identity {
 	return out
 }
 
-// Join adds c to the room's membership. Joining the same client
-// pointer twice is a no-op.
+// Join adds c to the room's membership and does not return until run()
+// has finished processing the join — including assigning c's latency
+// recorder — so a caller that immediately starts c's pumps can never
+// race run()'s write to c's fields. Joining the same client pointer
+// twice is a no-op.
 func (r *Room) Join(c *Client) {
-	r.cmds <- joinCmd{c: c}
+	done := make(chan struct{})
+	r.cmds <- joinCmd{c: c, done: done}
+	<-done
 }
 
 // Leave removes c from the room's membership and closes its send

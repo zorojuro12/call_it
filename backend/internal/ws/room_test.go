@@ -203,6 +203,29 @@ func (d *stubDropCounter) Inc() {
 	d.calls++
 }
 
+// TestJoinSyncsClientBeforeReturning is a security-review regression
+// test (found while closing Phase 7a): Join must not return until
+// run() has finished writing c.sync, or a caller that immediately
+// starts WritePump — as Handler always does — races run()'s write
+// against WritePump's read of the same field, with no happens-before
+// edge between them. A bare channel send/receive rendezvous only
+// orders the value transfer, not run()'s subsequent statements, so this
+// needs an explicit acknowledgement.
+func TestJoinSyncsClientBeforeReturning(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		recorder := &stubSyncRecorder{}
+		room := NewRoom("r1", nil, recorder, nil)
+		c := newClient(nil, Identity{UserID: "u1"}, 4)
+
+		room.Join(c)
+
+		if c.sync != recorder {
+			t.Fatalf("iteration %d: c.sync = %v immediately after Join, want the room's recorder already set", i, c.sync)
+		}
+		go func() { _ = c.sync }()
+	}
+}
+
 func TestBroadcastCountsDroppedClient(t *testing.T) {
 	// Arrange: a full send buffer and no WritePump draining it, so the
 	// non-blocking send in Room.run's broadcastCmd case must hit its
