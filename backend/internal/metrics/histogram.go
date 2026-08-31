@@ -42,29 +42,32 @@ type Histogram struct {
 	sumNanos int64
 }
 
-// NewHistogram returns an empty histogram.
+// NewHistogram returns an empty histogram. The bucket array has
+// len(Bounds)+1 entries; the last is the overflow bucket for samples
+// larger than the largest bound.
 func NewHistogram() *Histogram {
-	return &Histogram{buckets: make([]uint64, len(Bounds))}
+	return &Histogram{buckets: make([]uint64, len(Bounds)+1)}
 }
 
 // Observe records one sample. A negative duration means the caller's
 // clock went backwards; it is dropped rather than folded into the first
-// bucket, where it would silently improve the reported quantiles.
+// bucket, where it would silently improve the reported quantiles. A
+// sample larger than the largest bound is counted in the overflow
+// bucket, never dropped — a p99 that silently discards its slowest
+// samples would report a target as met when it was missed.
 func (h *Histogram) Observe(d time.Duration) {
 	if d < 0 {
 		return
 	}
 	idx := sort.Search(len(Bounds), func(i int) bool { return Bounds[i] >= d })
-	if idx >= len(Bounds) {
-		return
-	}
 	h.buckets[idx]++
 	h.count++
 	h.sumNanos += int64(d)
 }
 
 // Quantile returns the upper bound of the lowest bucket whose cumulative
-// count reaches ceil(q * N). ok is false when no samples have been
+// count reaches ceil(q * N), or OverTopBucket when that count is only
+// reached in the overflow bucket. ok is false when no samples have been
 // observed.
 func (h *Histogram) Quantile(q float64) (time.Duration, bool) {
 	if h.count == 0 {
@@ -75,6 +78,9 @@ func (h *Histogram) Quantile(q float64) (time.Duration, bool) {
 	for i, c := range h.buckets {
 		cum += c
 		if cum >= target {
+			if i == len(Bounds) {
+				return OverTopBucket, true
+			}
 			return Bounds[i], true
 		}
 	}

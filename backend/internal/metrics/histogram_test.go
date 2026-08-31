@@ -87,3 +87,37 @@ func TestHistogramObserveAndQuantile(t *testing.T) {
 		}
 	})
 }
+
+func TestHistogramOverTopBucket(t *testing.T) {
+	t.Run("single sample far above the top bound", func(t *testing.T) {
+		h := NewHistogram()
+		h.Observe(5 * time.Second)
+		if h.Count() != 1 {
+			t.Fatalf("Count() = %d, want 1", h.Count())
+		}
+		if h.Sum() != 5*time.Second {
+			t.Fatalf("Sum() = %v, want 5s", h.Sum())
+		}
+		got, ok := h.Quantile(0.99)
+		if !ok || got != OverTopBucket {
+			t.Fatalf("Quantile(0.99) = (%v, %v), want (OverTopBucket, true)", got, ok)
+		}
+	})
+
+	t.Run("mostly fast samples plus one overflow", func(t *testing.T) {
+		h := NewHistogram()
+		for i := 0; i < 99; i++ {
+			h.Observe(1 * time.Millisecond)
+		}
+		h.Observe(5 * time.Second)
+
+		got, ok := h.Quantile(0.99)
+		if !ok || got != 1*time.Millisecond {
+			t.Fatalf("Quantile(0.99) = (%v, %v), want (1ms, true)", got, ok)
+		}
+		got, ok = h.Quantile(1.0)
+		if !ok || got != OverTopBucket {
+			t.Fatalf("Quantile(1.0) = (%v, %v), want (OverTopBucket, true)", got, ok)
+		}
+	})
+}
