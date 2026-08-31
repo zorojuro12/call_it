@@ -5,6 +5,8 @@ package ws
 type Hub struct {
 	cmds  chan any
 	empty chan string
+	sync  Recorder
+	drops DropCounter
 }
 
 type hubJoinCmd struct {
@@ -31,11 +33,15 @@ type hubNamesCmd struct {
 	reply  chan map[string]string
 }
 
-// NewHub starts the hub's owner goroutine and returns immediately.
-func NewHub() *Hub {
+// NewHub starts the hub's owner goroutine and returns immediately. sync
+// and drops are threaded to every room the hub creates. Either may be
+// nil.
+func NewHub(sync Recorder, drops DropCounter) *Hub {
 	h := &Hub{
 		cmds:  make(chan any),
 		empty: make(chan string),
+		sync:  sync,
+		drops: drops,
 	}
 	go h.run()
 	return h
@@ -51,7 +57,7 @@ func (h *Hub) run() {
 			case hubJoinCmd:
 				room, ok := rooms[c.roomID]
 				if !ok {
-					room = NewRoom(c.roomID, h.notifyEmpty)
+					room = NewRoom(c.roomID, h.notifyEmpty, h.sync, h.drops)
 					rooms[c.roomID] = room
 				}
 				room.Join(c.c)

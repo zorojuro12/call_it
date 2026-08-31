@@ -38,7 +38,7 @@ func testDeps(t *testing.T) Deps {
 	issuer := testIssuer(t)
 	accounts := account.NewService(store, issuer)
 	rooms := room.NewService(store, issuer)
-	return Deps{Accounts: accounts, Rooms: rooms, Store: store, Issuer: issuer, Hub: ws.NewHub()}
+	return Deps{Accounts: accounts, Rooms: rooms, Store: store, Issuer: issuer, Hub: ws.NewHub(nil, nil)}
 }
 
 func TestRegister(t *testing.T) {

@@ -2,11 +2,19 @@ package ws
 
 import "time"
 
+// DropCounter counts one event each call. Satisfied structurally by
+// *metrics.Counter — internal/ws does not import internal/metrics.
+type DropCounter interface {
+	Inc()
+}
+
 // Room is a per-room owner goroutine. All state is owned by run() and
 // mutated only through cmds — no mutex.
 type Room struct {
-	ID   string
-	cmds chan any
+	ID    string
+	cmds  chan any
+	sync  Recorder
+	drops DropCounter
 }
 
 type joinCmd struct {
@@ -39,8 +47,11 @@ type shutdownCmd struct {
 }
 
 // NewRoom starts the room's owner goroutine and returns immediately.
-func NewRoom(id string, onEmpty func(roomID string)) *Room {
-	r := &Room{ID: id, cmds: make(chan any)}
+// sync is the recorder assigned to every joining client, for WritePump's
+// enqueue-to-write latency observation; drops counts a payload dropped
+// by a full send buffer. Either may be nil.
+func NewRoom(id string, onEmpty func(roomID string), sync Recorder, drops DropCounter) *Room {
+	r := &Room{ID: id, cmds: make(chan any), sync: sync, drops: drops}
 	go r.run(onEmpty)
 	return r
 }
@@ -51,6 +62,7 @@ func (r *Room) run(onEmpty func(roomID string)) {
 	for cmd := range r.cmds {
 		switch c := cmd.(type) {
 		case joinCmd:
+			c.c.sync = r.sync
 			clients[c.c] = struct{}{}
 		case leaveCmd:
 			removeAndNotify(clients, c.c, r.ID, onEmpty)
@@ -61,6 +73,9 @@ func (r *Room) run(onEmpty func(roomID string)) {
 				case client.send <- outbound{payload: c.payload, enqueued: c.enqueued}:
 				default:
 					evicted = append(evicted, client)
+					if r.drops != nil {
+						r.drops.Inc()
+					}
 				}
 			}
 			for _, client := range evicted {
@@ -125,10 +140,10 @@ func (r *Room) Leave(c *Client) {
 
 // Broadcast delivers payload to every member's send channel,
 // non-blocking — a member whose buffer is full does not stall this
-// call (eviction of that member is pinned by a later checkpoint). The
-// enqueue timestamp is stamped once, here, so the sync-latency metric
-// includes time spent waiting on this room's own command channel, not
-// only time in a client's send buffer.
+// call, and is instead evicted and counted as a drop. The enqueue
+// timestamp is stamped once, here, so the sync-latency metric includes
+// time spent waiting on this room's own command channel, not only time
+// in a client's send buffer.
 func (r *Room) Broadcast(payload []byte) {
 	r.cmds <- broadcastCmd{payload: payload, enqueued: time.Now()}
 }

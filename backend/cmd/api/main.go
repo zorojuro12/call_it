@@ -58,7 +58,7 @@ func run() error {
 
 	accounts := account.NewService(store, issuer)
 	rooms := room.NewService(store, issuer)
-	hub := ws.NewHub()
+	hub := ws.NewHub(nil, nil)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

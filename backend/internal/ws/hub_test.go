@@ -6,7 +6,7 @@ import (
 )
 
 func TestHubBroadcastByID(t *testing.T) {
-	h := NewHub()
+	h := NewHub(nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1", DisplayName: "Ada"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2", DisplayName: "Grace"}, 4)
 	c3 := newClient(nil, Identity{UserID: "u3", DisplayName: "Margaret"}, 4)
@@ -50,7 +50,7 @@ func TestHubBroadcastByID(t *testing.T) {
 
 func TestHubJoin(t *testing.T) {
 	// Arrange
-	h := NewHub()
+	h := NewHub(nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
 	c3 := newClient(nil, Identity{UserID: "u3"}, 4)
@@ -97,7 +97,7 @@ func TestHubJoin(t *testing.T) {
 
 func TestHubReaps(t *testing.T) {
 	// Arrange
-	h := NewHub()
+	h := NewHub(nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
 	firstRoom := h.Join("r1", c1)
@@ -132,7 +132,7 @@ func TestHubReaps(t *testing.T) {
 
 func TestHubShutdown(t *testing.T) {
 	// Arrange
-	h := NewHub()
+	h := NewHub(nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
 	h.Join("r1", c1)

@@ -155,7 +155,7 @@ func TestEndToEndRound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auth.NewIssuer() = %v, want nil", err)
 	}
-	hub := ws.NewHub()
+	hub := ws.NewHub(nil, nil)
 
 	accounts := account.NewService(store, issuer)
 	rooms := room.NewService(store, issuer)

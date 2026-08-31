@@ -7,7 +7,7 @@ import (
 
 func TestRoomJoin(t *testing.T) {
 	// Arrange
-	room := NewRoom("r1", nil)
+	room := NewRoom("r1", nil, nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1", DisplayName: "Ada"}, 4)
 
 	// Act
@@ -34,7 +34,7 @@ func TestRoomJoin(t *testing.T) {
 
 func TestRoomLeave(t *testing.T) {
 	// Arrange
-	room := NewRoom("r1", nil)
+	room := NewRoom("r1", nil, nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1", DisplayName: "Ada"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2", DisplayName: "Grace"}, 4)
 	room.Join(c1)
@@ -72,7 +72,7 @@ func TestRoomLeave(t *testing.T) {
 
 func TestRoomBroadcast(t *testing.T) {
 	// Arrange
-	room := NewRoom("r1", nil)
+	room := NewRoom("r1", nil, nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
 	c3 := newClient(nil, Identity{UserID: "u3"}, 4)
@@ -101,7 +101,7 @@ func TestRoomBroadcast(t *testing.T) {
 
 func TestRoomEvicts(t *testing.T) {
 	// Arrange
-	room := NewRoom("r1", nil)
+	room := NewRoom("r1", nil, nil, nil)
 	slow := newClient(nil, Identity{UserID: "slow"}, 1)
 	fast := newClient(nil, Identity{UserID: "fast"}, 8)
 	room.Join(slow)
@@ -141,7 +141,7 @@ func TestRoomEvicts(t *testing.T) {
 func TestRoomOnEmpty(t *testing.T) {
 	// Arrange
 	notified := make(chan string, 4)
-	room := NewRoom("r1", func(roomID string) { notified <- roomID })
+	room := NewRoom("r1", func(roomID string) { notified <- roomID }, nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
 	room.Join(c1)
@@ -183,7 +183,7 @@ func TestRoomOnEmpty(t *testing.T) {
 
 func TestRoomOnEmptyNilIsLegal(t *testing.T) {
 	// Arrange
-	room := NewRoom("r1", nil)
+	room := NewRoom("r1", nil, nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	room.Join(c1)
 
@@ -191,5 +191,41 @@ func TestRoomOnEmptyNilIsLegal(t *testing.T) {
 	room.Leave(c1)
 	if got := room.Count(); got != 0 {
 		t.Fatalf("Count() = %d, want 0", got)
+	}
+}
+
+// stubDropCounter counts Inc() calls.
+type stubDropCounter struct {
+	calls int
+}
+
+func (d *stubDropCounter) Inc() {
+	d.calls++
+}
+
+func TestBroadcastCountsDroppedClient(t *testing.T) {
+	// Arrange: a full send buffer and no WritePump draining it, so the
+	// non-blocking send in Room.run's broadcastCmd case must hit its
+	// default branch.
+	recorder := &stubSyncRecorder{}
+	drops := &stubDropCounter{}
+	room := NewRoom("r1", nil, recorder, drops)
+	slow := newClient(nil, Identity{UserID: "slow"}, 1)
+	room.Join(slow)
+	slow.send <- outbound{payload: []byte("fills the one slot")}
+
+	// Act
+	room.Broadcast([]byte("evicts slow"))
+
+	// Assert
+	waitFor(t, func() bool { return room.Count() == 0 })
+	if got := room.Count(); got != 0 {
+		t.Fatalf("Count() after eviction = %d, want 0", got)
+	}
+	if drops.calls != 1 {
+		t.Fatalf("drop counter calls = %d, want 1", drops.calls)
+	}
+	if len(recorder.calls()) != 0 {
+		t.Fatalf("latency recorder observed %d calls, want 0", len(recorder.calls()))
 	}
 }
