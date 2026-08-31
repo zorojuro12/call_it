@@ -3,6 +3,7 @@ package metrics
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -63,6 +64,27 @@ func TestRegistryRender(t *testing.T) {
 			t.Fatalf("Render() = %q, want %q", got, want)
 		}
 	})
+}
+
+func TestMetricNamesAreStable(t *testing.T) {
+	r := NewRegistry()
+	r.Histogram(NameWagerPlaceOK)
+	r.Histogram(NameWagerPlaceErr)
+	r.Histogram(NameWSSync)
+	r.Counter(NameWSSendDropped)
+
+	rendered := r.Render()
+	prefixes := []string{
+		"callit_wager_place_ok_",
+		"callit_wager_place_err_",
+		"callit_ws_sync_",
+		"callit_ws_send_dropped",
+	}
+	for _, p := range prefixes {
+		if !strings.Contains(rendered, p) {
+			t.Errorf("Render() = %q, want it to contain a line starting %q", rendered, p)
+		}
+	}
 }
 
 func TestHandler(t *testing.T) {

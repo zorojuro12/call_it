@@ -16,6 +16,7 @@ import (
 	"github.com/zorojuro12/call_it/backend/internal/auth"
 	"github.com/zorojuro12/call_it/backend/internal/config"
 	"github.com/zorojuro12/call_it/backend/internal/httpapi"
+	"github.com/zorojuro12/call_it/backend/internal/metrics"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 	"github.com/zorojuro12/call_it/backend/internal/room"
 	"github.com/zorojuro12/call_it/backend/internal/round"
@@ -56,9 +57,10 @@ func run() error {
 		return fmt.Errorf("constructing token issuer: %w", err)
 	}
 
+	reg := metrics.NewRegistry()
 	accounts := account.NewService(store, issuer)
 	rooms := room.NewService(store, issuer)
-	hub := ws.NewHub(nil, nil)
+	hub := ws.NewHub(reg.Histogram(metrics.NameWSSync), reg.Counter(metrics.NameWSSendDropped))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -72,7 +74,7 @@ func run() error {
 	roundsCtx, roundsCancel := context.WithCancel(context.Background())
 	defer roundsCancel()
 	rounds := round.NewService(roundsCtx, store, hub)
-	wagers := wager.NewService(store, hub, nil, nil)
+	wagers := wager.NewService(store, hub, reg.Histogram(metrics.NameWagerPlaceOK), reg.Histogram(metrics.NameWagerPlaceErr))
 
 	mux := httpapi.NewMux(httpapi.Deps{
 		Accounts:       accounts,
@@ -100,6 +102,24 @@ func run() error {
 		serverErr <- nil
 	}()
 
+	// The metrics listener is a separate http.Server on its own,
+	// default-disabled address — never wrapped in httpapi.CORS, never
+	// registered on mux. CLAUDE.md: metrics are process-aggregate only,
+	// and the browser origin allowlist has exactly one definition.
+	var metricsServer *http.Server
+	if cfg.MetricsAddr != "" {
+		metricsServer = &http.Server{
+			Addr:    cfg.MetricsAddr,
+			Handler: metrics.Handler(reg),
+		}
+		go func() {
+			logger.Info("metrics listener starting", "addr", cfg.MetricsAddr)
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serverErr <- err
+			}
+		}()
+	}
+
 	select {
 	case err := <-serverErr:
 		return err
@@ -112,6 +132,11 @@ func run() error {
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
+	}
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("metrics listener graceful shutdown: %w", err)
+		}
 	}
 	roundsCancel()
 	hub.Shutdown()

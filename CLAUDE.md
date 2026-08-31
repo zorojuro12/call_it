@@ -88,8 +88,10 @@ binaries and removes the race. Don't drop it to "speed up" `go test
 
 **Running the server itself needs `JWT_SECRET`** (32+ bytes, no
 default — the process fails fast without it) and, optionally,
-`JWT_TTL` (default `2h`, valid `1m`–`24h`). Example:
-`JWT_SECRET=$(openssl rand -hex 32) go run ./cmd/api`.
+`JWT_TTL` (default `2h`, valid `1m`–`24h`) and `METRICS_ADDR` (optional
+`host:port` for the separate metrics listener added in Phase 7a; unset
+disables it; must be loopback under `ENV=production` — see README.md).
+Example: `JWT_SECRET=$(openssl rand -hex 32) go run ./cmd/api`.
 
 `make loadtest` exists as a stub — no k6 scripts exist yet (Phase 7).
 `make migrate` and `make ledger-worker` are real as of Phase 5a/5b
@@ -258,6 +260,14 @@ Gotchas).
   shape this file already rejects for Redis keys
   (`internal/redisstore/keys.go`) and the rate limiter — don't fork a
   second list for either surface.
+- **Metrics are process-aggregate only and never labelled by user, room,
+  or round** (Phase 7a): `internal/metrics`'s histograms and counters
+  observe totals across the whole process — a per-user label would let a
+  scraper reconstruct wager activity the same anonymity invariant above
+  exists to withhold. The metrics listener (`METRICS_ADDR`) is a
+  separate `http.Server`, never wrapped in `httpapi.CORS` and never
+  registered on the public mux, so it adds no second origin allowlist to
+  the rule above.
 
 (These bind Phases 1-5 as they're built; Phase 0 — config and health check —
 doesn't yet touch most of them. See the plan for full context on each.)

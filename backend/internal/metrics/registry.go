@@ -10,6 +10,16 @@ import (
 	"time"
 )
 
+// Metric names this phase defines, so cmd/api and this package's own
+// tests reference one definition rather than two string literals that
+// can drift apart.
+const (
+	NameWagerPlaceOK  = "wager_place_ok"
+	NameWagerPlaceErr = "wager_place_err"
+	NameWSSync        = "ws_sync"
+	NameWSSendDropped = "ws_send_dropped"
+)
+
 // Counter is a monotonically increasing count. Safe for concurrent use.
 type Counter struct {
 	value atomic.Uint64
