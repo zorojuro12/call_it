@@ -41,6 +41,7 @@ export type ConnectedEvent = {
   display_name: string;
   room_id: string;
   guest: boolean;
+  host: boolean;
 };
 
 export type PresenceEvent = {
@@ -52,6 +53,54 @@ export type PresenceEvent = {
 export type SocketErrorEvent = {
   code: string;
   message: string;
+};
+
+export type RoundOpenedEvent = {
+  round_id: string;
+  question: string;
+  outcomes: string[];
+  lock_at_ms: number;
+};
+
+export type OddsUpdatedEvent = {
+  round_id: string;
+  pools: number[];
+  total: number;
+  multipliers: number[];
+  bettors: number;
+  players: number;
+};
+
+export type RoundLockedEvent = {
+  round_id: string;
+};
+
+export type ResultRow = {
+  user_id: string;
+  display_name: string;
+  staked: number;
+  returned: number;
+  net: number;
+};
+
+export type RoundResolvedEvent = {
+  round_id: string;
+  winning_outcome: number;
+  results: ResultRow[];
+  dust: number;
+  refunded: boolean;
+};
+
+export type RoundRefundedEvent = {
+  round_id: string;
+  total: number;
+};
+
+export type WagerAcceptedEvent = {
+  round_id: string;
+  outcome: number;
+  amount: number;
+  balance: number;
 };
 
 export type Envelope = {
