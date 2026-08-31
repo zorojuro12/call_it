@@ -316,3 +316,51 @@ func TestLoadMetricsAddr(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadMetricsAddrProductionLoopback(t *testing.T) {
+	prodEnv := map[string]string{
+		"ENV":                  "production",
+		"CORS_ALLOWED_ORIGINS": "https://callit.example",
+	}
+	withMetrics := func(addr string) map[string]string {
+		env := map[string]string{"METRICS_ADDR": addr}
+		for k, v := range prodEnv {
+			env[k] = v
+		}
+		return env
+	}
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{name: "production loopback IPv4 accepted", env: withMetrics("127.0.0.1:9090")},
+		{name: "production localhost accepted", env: withMetrics("localhost:9090")},
+		{name: "production loopback IPv6 accepted", env: withMetrics("[::1]:9090")},
+		{name: "production 0.0.0.0 rejected", env: withMetrics("0.0.0.0:9090"), wantErr: true},
+		{name: "production non-loopback IP rejected", env: withMetrics("10.0.0.5:9090"), wantErr: true},
+		{name: "production empty host rejected", env: withMetrics(":9090"), wantErr: true},
+		{
+			name: "development 0.0.0.0 accepted",
+			env:  map[string]string{"METRICS_ADDR": "0.0.0.0:9090"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(lookupFrom(tt.env, nil))
+			if tt.wantErr && err == nil {
+				t.Fatalf("Load() with env %v: got nil error, want an error naming METRICS_ADDR and loopback", tt.env)
+			}
+			if tt.wantErr && err != nil {
+				if !strings.Contains(err.Error(), "METRICS_ADDR") || !strings.Contains(err.Error(), "loopback") {
+					t.Errorf("Load() error = %q, want it to contain both %q and %q", err.Error(), "METRICS_ADDR", "loopback")
+				}
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("Load() with env %v: unexpected error: %v", tt.env, err)
+			}
+		})
+	}
+}
