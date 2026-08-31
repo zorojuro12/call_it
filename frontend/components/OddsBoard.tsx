@@ -29,7 +29,7 @@ export function OddsBoard({
             <tr key={outcome}>
               <td>{outcome}</td>
               <td>{pools[i]}</td>
-              <td>{`${multipliers[i].toFixed(2)}×`}</td>
+              <td>{pools[i] === 0 ? "—" : `${multipliers[i].toFixed(2)}×`}</td>
             </tr>
           ))}
         </tbody>
