@@ -76,6 +76,26 @@ export function reduceRound(state: RoundState, action: RoundAction): RoundState 
     case "connected":
       return { ...state, self_id: action.data.user_id, is_host: action.data.host };
 
+    case "round_opened":
+      return {
+        ...state,
+        phase: "open",
+        round_id: action.data.round_id,
+        question: action.data.question,
+        outcomes: action.data.outcomes,
+        lock_at_ms: action.data.lock_at_ms,
+        pools: new Array(action.data.outcomes.length).fill(0),
+        total: 0,
+        multipliers: [],
+        bettors: 0,
+        balance_at_open: state.balance,
+        my_stake: 0,
+        results: null,
+        dust: 0,
+        refunded: false,
+        refund_total: null,
+      };
+
     default:
       return state;
   }
