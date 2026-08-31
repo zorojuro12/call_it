@@ -147,8 +147,8 @@ func TestWritePump(t *testing.T) {
 
 	// Act
 	go c.WritePump()
-	c.send <- []byte("a")
-	c.send <- []byte("b")
+	c.send <- outbound{payload: []byte("a")}
+	c.send <- outbound{payload: []byte("b")}
 	waitFor(t, func() bool { return len(stub.WriteMessages()) >= 2 })
 
 	// Assert
@@ -247,7 +247,7 @@ func TestWritePumpWriteError(t *testing.T) {
 		c.WritePump()
 		close(done)
 	}()
-	c.send <- []byte("a")
+	c.send <- outbound{payload: []byte("a")}
 
 	// Assert
 	select {
@@ -261,7 +261,7 @@ func TestWritePumpWriteError(t *testing.T) {
 
 	// Act: push a second payload after the pump has stopped
 	select {
-	case c.send <- []byte("b"):
+	case c.send <- outbound{payload: []byte("b")}:
 	default:
 	}
 
@@ -501,14 +501,63 @@ func TestReadPumpOnCloseNilIsLegal(t *testing.T) {
 	}
 }
 
-func readWithTimeout(t *testing.T, ch chan []byte) []byte {
+func readWithTimeout(t *testing.T, ch chan outbound) []byte {
 	t.Helper()
 	select {
 	case v := <-ch:
-		return v
+		return v.payload
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("timed out waiting for send channel")
 		return nil
+	}
+}
+
+// stubSyncRecorder records every Observe call, guarded by a mutex since
+// WritePump observes from its own goroutine.
+type stubSyncRecorder struct {
+	mu       sync.Mutex
+	observed []time.Duration
+}
+
+func (s *stubSyncRecorder) Observe(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observed = append(s.observed, d)
+}
+
+func (s *stubSyncRecorder) calls() []time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]time.Duration, len(s.observed))
+	copy(out, s.observed)
+	return out
+}
+
+func TestWritePumpRecordsSyncLatency(t *testing.T) {
+	// Arrange
+	stub := newStubConn()
+	cfg := DefaultClientConfig()
+	c := NewClient(stub, Identity{UserID: "u1"}, cfg)
+	recorder := &stubSyncRecorder{}
+	c.sync = recorder
+
+	// Act
+	c.Send([]byte("a"))
+	time.Sleep(5 * time.Millisecond)
+	go c.WritePump()
+	waitFor(t, func() bool { return len(stub.WriteMessages()) >= 1 })
+
+	// Assert
+	msgs := stub.WriteMessages()
+	if len(msgs) != 1 || string(msgs[0].data) != "a" {
+		t.Fatalf("WriteMessages() = %+v, want one call with payload \"a\"", msgs)
+	}
+	observed := recorder.calls()
+	if len(observed) != 1 {
+		t.Fatalf("recorder observed %d calls, want 1", len(observed))
+	}
+	if observed[0] < 5*time.Millisecond {
+		t.Errorf("observed duration = %v, want >= 5ms (queue wait, not just the write call)", observed[0])
 	}
 }
 

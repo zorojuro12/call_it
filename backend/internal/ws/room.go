@@ -1,5 +1,7 @@
 package ws
 
+import "time"
+
 // Room is a per-room owner goroutine. All state is owned by run() and
 // mutated only through cmds — no mutex.
 type Room struct {
@@ -24,7 +26,8 @@ type countCmd struct {
 }
 
 type broadcastCmd struct {
-	payload []byte
+	payload  []byte
+	enqueued time.Time
 }
 
 type closeCmd struct {
@@ -55,7 +58,7 @@ func (r *Room) run(onEmpty func(roomID string)) {
 			var evicted []*Client
 			for client := range clients {
 				select {
-				case client.send <- c.payload:
+				case client.send <- outbound{payload: c.payload, enqueued: c.enqueued}:
 				default:
 					evicted = append(evicted, client)
 				}
@@ -122,9 +125,12 @@ func (r *Room) Leave(c *Client) {
 
 // Broadcast delivers payload to every member's send channel,
 // non-blocking — a member whose buffer is full does not stall this
-// call (eviction of that member is pinned by a later checkpoint).
+// call (eviction of that member is pinned by a later checkpoint). The
+// enqueue timestamp is stamped once, here, so the sync-latency metric
+// includes time spent waiting on this room's own command channel, not
+// only time in a client's send buffer.
 func (r *Room) Broadcast(payload []byte) {
-	r.cmds <- broadcastCmd{payload: payload}
+	r.cmds <- broadcastCmd{payload: payload, enqueued: time.Now()}
 }
 
 // Members returns a snapshot of the room's current identities, in

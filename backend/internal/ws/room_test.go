@@ -88,12 +88,12 @@ func TestRoomBroadcast(t *testing.T) {
 	for _, c := range []*Client{c1, c2, c3} {
 		first := <-c.send
 		second := <-c.send
-		if string(first) != "hello" || string(second) != "world" {
-			t.Fatalf("client %s got [%q, %q], want [\"hello\", \"world\"]", c.UserID, first, second)
+		if string(first.payload) != "hello" || string(second.payload) != "world" {
+			t.Fatalf("client %s got [%q, %q], want [\"hello\", \"world\"]", c.UserID, first.payload, second.payload)
 		}
 		select {
 		case extra := <-c.send:
-			t.Fatalf("client %s got unexpected extra message %q", c.UserID, extra)
+			t.Fatalf("client %s got unexpected extra message %q", c.UserID, extra.payload)
 		default:
 		}
 	}
@@ -123,8 +123,8 @@ func TestRoomEvicts(t *testing.T) {
 
 	// Assert: slow's send channel is closed, after draining its one buffered payload
 	buffered := <-slow.send
-	if string(buffered) != "one" {
-		t.Fatalf("slow buffered payload = %q, want \"one\"", buffered)
+	if string(buffered.payload) != "one" {
+		t.Fatalf("slow buffered payload = %q, want \"one\"", buffered.payload)
 	}
 	if _, ok := <-slow.send; ok {
 		t.Fatalf("slow.send should be closed after eviction")
@@ -133,8 +133,8 @@ func TestRoomEvicts(t *testing.T) {
 	// Assert: fast received both payloads — the broadcast was never blocked by slow
 	first := <-fast.send
 	second := <-fast.send
-	if string(first) != "one" || string(second) != "two" {
-		t.Fatalf("fast got [%q, %q], want [\"one\", \"two\"]", first, second)
+	if string(first.payload) != "one" || string(second.payload) != "two" {
+		t.Fatalf("fast got [%q, %q], want [\"one\", \"two\"]", first.payload, second.payload)
 	}
 }
 

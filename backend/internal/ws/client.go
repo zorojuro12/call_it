@@ -26,6 +26,20 @@ type Identity struct {
 	Guest       bool
 }
 
+// Recorder observes one latency sample. Satisfied structurally by
+// *metrics.Histogram — internal/ws does not import internal/metrics.
+type Recorder interface {
+	Observe(d time.Duration)
+}
+
+// outbound is one payload queued for delivery, carrying the time it was
+// enqueued so WritePump can measure the queue-wait latency that
+// contributes to spec §7's WebSocket sync target.
+type outbound struct {
+	payload  []byte
+	enqueued time.Time
+}
+
 // Client is one connected socket: its identity, its underlying
 // connection, and the buffered channel its write pump drains. RoomID is
 // the room its token is scoped to — set by Handler from the verified
@@ -36,7 +50,8 @@ type Client struct {
 	RoomID string
 	conn   Conn
 	cfg    ClientConfig
-	send   chan []byte
+	send   chan outbound
+	sync   Recorder
 }
 
 // newClient constructs a Client with a send buffer of the given size.
@@ -45,7 +60,7 @@ func newClient(conn Conn, ident Identity, sendBuffer int) *Client {
 	return &Client{
 		Identity: ident,
 		conn:     conn,
-		send:     make(chan []byte, sendBuffer),
+		send:     make(chan outbound, sendBuffer),
 	}
 }
 
@@ -76,7 +91,7 @@ func NewClient(conn Conn, ident Identity, cfg ClientConfig) *Client {
 		Identity: ident,
 		conn:     conn,
 		cfg:      cfg,
-		send:     make(chan []byte, cfg.SendBuffer),
+		send:     make(chan outbound, cfg.SendBuffer),
 	}
 }
 
@@ -132,14 +147,17 @@ func mustEncode(msgType string, data any) []byte {
 // up to receive is already being evicted by the room.
 func (c *Client) Send(payload []byte) {
 	select {
-	case c.send <- payload:
+	case c.send <- outbound{payload: payload, enqueued: time.Now()}:
 	default:
 	}
 }
 
 // WritePump drains c.send, writing each payload as a text message, and
 // sends a heartbeat ping on cfg.PingInterval. It returns — closing the
-// connection — when send is closed or a write fails.
+// connection — when send is closed or a write fails. On a successful
+// write it observes the enqueue-to-write latency on c.sync, when set —
+// this is what measures spec §7's WebSocket sync target, including time
+// spent waiting in this client's send buffer, not just the write call.
 func (c *Client) WritePump() {
 	defer c.conn.Close()
 
@@ -148,7 +166,7 @@ func (c *Client) WritePump() {
 
 	for {
 		select {
-		case payload, ok := <-c.send:
+		case o, ok := <-c.send:
 			if !ok {
 				_ = c.conn.WriteControl(websocket.CloseMessage, nil, time.Now().Add(c.cfg.WriteWait))
 				return
@@ -156,8 +174,11 @@ func (c *Client) WritePump() {
 			if err := c.conn.SetWriteDeadline(time.Now().Add(c.cfg.WriteWait)); err != nil {
 				return
 			}
-			if err := c.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+			if err := c.conn.WriteMessage(websocket.TextMessage, o.payload); err != nil {
 				return
+			}
+			if c.sync != nil {
+				c.sync.Observe(time.Since(o.enqueued))
 			}
 		case <-ticker.C:
 			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(c.cfg.WriteWait)); err != nil {
