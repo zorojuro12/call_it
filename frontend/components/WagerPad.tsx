@@ -25,7 +25,7 @@ export function WagerPad({ outcomes, balance, disabled, onPlace }: WagerPadProps
 
     const amount = Number(amountText);
 
-    if (!Number.isInteger(amount) || amount <= 0) {
+    if (amount <= 0) {
       setError("Enter an amount above zero");
       return;
     }

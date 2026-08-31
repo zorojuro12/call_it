@@ -45,4 +45,51 @@ describe("WagerPad", () => {
 
     expect(onPlace).not.toHaveBeenCalled();
   });
+
+  test("refuses a stake above the balance and shows the limit", async () => {
+    const user = userEvent.setup();
+    const onPlace = vi.fn();
+
+    render(
+      <WagerPad outcomes={["Home", "Away"]} balance={100} disabled={false} onPlace={onPlace} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Home" }));
+    await user.type(screen.getByLabelText("Amount"), "150");
+    await user.click(screen.getByRole("button", { name: "Place bet" }));
+
+    expect(onPlace).not.toHaveBeenCalled();
+    expect(screen.getByText("You only have 100 tokens")).toBeInTheDocument();
+  });
+
+  test("accepts a stake exactly equal to the balance", async () => {
+    const user = userEvent.setup();
+    const onPlace = vi.fn();
+
+    render(
+      <WagerPad outcomes={["Home", "Away"]} balance={100} disabled={false} onPlace={onPlace} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Home" }));
+    await user.type(screen.getByLabelText("Amount"), "100");
+    await user.click(screen.getByRole("button", { name: "Place bet" }));
+
+    expect(onPlace).toHaveBeenCalledWith(0, 100);
+  });
+
+  test("rejects a zero amount", async () => {
+    const user = userEvent.setup();
+    const onPlace = vi.fn();
+
+    render(
+      <WagerPad outcomes={["Home", "Away"]} balance={100} disabled={false} onPlace={onPlace} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Home" }));
+    await user.type(screen.getByLabelText("Amount"), "0");
+    await user.click(screen.getByRole("button", { name: "Place bet" }));
+
+    expect(onPlace).not.toHaveBeenCalled();
+    expect(screen.getByText("Enter an amount above zero")).toBeInTheDocument();
+  });
 });
