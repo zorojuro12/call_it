@@ -1,5 +1,5 @@
 .PHONY: up up-full down test test-unit lint build migrate ledger-worker loadtest \
-        fe-install fe-dev fe-test fe-lint fe-build fe-e2e
+        fe-install fe-dev fe-test fe-lint fe-build fe-e2e api-lan fe-dev-lan
 
 # Core services only (Redis, PostgreSQL) — what Phases 0-4 need.
 up:
@@ -72,3 +72,17 @@ fe-build:
 
 fe-e2e:
 	cd frontend && npx playwright test
+
+# This WSL2 instance's LAN IP, for when Windows' localhost -> WSL2 port
+# forwarding isn't working and a Windows browser has to reach the dev
+# servers via the WSL2 IP directly instead. Browse to
+# http://$(WSL_IP):3000 with both of these running in separate terminals.
+WSL_IP := $(shell ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+
+api-lan:
+	cd backend && JWT_SECRET=$$(openssl rand -hex 32) CORS_ALLOWED_ORIGINS=http://$(WSL_IP):3000 go run ./cmd/api
+
+# next.config.ts's allowedDevOrigins must also list this IP (already does,
+# statically) or Next's dev server 403s its own asset requests.
+fe-dev-lan:
+	cd frontend && NEXT_PUBLIC_API_BASE_URL=http://$(WSL_IP):8080 npm run dev
