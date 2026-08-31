@@ -66,4 +66,17 @@ describe("playCue", () => {
     ];
     expect(new Set(frequencies).size).toBe(3);
   });
+
+  it("does not throw when the factory fails, and later calls still work", () => {
+    expect(() =>
+      playCue("open", () => {
+        throw new Error("no audio");
+      }),
+    ).not.toThrow();
+
+    const { context, createOscillator } = makeFakeContext();
+    playCue("lock", () => context as never);
+
+    expect(createOscillator).toHaveBeenCalledOnce();
+  });
 });
