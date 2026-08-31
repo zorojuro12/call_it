@@ -123,6 +123,12 @@ export function reduceRound(state: RoundState, action: RoundAction): RoundState 
       }
       return { ...state, phase: "locked" };
 
+    case "wager_accepted":
+      if (isStale(state, action.data.round_id)) {
+        return state;
+      }
+      return { ...state, balance: action.data.balance, my_stake: state.my_stake + action.data.amount };
+
     default:
       return state;
   }

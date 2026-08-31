@@ -182,3 +182,49 @@ describe("reduceRound: round_locked", () => {
     expect(after).toBe(before);
   });
 });
+
+describe("reduceRound: wager_accepted", () => {
+  it("applies the server's balance and accumulates the stake", () => {
+    // Arrange
+    const opened = reduceRound(initialRoundState(1000), {
+      type: "round_opened",
+      data: { round_id: "rd1", question: "Q?", outcomes: ["Home", "Away"], lock_at_ms: 1000 },
+    });
+
+    // Act
+    const afterFirst = reduceRound(opened, {
+      type: "wager_accepted",
+      data: { round_id: "rd1", outcome: 0, amount: 100, balance: 900 },
+    });
+    const afterSecond = reduceRound(afterFirst, {
+      type: "wager_accepted",
+      data: { round_id: "rd1", outcome: 1, amount: 50, balance: 850 },
+    });
+
+    // Assert
+    expect(afterFirst.balance).toBe(900);
+    expect(afterFirst.my_stake).toBe(100);
+    expect(afterFirst.balance_at_open).toBe(1000);
+    expect(afterFirst.phase).toBe("open");
+
+    expect(afterSecond.balance).toBe(850);
+    expect(afterSecond.my_stake).toBe(150);
+  });
+
+  it("drops a stale wager_accepted for a round that is no longer current", () => {
+    // Arrange
+    const opened = reduceRound(initialRoundState(1000), {
+      type: "round_opened",
+      data: { round_id: "rd1", question: "Q?", outcomes: ["Home", "Away"], lock_at_ms: 1000 },
+    });
+
+    // Act
+    const after = reduceRound(opened, {
+      type: "wager_accepted",
+      data: { round_id: "rd0", outcome: 0, amount: 100, balance: 900 },
+    });
+
+    // Assert
+    expect(after).toBe(opened);
+  });
+});
