@@ -33,12 +33,6 @@ export function SettlementReveal({
   return (
     <div>
       {winningLabel !== null && <h2>{winningLabel}</h2>}
-      {results !== null && refunded && (
-        <p>Nobody backed the winning outcome — every stake was returned</p>
-      )}
-      {results === null && refundTotal !== null && (
-        <p>The round went unresolved — all {refundTotal} tokens were refunded</p>
-      )}
       {results !== null && (
         <table>
           <tbody>
