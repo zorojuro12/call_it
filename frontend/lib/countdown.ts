@@ -3,7 +3,7 @@
 // server is what actually closes wagering. lock_at_ms is absolute server
 // wall-clock, so a skewed browser clock makes this cosmetic value wrong
 // without affecting correctness.
-import { useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 const TICK_MS = 100;
 
@@ -11,29 +11,33 @@ export function remainingMs(lockAtMs: number, nowMs: number): number {
   return Math.max(0, lockAtMs - nowMs);
 }
 
+// useSyncExternalStore is the React-sanctioned way to read a value that
+// changes outside React's knowledge (the wall clock) without violating the
+// render-purity rule that a plain `Date.now()` read during render would
+// trip. subscribe/getSnapshot both run outside the render body.
 export function useCountdown(lockAtMs: number | null): number {
-  const [remaining, setRemaining] = useState(() =>
-    lockAtMs === null ? 0 : remainingMs(lockAtMs, Date.now()),
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      if (lockAtMs === null) {
+        return () => {};
+      }
+
+      const interval = setInterval(() => {
+        onStoreChange();
+        if (remainingMs(lockAtMs, Date.now()) === 0) {
+          clearInterval(interval);
+        }
+      }, TICK_MS);
+
+      return () => clearInterval(interval);
+    },
+    [lockAtMs],
   );
 
-  useEffect(() => {
-    if (lockAtMs === null) {
-      setRemaining(0);
-      return;
-    }
+  const getSnapshot = useCallback(
+    () => (lockAtMs === null ? 0 : remainingMs(lockAtMs, Date.now())),
+    [lockAtMs],
+  );
 
-    setRemaining(remainingMs(lockAtMs, Date.now()));
-
-    const interval = setInterval(() => {
-      const next = remainingMs(lockAtMs, Date.now());
-      setRemaining(next);
-      if (next === 0) {
-        clearInterval(interval);
-      }
-    }, TICK_MS);
-
-    return () => clearInterval(interval);
-  }, [lockAtMs]);
-
-  return remaining;
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
