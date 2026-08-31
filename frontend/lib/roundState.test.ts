@@ -42,6 +42,7 @@ describe("initialRoundState", () => {
       dust: 0,
       refunded: false,
       refund_total: null,
+      winning_outcome: null,
     });
   });
 });
@@ -92,6 +93,7 @@ describe("reduceRound: round_opened", () => {
       dust: 0,
       refunded: false,
       refund_total: null,
+      winning_outcome: null,
     });
   });
 
@@ -103,6 +105,7 @@ describe("reduceRound: round_opened", () => {
       round_id: "rd1",
       results: [{ user_id: "u1", display_name: "Ann", staked: 100, returned: 200, net: 100 }],
       refunded: true,
+      winning_outcome: 0,
     };
 
     // Act
@@ -116,6 +119,7 @@ describe("reduceRound: round_opened", () => {
     expect(after.results).toBeNull();
     expect(after.refunded).toBe(false);
     expect(after.round_id).toBe("rd2");
+    expect(after.winning_outcome).toBeNull();
   });
 });
 
@@ -264,6 +268,7 @@ describe("reduceRound: round_resolved", () => {
     expect(after.dust).toBe(3);
     expect(after.refunded).toBe(false);
     expect(after.balance).toBe(1150);
+    expect(after.winning_outcome).toBe(0);
   });
 
   it("settles a non-participant's balance at balance_at_open plus zero", () => {
@@ -330,6 +335,7 @@ describe("reduceRound: round_refunded", () => {
     expect(after.refunded).toBe(true);
     expect(after.refund_total).toBe(400);
     expect(after.results).toBeNull();
+    expect(after.winning_outcome).toBeNull();
   });
 
   it("drops a stale round_refunded for a round that is no longer current", () => {

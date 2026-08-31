@@ -36,6 +36,7 @@ export type RoundState = {
   dust: number;
   refunded: boolean;
   refund_total: number | null;
+  winning_outcome: number | null;
 };
 
 export type RoundAction =
@@ -68,6 +69,7 @@ export function initialRoundState(balance: number): RoundState {
     dust: 0,
     refunded: false,
     refund_total: null,
+    winning_outcome: null,
   };
 }
 
@@ -102,6 +104,7 @@ export function reduceRound(state: RoundState, action: RoundAction): RoundState 
         dust: 0,
         refunded: false,
         refund_total: null,
+        winning_outcome: null,
       };
 
     case "odds_updated":
@@ -142,6 +145,7 @@ export function reduceRound(state: RoundState, action: RoundAction): RoundState 
         dust: action.data.dust,
         refunded: action.data.refunded,
         balance: (state.balance_at_open ?? state.balance) + net,
+        winning_outcome: action.data.winning_outcome,
       };
     }
 
@@ -156,6 +160,7 @@ export function reduceRound(state: RoundState, action: RoundAction): RoundState 
         refunded: true,
         refund_total: action.data.total,
         results: null,
+        winning_outcome: null,
       };
   }
 }
