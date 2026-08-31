@@ -3,7 +3,7 @@
 // server is what actually closes wagering. lock_at_ms is absolute server
 // wall-clock, so a skewed browser clock makes this cosmetic value wrong
 // without affecting correctness.
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 
 const TICK_MS = 100;
 
@@ -14,17 +14,32 @@ export function remainingMs(lockAtMs: number, nowMs: number): number {
 // useSyncExternalStore is the React-sanctioned way to read a value that
 // changes outside React's knowledge (the wall clock) without violating the
 // render-purity rule that a plain `Date.now()` read during render would
-// trip. subscribe/getSnapshot both run outside the render body.
+// trip. getSnapshot must return a cached, call-stable value — it must
+// NOT read Date.now() itself. React calls getSnapshot more than once per
+// commit to detect "tearing" (a store that changed mid-render); a
+// getSnapshot that recomputes from the live clock returns a different
+// answer on each of those calls, which React reads as "still tearing" and
+// re-renders forever ("Maximum update depth exceeded"). So the clock is
+// read only inside subscribe's interval tick, cached in a ref, and
+// getSnapshot just returns that cached value.
 export function useCountdown(lockAtMs: number | null): number {
+  const cacheRef = useRef(0);
+
   const subscribe = useCallback(
     (onStoreChange: () => void) => {
       if (lockAtMs === null) {
+        cacheRef.current = 0;
+        onStoreChange();
         return () => {};
       }
 
+      cacheRef.current = remainingMs(lockAtMs, Date.now());
+      onStoreChange();
+
       const interval = setInterval(() => {
+        cacheRef.current = remainingMs(lockAtMs, Date.now());
         onStoreChange();
-        if (remainingMs(lockAtMs, Date.now()) === 0) {
+        if (cacheRef.current === 0) {
           clearInterval(interval);
         }
       }, TICK_MS);
@@ -34,10 +49,7 @@ export function useCountdown(lockAtMs: number | null): number {
     [lockAtMs],
   );
 
-  const getSnapshot = useCallback(
-    () => (lockAtMs === null ? 0 : remainingMs(lockAtMs, Date.now())),
-    [lockAtMs],
-  );
+  const getSnapshot = useCallback(() => cacheRef.current, []);
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
