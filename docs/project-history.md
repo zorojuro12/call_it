@@ -318,6 +318,68 @@ predates the diff and was already sound.
    already-mitigated path. Revisit if broker ACLs are ever relaxed from
    today's topology-only enforcement.
 
+### Phase 7a — `internal/metrics`, `METRICS_ADDR`, wager/WebSocket latency instrumentation
+
+One HIGH found and fixed before merge; everything else confirmed clean.
+
+- **HIGH — data race on `Client.sync` between `Room.run` and `WritePump`,
+  introduced by this phase's wiring.** `Room.run`'s `joinCmd` case wrote
+  `c.c.sync = r.sync` in the room's own goroutine, but `Room.Join`
+  (and therefore `Hub.Join`) returned as soon as the unbuffered channel
+  *send* completed — which Go's memory model orders only against the
+  *receive*, not against `run()`'s subsequent statements. `Handler`
+  always starts `go c.WritePump()` immediately after `hub.Join()`
+  returns, so `WritePump`'s unsynchronized read of `c.sync` could race
+  `run()`'s write with no happens-before edge between them. Reproduced
+  directly with a tight repeated-`Join` probe under `-race` (confirmed
+  before any fix existed), then closed by making `Join` block on an
+  acknowledgement channel until `run()` finishes processing the join —
+  `TestJoinSyncsClientBeforeReturning` (`internal/ws/room_test.go`) is
+  the regression test, verified failing before the fix and clean after,
+  200 iterations, no flake. Bounded impact even unfixed (worst case was a
+  missed/garbled first latency sample for that connection, no
+  cross-client leak, no crash, no money-path effect) but violated the
+  package's own "no mutex — state owned by `run()`" invariant and would
+  have been a standing `-race` risk, which CLAUDE.md's CI treats as
+  build-blocking.
+- **The metrics listener carries no per-user/per-room/per-round data,
+  confirmed by reading `Registry.Render()` directly** — every line is one
+  of `_count`/`_p50_ms`/`_p99_ms`/`_sum_ms` per histogram or a bare count
+  per counter, all unlabeled process aggregates since start. It's a
+  separate `http.Server`, never wrapped in `httpapi.CORS`, never
+  registered on the public mux — matches the single-origin-allowlist
+  invariant this file already tracks for CORS/WS `CheckOrigin`.
+- **`METRICS_ADDR`'s production-loopback validation has no bypass** —
+  checked IPv4-mapped IPv6 loopback (`::ffff:127.0.0.1`, correctly
+  classified loopback by `net.IP.IsLoopback()`), `0.0.0.0`, an empty host
+  (`:PORT`), and arbitrary non-loopback IPs; all reject as expected in
+  `ENV=production`, and `0.0.0.0` is correctly *allowed* outside
+  production (the WSL2 LAN-access use case).
+- **No timing side channel beyond the already-accepted aggregate-metric
+  risk class** — the histogram exposes only cumulative, unwindowed,
+  unlabeled quantiles since process start; no per-request breakdown is
+  derivable from the rendered output, and the endpoint isn't reachable
+  from the public mux regardless.
+- **The `internal/ws` refactor (`chan []byte` → `chan outbound`,
+  `Recorder`/`DropCounter` threaded through `NewHub`/`NewRoom`)
+  introduced no other correctness regression** — `Client.Send` stayed
+  non-blocking, `Room.Broadcast`'s per-client fan-out stayed non-blocking
+  with the same full-buffer eviction logic (now also incrementing the
+  drop counter), and no payload misrouting: delivery is still keyed by
+  each client's own map entry, unchanged by the wrapper type.
+- **Toolchain raise and dependency pins** — `backend/go.sum` diff against
+  `dev` is empty, confirming no dependency version moved; `go.mod`'s `go`
+  directive and both CI `go-version` pins moved from `1.22`/`1.22.10` to
+  `1.26`/`1.26.7` together, matching `internal/toolchain`'s own drift
+  guard test.
+- **Standard sweep** — no hardcoded secrets (the k6 script's literal test
+  password is a well-known placeholder against a local-only load-test
+  scenario, not a real credential); the new latency instrumentation
+  records only `time.Since(start)`, never request payloads or error
+  content; `internal/config`'s new validation fails closed with
+  non-sensitive messages; `METRICS_ADDR` is operator-supplied
+  configuration, not attacker input.
+
 ---
 
 ## Coverage notes
