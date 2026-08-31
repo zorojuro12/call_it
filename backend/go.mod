@@ -1,6 +1,6 @@
 module github.com/zorojuro12/call_it/backend
 
-go 1.22.10
+go 1.26.7
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1

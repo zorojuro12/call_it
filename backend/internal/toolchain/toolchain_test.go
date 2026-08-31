@@ -1,6 +1,8 @@
 package toolchain
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -130,5 +132,74 @@ func TestMajorMinor(t *testing.T) {
 			t.Fatalf("MajorMinor(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
+}
+
+func TestToolchainPinsMeetFloorAndAgree(t *testing.T) {
+	gomodPath := filepath.Join("..", "..", "go.mod")
+	gomodBytes, err := os.ReadFile(gomodPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", gomodPath, err)
+	}
+
+	ciPath := filepath.Join("..", "..", "..", ".github", "workflows", "ci.yml")
+	ciBytes, err := os.ReadFile(ciPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", ciPath, err)
+	}
+
+	goDirective, err := ParseGoDirective(string(gomodBytes))
+	if err != nil {
+		t.Fatalf("ParseGoDirective: %v", err)
+	}
+	goMM := MajorMinor(goDirective)
+
+	if compareMajorMinor(goMM, MinGo) < 0 {
+		t.Fatalf("go.mod directive %q (major.minor %q) is below the MinGo floor %q", goDirective, goMM, MinGo)
+	}
+
+	pins, err := ParseCIPin(string(ciBytes))
+	if err != nil {
+		t.Fatalf("ParseCIPin: %v", err)
+	}
+	if len(pins) < 2 {
+		t.Fatalf("expected at least two go-version pins in ci.yml, got %d: %v", len(pins), pins)
+	}
+
+	for _, pin := range pins {
+		if pin != goMM {
+			t.Fatalf("CI go-version pin %q does not match go.mod's major.minor %q", pin, goMM)
+		}
+	}
+}
+
+// compareMajorMinor compares two "X.Y" version strings component-wise as
+// integers. Returns <0, 0, or >0.
+func compareMajorMinor(a, b string) int {
+	pa := strings.SplitN(a, ".", 2)
+	pb := strings.SplitN(b, ".", 2)
+	for i := 0; i < 2; i++ {
+		na, nb := 0, 0
+		if i < len(pa) {
+			na = atoiSafe(pa[i])
+		}
+		if i < len(pb) {
+			nb = atoiSafe(pb[i])
+		}
+		if na != nb {
+			return na - nb
+		}
+	}
+	return 0
+}
+
+func atoiSafe(s string) int {
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return n
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
 }
 
