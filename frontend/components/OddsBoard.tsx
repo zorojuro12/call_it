@@ -13,6 +13,8 @@ export function OddsBoard({
   pools,
   total,
   multipliers,
+  bettors,
+  players,
 }: OddsBoardProps) {
   return (
     <div>
@@ -35,6 +37,9 @@ export function OddsBoard({
         </tbody>
       </table>
       <p>Total pool: {total}</p>
+      <p>
+        {bettors}/{players} players have placed their bets
+      </p>
     </div>
   );
 }
