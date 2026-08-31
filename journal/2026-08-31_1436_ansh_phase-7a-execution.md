@@ -5,20 +5,26 @@ executed task-by-task on `phase-7a-instrumentation-load-harness`, all 7
 tasks/gates green: toolchain raised to Go 1.26.7, `internal/metrics`
 built, wager and WebSocket paths instrumented, a separate loopback
 metrics listener wired into `cmd/api`, k6 installed and both load
-scenarios run, and the baseline recorded. Branch not yet merged into
-`dev` — merge and the required `security-reviewer` pass are next.
+scenarios run, the baseline recorded, `security-reviewer` run and its
+one HIGH finding fixed, and the branch merged `--no-ff` into `dev`.
 **Decided:** Measured-vs-target table (server-side, authoritative):
 p99 bet placement **50 ms** vs 15 ms target — MISSED; WS sync **≤0.5 ms**
 vs 30 ms — MET; throughput **3,174 req/s** vs 5,000 — MISSED;
 double-spend 0.00% — MET (pre-existing proof, not re-measured this
 phase). Full detail: `docs/reports/2026-08-31-phase-7a-baseline.md`.
+Also: `security-reviewer` found a genuine HIGH — a data race on
+`Client.sync` between `Room.run`'s join handling and `WritePump`,
+introduced by this phase's own wiring (`internal/ws/room.go`) — fixed by
+making `Room.Join` block on an acknowledgement channel until `run()`
+finishes processing the join, closing the happens-before gap. See
+`docs/project-history.md`'s `### Phase 7a` entry for the full finding.
 **Spec:** No change — this phase measures against spec §7, it doesn't
 change it.
-**Next:** Run `security-reviewer` (required before closing any phase
-touching a network surface — this one adds the metrics listener and
-instruments the money path), record findings in
-`docs/project-history.md` under `### Phase 7a`, then merge via
-`finishing-a-development-branch`.
+**Next:** Phase 7b — hardening and tuning driven by this baseline's two
+MISSED targets (bet placement p99, throughput), the three security items
+still open by design (login timing, room-code bias, reconnect grace
+window), and the post-load Redis↔PostgreSQL reconciliation re-run this
+phase deliberately deferred.
 **Blocked on:** Nothing.
 **Touches:** `backend/internal/toolchain/`, `backend/internal/metrics/`,
 `backend/internal/wager/service.go`, `backend/internal/ws/{client,room,hub}.go`,
@@ -111,6 +117,18 @@ off `dev`, then all 7 tasks in order, each a real RED→GREEN→commit cycle.
   path), leaving a stale listener that then failed a fresh `go run` with
   "address already in use." Had to find and kill the real PID via `ss
   -tlnp` / `lsof` by port instead.
+- **Threading `Recorder`/`DropCounter` into `Room.Join` (Task 4 CP2)
+  without also making `Join` wait for `run()` to finish processing** —
+  every task-boundary test passed, including a dedicated `-race` test for
+  the `WritePump`/broadcast path itself, because none of them modeled
+  `Handler`'s real call sequence (`hub.Join()` then immediately `go
+  c.WritePump()`) under real goroutine scheduling. Only
+  `security-reviewer`'s targeted repeated-Join/WritePump probe caught it.
+  Lesson for next time a value gets assigned onto a struct from inside an
+  actor goroutine after a caller's blocking call returns: the channel
+  rendezvous only orders the *value transfer*, never the actor's
+  subsequent statements — anything written after the receive needs its
+  own acknowledgement if a caller depends on seeing it.
 
 ## Test Coverage
 
@@ -134,11 +152,17 @@ off `dev`, then all 7 tasks in order, each a real RED→GREEN→commit cycle.
 - `60620ca`, `7730e97`, `5dd7778` — METRICS_ADDR config + listener wiring (Task 5)
 - `d493bde`, `7b5d9ed`, `79a2ebd` — k6 install + both scenarios (Task 6)
 - `0f96965` — docs: record the Phase 7a performance baseline (Task 7 Gate 1)
+- `c9b635a` — fix: close a data race between Room.Join and WritePump on Client.sync (post-review)
+- `2372ef9` — docs: record Phase 7a security review findings
 
 ## Next Step
 
-Finish Task 7 Gate 2: run `security-reviewer` (this phase added a network
-listener and instrumented the money path — CLAUDE.md requires it for
-either reason alone), record its findings in `docs/project-history.md`
-under `### Phase 7a`, then hand off to `finishing-a-development-branch`
-for the `--no-ff` merge into `dev`.
+Phase 7b: tune the wager placement path toward the 15 ms target (profile
+`wager.Service.Place`'s span rather than assuming the Lua round trip
+dominates — this session's numbers came from an unoptimized `go run`
+build under host contention, not a controlled measurement), investigate
+the throughput ceiling seen even against `GET /healthz` (the cheapest
+route in the system), land the three security items open by design
+(login timing, room-code modulo bias, reconnect grace window), and
+re-run the Redis↔PostgreSQL reconciliation test after a real k6 load run
+(`docs/plans/2026-08-21-implementation-plan.md` §12).
