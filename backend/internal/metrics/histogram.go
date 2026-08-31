@@ -5,6 +5,7 @@ package metrics
 import (
 	"math"
 	"sort"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,16 +38,16 @@ var OverTopBucket = time.Duration(-1)
 // concurrently with Observe may see bucket counts that do not yet sum to
 // Count() — callers needing an exact snapshot must quiesce writers first.
 type Histogram struct {
-	buckets  []uint64
-	count    uint64
-	sumNanos int64
+	buckets  []atomic.Uint64
+	count    atomic.Uint64
+	sumNanos atomic.Uint64
 }
 
 // NewHistogram returns an empty histogram. The bucket array has
 // len(Bounds)+1 entries; the last is the overflow bucket for samples
 // larger than the largest bound.
 func NewHistogram() *Histogram {
-	return &Histogram{buckets: make([]uint64, len(Bounds)+1)}
+	return &Histogram{buckets: make([]atomic.Uint64, len(Bounds)+1)}
 }
 
 // Observe records one sample. A negative duration means the caller's
@@ -60,9 +61,9 @@ func (h *Histogram) Observe(d time.Duration) {
 		return
 	}
 	idx := sort.Search(len(Bounds), func(i int) bool { return Bounds[i] >= d })
-	h.buckets[idx]++
-	h.count++
-	h.sumNanos += int64(d)
+	h.buckets[idx].Add(1)
+	h.count.Add(1)
+	h.sumNanos.Add(uint64(d))
 }
 
 // Quantile returns the upper bound of the lowest bucket whose cumulative
@@ -70,13 +71,14 @@ func (h *Histogram) Observe(d time.Duration) {
 // reached in the overflow bucket. ok is false when no samples have been
 // observed.
 func (h *Histogram) Quantile(q float64) (time.Duration, bool) {
-	if h.count == 0 {
+	count := h.count.Load()
+	if count == 0 {
 		return 0, false
 	}
-	target := uint64(math.Ceil(q * float64(h.count)))
+	target := uint64(math.Ceil(q * float64(count)))
 	var cum uint64
-	for i, c := range h.buckets {
-		cum += c
+	for i := range h.buckets {
+		cum += h.buckets[i].Load()
 		if cum >= target {
 			if i == len(Bounds) {
 				return OverTopBucket, true
@@ -89,10 +91,10 @@ func (h *Histogram) Quantile(q float64) (time.Duration, bool) {
 
 // Count returns the total number of samples observed.
 func (h *Histogram) Count() uint64 {
-	return h.count
+	return h.count.Load()
 }
 
 // Sum returns the total duration of all samples observed.
 func (h *Histogram) Sum() time.Duration {
-	return time.Duration(h.sumNanos)
+	return time.Duration(h.sumNanos.Load())
 }

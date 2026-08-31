@@ -121,3 +121,31 @@ func TestHistogramOverTopBucket(t *testing.T) {
 		}
 	})
 }
+
+func TestHistogramConcurrentObserve(t *testing.T) {
+	h := NewHistogram()
+	const goroutines = 50
+	const perGoroutine = 1000
+
+	done := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			for j := 0; j < perGoroutine; j++ {
+				h.Observe(2 * time.Millisecond)
+			}
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+
+	wantCount := uint64(goroutines * perGoroutine)
+	if h.Count() != wantCount {
+		t.Fatalf("Count() = %d, want %d", h.Count(), wantCount)
+	}
+	wantSum := time.Duration(goroutines*perGoroutine) * 2 * time.Millisecond
+	if h.Sum() != wantSum {
+		t.Fatalf("Sum() = %v, want %v", h.Sum(), wantSum)
+	}
+}
