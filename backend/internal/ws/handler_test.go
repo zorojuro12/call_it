@@ -395,6 +395,63 @@ func TestPresenceLeave(t *testing.T) {
 	waitFor(t, func() bool { return hub.RoomCount() == 0 })
 }
 
+func TestHandlerHostClaim(t *testing.T) {
+	// Arrange
+	issuer := newTestIssuer(t, time.Hour)
+	hub := NewHub()
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
+	defer server.Close()
+
+	hostToken, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1", Guest: false, Host: true})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+	playerToken, err := issuer.Issue(auth.Claims{UserID: "u2", DisplayName: "Bob", RoomID: "r1", Guest: false, Host: false})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+
+	t.Run("host connects with host true", func(t *testing.T) {
+		// Act
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+hostToken, nil)
+		if err != nil {
+			t.Fatalf("Dial error: %v", err)
+		}
+		defer conn.Close()
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		env := mustReadEnvelope(t, conn, TypeConnected)
+		var got ConnectedEvent
+		if err := unmarshalData(env, &got); err != nil {
+			t.Fatalf("unmarshal ConnectedEvent: %v", err)
+		}
+
+		// Assert
+		if !got.Host {
+			t.Fatalf("Host = %v, want true", got.Host)
+		}
+	})
+
+	t.Run("player connects with host false", func(t *testing.T) {
+		// Act
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+playerToken, nil)
+		if err != nil {
+			t.Fatalf("Dial error: %v", err)
+		}
+		defer conn.Close()
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		env := mustReadEnvelope(t, conn, TypeConnected)
+		var got ConnectedEvent
+		if err := unmarshalData(env, &got); err != nil {
+			t.Fatalf("unmarshal ConnectedEvent: %v", err)
+		}
+
+		// Assert
+		if got.Host {
+			t.Fatalf("Host = %v, want false", got.Host)
+		}
+	})
+}
+
 func TestHandlerAllowedOrigins(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)

@@ -50,9 +50,9 @@ func TestIssueVerifyRoundTrip(t *testing.T) {
 	}
 
 	cases := []Claims{
-		{UserID: "u1", DisplayName: "Alice", RoomID: "", Guest: false},
-		{UserID: "u1", DisplayName: "Alice", RoomID: "r1", Guest: false},
-		{UserID: "g1", DisplayName: "Bob", RoomID: "r1", Guest: true},
+		{UserID: "u1", DisplayName: "Alice", RoomID: "", Guest: false, Host: false},
+		{UserID: "u1", DisplayName: "Alice", RoomID: "r1", Guest: false, Host: true},
+		{UserID: "g1", DisplayName: "Bob", RoomID: "r1", Guest: true, Host: false},
 	}
 
 	for _, want := range cases {

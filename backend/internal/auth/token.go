@@ -26,6 +26,7 @@ type Claims struct {
 	DisplayName string
 	RoomID      string
 	Guest       bool
+	Host        bool
 }
 
 // Issuer signs and verifies HS256 tokens against one secret and TTL.
@@ -59,6 +60,7 @@ func (i *Issuer) Issue(c Claims) (string, error) {
 		"name":    c.DisplayName,
 		"room_id": c.RoomID,
 		"guest":   c.Guest,
+		"host":    c.Host,
 		"iss":     Issuer_,
 		"iat":     jwt.NewNumericDate(i.now()),
 		"exp":     jwt.NewNumericDate(i.now().Add(i.ttl)),
@@ -101,6 +103,9 @@ func (i *Issuer) Verify(tokenString string) (Claims, error) {
 	}
 	if v, ok := claims["guest"].(bool); ok {
 		c.Guest = v
+	}
+	if v, ok := claims["host"].(bool); ok {
+		c.Host = v
 	}
 
 	return c, nil

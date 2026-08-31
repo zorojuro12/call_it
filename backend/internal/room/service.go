@@ -78,7 +78,7 @@ func (s *Service) Create(ctx context.Context, hostID, hostName string, buyIn dom
 		return Created{}, fmt.Errorf("room: create: seed host wallet: %w", err)
 	}
 
-	token, err := s.issuer.Issue(auth.Claims{UserID: hostID, DisplayName: hostName, RoomID: roomID, Guest: false})
+	token, err := s.issuer.Issue(auth.Claims{UserID: hostID, DisplayName: hostName, RoomID: roomID, Guest: false, Host: true})
 	if err != nil {
 		return Created{}, fmt.Errorf("room: create: %w", err)
 	}
@@ -144,7 +144,7 @@ func (s *Service) Join(ctx context.Context, code string, c JoinRequest) (Joined,
 		return Joined{}, err
 	}
 
-	token, err := s.issuer.Issue(auth.Claims{UserID: userID, DisplayName: c.DisplayName, RoomID: roomID, Guest: c.Guest})
+	token, err := s.issuer.Issue(auth.Claims{UserID: userID, DisplayName: c.DisplayName, RoomID: roomID, Guest: c.Guest, Host: false})
 	if err != nil {
 		return Joined{}, fmt.Errorf("room: join: %w", err)
 	}

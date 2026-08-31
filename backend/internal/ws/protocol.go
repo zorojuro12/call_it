@@ -31,6 +31,7 @@ type ConnectedEvent struct {
 	DisplayName string `json:"display_name"`
 	RoomID      string `json:"room_id"`
 	Guest       bool   `json:"guest"`
+	Host        bool   `json:"host"`
 }
 
 // PresenceEvent announces a join or leave to the room.

@@ -102,6 +102,7 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 			DisplayName: claims.DisplayName,
 			RoomID:      claims.RoomID,
 			Guest:       claims.Guest,
+			Host:        claims.Host,
 		}))
 
 		// Tell the newcomer about every member already in the room —
