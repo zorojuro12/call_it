@@ -265,6 +265,41 @@ wildcard expansion, so such an entry simply never matches any real
 `Origin` and fails closed — an operator-misconfiguration footgun, not an
 exploitable gap.
 
+### Phase 6b — `host` JWT claim, `wager_accepted` private reply, client-side validation, idempotency keys
+
+No CRITICAL or HIGH. All five points the plan named to confirm held:
+
+- **The `host` JWT claim** — advisory only, confirmed. `Host: true` is set
+  only at `room.Service.Create` (the caller who created the room); `Join`
+  always issues `Host: false`. `round.Service.Open`/`Resolve` re-check
+  `rm.HostID != callerID` against Redis, independent of the claim — a
+  forged `host: true` on a non-host's token changes only what the UI
+  renders, not what the server accepts.
+- **`wager_accepted`** — confirmed private and self-scoped. Sent via
+  `c.Send` only (never `Broadcast`), only on the success path (a failed
+  `Place` sends an error and returns before reaching the send), and
+  carries only the sender's own outcome/amount/balance.
+- **Anonymity end to end** — confirmed. `lib/roundState.ts`'s `odds_updated`
+  and `wager_accepted` branches touch only aggregate fields and the
+  reducer's own client; per-user `results` appear only from
+  `round_resolved`. `SettlementReveal` renders `null` until a terminal
+  event supplies data. Backend `odds_updated`/`OddsEvent` remains
+  aggregate-only, unchanged by this diff.
+- **Client-side validation as convenience** — confirmed re-enforced
+  server-side: `WagerPad`'s balance check is mirrored by
+  `domain.ValidateStake` (itself a pre-check ahead of `place_wager.lua`,
+  the actual authority); `HostConsole`'s 2–4 outcome and 3–120s lock
+  bounds are mirrored by `round.Service.Open`'s `domain.ValidateOutcomeCount`
+  and explicit `MinLockIn`/`MaxLockIn` check.
+- **`crypto.randomUUID()` idempotency keys** — confirmed one fresh UUIDv4
+  generated inline per `handlePlace` call, no caching or retry reuse.
+
+One LOW noted and verified clear on the spot (not a gap): the router's
+`placeWagerPayload.Outcome` has no explicit bound check before reaching
+`wager.Service.Place`, but `place_wager.lua:57` already rejects
+`outcomeNum < 0 or outcomeNum >= outcomeCount` as its own authority — this
+predates the diff and was already sound.
+
 ### Open by design, deferred to Phase 7 hardening
 
 1. **Login timing.** The unknown-email path skips argon2id and so responds
