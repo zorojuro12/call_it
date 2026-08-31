@@ -92,4 +92,24 @@ describe("WagerPad", () => {
     expect(onPlace).not.toHaveBeenCalled();
     expect(screen.getByText("Enter an amount above zero")).toBeInTheDocument();
   });
+
+  test("a locked round disables every control", async () => {
+    const user = userEvent.setup();
+    const onPlace = vi.fn();
+
+    render(
+      <WagerPad outcomes={["Home", "Away"]} balance={1000} disabled={true} onPlace={onPlace} />,
+    );
+
+    expect(screen.getByRole("button", { name: "Home" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Away" })).toBeDisabled();
+    expect(screen.getByLabelText("Amount")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Place bet" })).toBeDisabled();
+    expect(screen.getByText("Betting is closed")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Home" }));
+    await user.click(screen.getByRole("button", { name: "Place bet" }));
+
+    expect(onPlace).not.toHaveBeenCalled();
+  });
 });
