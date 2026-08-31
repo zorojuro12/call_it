@@ -147,6 +147,8 @@ func (r *Router) replyServiceError(c *Client, err error) {
 		r.replyError(c, "invalid_outcome", err.Error())
 	case errors.Is(err, round.ErrNotHost):
 		r.replyError(c, "not_host", err.Error())
+	case errors.Is(err, round.ErrInvalidSpec):
+		r.replyError(c, "invalid_spec", err.Error())
 	case errors.Is(err, round.ErrRoundInProgress):
 		r.replyError(c, "round_in_progress", err.Error())
 	case errors.Is(err, wager.ErrNoActiveRound):

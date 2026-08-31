@@ -191,6 +191,37 @@ func TestWagerAccepted(t *testing.T) {
 	})
 }
 
+func TestInvalidSpec(t *testing.T) {
+	// Arrange
+	rounds := &stubRoundService{openErr: round.ErrInvalidSpec}
+	wagers := &stubWagerService{}
+	r := &Router{rounds: rounds, wagers: wagers}
+	c := testClient("host1", "room1")
+
+	data, _ := json.Marshal(createRoundPayload{Question: "", Outcomes: []string{"Yes"}, LockInMS: 1000})
+
+	// Act
+	r.Handle(c, Envelope{Type: TypeCreateRound, Data: data})
+
+	// Assert
+	select {
+	case payload := <-c.send:
+		env, err := Decode(payload)
+		if err != nil {
+			t.Fatalf("Decode() = %v, want nil", err)
+		}
+		var ev ErrorEvent
+		if err := json.Unmarshal(env.Data, &ev); err != nil {
+			t.Fatalf("decode ErrorEvent: %v", err)
+		}
+		if ev.Code != "invalid_spec" {
+			t.Errorf("Code = %q, want %q", ev.Code, "invalid_spec")
+		}
+	default:
+		t.Fatal("no error reply sent to the client's send channel")
+	}
+}
+
 func TestRouterErrors(t *testing.T) {
 	tests := []struct {
 		name string
