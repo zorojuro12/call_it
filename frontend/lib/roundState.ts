@@ -117,6 +117,12 @@ export function reduceRound(state: RoundState, action: RoundAction): RoundState 
         players: action.data.players,
       };
 
+    case "round_locked":
+      if (isStale(state, action.data.round_id)) {
+        return state;
+      }
+      return { ...state, phase: "locked" };
+
     default:
       return state;
   }

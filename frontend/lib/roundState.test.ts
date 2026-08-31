@@ -148,3 +148,37 @@ describe("reduceRound: odds_updated", () => {
     expect(after).toBe(before);
   });
 });
+
+describe("reduceRound: round_locked", () => {
+  it("closes wagering without touching pools, totals, balance, or stake", () => {
+    // Arrange
+    let before = reduceRound(initialRoundState(1000), {
+      type: "round_opened",
+      data: { round_id: "rd1", question: "Q?", outcomes: ["Home", "Away"], lock_at_ms: 1000 },
+    });
+    before = reduceRound(before, {
+      type: "odds_updated",
+      data: { round_id: "rd1", pools: [300, 100], total: 400, multipliers: [1.333, 4], bettors: 2, players: 5 },
+    });
+
+    // Act
+    const after = reduceRound(before, { type: "round_locked", data: { round_id: "rd1" } });
+
+    // Assert
+    expect(after).toEqual({ ...before, phase: "locked" });
+  });
+
+  it("drops a stale round_locked for a round that is no longer current", () => {
+    // Arrange
+    const before = reduceRound(initialRoundState(1000), {
+      type: "round_opened",
+      data: { round_id: "rd1", question: "Q?", outcomes: ["Home", "Away"], lock_at_ms: 1000 },
+    });
+
+    // Act
+    const after = reduceRound(before, { type: "round_locked", data: { round_id: "rd0" } });
+
+    // Assert
+    expect(after).toBe(before);
+  });
+});
