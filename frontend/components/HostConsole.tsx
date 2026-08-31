@@ -21,6 +21,14 @@ export function HostConsole({ outcomes, onOpenRound }: HostConsoleProps): JSX.El
     setOutcomeFields((fields) => fields.map((f, i) => (i === index ? value : f)));
   };
 
+  const handleAddOutcome = () => {
+    setOutcomeFields((fields) => (fields.length >= 4 ? fields : [...fields, ""]));
+  };
+
+  const handleRemoveOutcome = () => {
+    setOutcomeFields((fields) => (fields.length <= 2 ? fields : fields.slice(0, -1)));
+  };
+
   const handleSubmit = () => {
     const trimmedQuestion = question.trim();
     const trimmedOutcomes = outcomeFields.map((o) => o.trim());
@@ -36,6 +44,11 @@ export function HostConsole({ outcomes, onOpenRound }: HostConsoleProps): JSX.El
     }
 
     const seconds = Number(lockSeconds);
+    if (!Number.isFinite(seconds) || seconds < 3 || seconds > 120) {
+      setError("Lock must be between 3 and 120 seconds");
+      return;
+    }
+
     setError(null);
     onOpenRound(trimmedQuestion, trimmedOutcomes, seconds * 1000);
   };
@@ -61,6 +74,13 @@ export function HostConsole({ outcomes, onOpenRound }: HostConsoleProps): JSX.El
           />
         </div>
       ))}
+
+      <button type="button" onClick={handleAddOutcome} disabled={outcomeFields.length >= 4}>
+        Add outcome
+      </button>
+      <button type="button" onClick={handleRemoveOutcome} disabled={outcomeFields.length <= 2}>
+        Remove
+      </button>
 
       <label htmlFor="host-lock-seconds">Lock (seconds)</label>
       <input
