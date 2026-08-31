@@ -7,7 +7,7 @@ import (
 
 func TestRoomJoin(t *testing.T) {
 	// Arrange
-	room := NewRoom("r1", nil)
+	room := NewRoom("r1", nil, nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1", DisplayName: "Ada"}, 4)
 
 	// Act
@@ -34,7 +34,7 @@ func TestRoomJoin(t *testing.T) {
 
 func TestRoomLeave(t *testing.T) {
 	// Arrange
-	room := NewRoom("r1", nil)
+	room := NewRoom("r1", nil, nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1", DisplayName: "Ada"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2", DisplayName: "Grace"}, 4)
 	room.Join(c1)
@@ -72,7 +72,7 @@ func TestRoomLeave(t *testing.T) {
 
 func TestRoomBroadcast(t *testing.T) {
 	// Arrange
-	room := NewRoom("r1", nil)
+	room := NewRoom("r1", nil, nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
 	c3 := newClient(nil, Identity{UserID: "u3"}, 4)
@@ -88,12 +88,12 @@ func TestRoomBroadcast(t *testing.T) {
 	for _, c := range []*Client{c1, c2, c3} {
 		first := <-c.send
 		second := <-c.send
-		if string(first) != "hello" || string(second) != "world" {
-			t.Fatalf("client %s got [%q, %q], want [\"hello\", \"world\"]", c.UserID, first, second)
+		if string(first.payload) != "hello" || string(second.payload) != "world" {
+			t.Fatalf("client %s got [%q, %q], want [\"hello\", \"world\"]", c.UserID, first.payload, second.payload)
 		}
 		select {
 		case extra := <-c.send:
-			t.Fatalf("client %s got unexpected extra message %q", c.UserID, extra)
+			t.Fatalf("client %s got unexpected extra message %q", c.UserID, extra.payload)
 		default:
 		}
 	}
@@ -101,7 +101,7 @@ func TestRoomBroadcast(t *testing.T) {
 
 func TestRoomEvicts(t *testing.T) {
 	// Arrange
-	room := NewRoom("r1", nil)
+	room := NewRoom("r1", nil, nil, nil)
 	slow := newClient(nil, Identity{UserID: "slow"}, 1)
 	fast := newClient(nil, Identity{UserID: "fast"}, 8)
 	room.Join(slow)
@@ -123,8 +123,8 @@ func TestRoomEvicts(t *testing.T) {
 
 	// Assert: slow's send channel is closed, after draining its one buffered payload
 	buffered := <-slow.send
-	if string(buffered) != "one" {
-		t.Fatalf("slow buffered payload = %q, want \"one\"", buffered)
+	if string(buffered.payload) != "one" {
+		t.Fatalf("slow buffered payload = %q, want \"one\"", buffered.payload)
 	}
 	if _, ok := <-slow.send; ok {
 		t.Fatalf("slow.send should be closed after eviction")
@@ -133,15 +133,15 @@ func TestRoomEvicts(t *testing.T) {
 	// Assert: fast received both payloads — the broadcast was never blocked by slow
 	first := <-fast.send
 	second := <-fast.send
-	if string(first) != "one" || string(second) != "two" {
-		t.Fatalf("fast got [%q, %q], want [\"one\", \"two\"]", first, second)
+	if string(first.payload) != "one" || string(second.payload) != "two" {
+		t.Fatalf("fast got [%q, %q], want [\"one\", \"two\"]", first.payload, second.payload)
 	}
 }
 
 func TestRoomOnEmpty(t *testing.T) {
 	// Arrange
 	notified := make(chan string, 4)
-	room := NewRoom("r1", func(roomID string) { notified <- roomID })
+	room := NewRoom("r1", func(roomID string) { notified <- roomID }, nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
 	room.Join(c1)
@@ -183,7 +183,7 @@ func TestRoomOnEmpty(t *testing.T) {
 
 func TestRoomOnEmptyNilIsLegal(t *testing.T) {
 	// Arrange
-	room := NewRoom("r1", nil)
+	room := NewRoom("r1", nil, nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	room.Join(c1)
 
@@ -191,5 +191,64 @@ func TestRoomOnEmptyNilIsLegal(t *testing.T) {
 	room.Leave(c1)
 	if got := room.Count(); got != 0 {
 		t.Fatalf("Count() = %d, want 0", got)
+	}
+}
+
+// stubDropCounter counts Inc() calls.
+type stubDropCounter struct {
+	calls int
+}
+
+func (d *stubDropCounter) Inc() {
+	d.calls++
+}
+
+// TestJoinSyncsClientBeforeReturning is a security-review regression
+// test (found while closing Phase 7a): Join must not return until
+// run() has finished writing c.sync, or a caller that immediately
+// starts WritePump — as Handler always does — races run()'s write
+// against WritePump's read of the same field, with no happens-before
+// edge between them. A bare channel send/receive rendezvous only
+// orders the value transfer, not run()'s subsequent statements, so this
+// needs an explicit acknowledgement.
+func TestJoinSyncsClientBeforeReturning(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		recorder := &stubSyncRecorder{}
+		room := NewRoom("r1", nil, recorder, nil)
+		c := newClient(nil, Identity{UserID: "u1"}, 4)
+
+		room.Join(c)
+
+		if c.sync != recorder {
+			t.Fatalf("iteration %d: c.sync = %v immediately after Join, want the room's recorder already set", i, c.sync)
+		}
+		go func() { _ = c.sync }()
+	}
+}
+
+func TestBroadcastCountsDroppedClient(t *testing.T) {
+	// Arrange: a full send buffer and no WritePump draining it, so the
+	// non-blocking send in Room.run's broadcastCmd case must hit its
+	// default branch.
+	recorder := &stubSyncRecorder{}
+	drops := &stubDropCounter{}
+	room := NewRoom("r1", nil, recorder, drops)
+	slow := newClient(nil, Identity{UserID: "slow"}, 1)
+	room.Join(slow)
+	slow.send <- outbound{payload: []byte("fills the one slot")}
+
+	// Act
+	room.Broadcast([]byte("evicts slow"))
+
+	// Assert
+	waitFor(t, func() bool { return room.Count() == 0 })
+	if got := room.Count(); got != 0 {
+		t.Fatalf("Count() after eviction = %d, want 0", got)
+	}
+	if drops.calls != 1 {
+		t.Fatalf("drop counter calls = %d, want 1", drops.calls)
+	}
+	if len(recorder.calls()) != 0 {
+		t.Fatalf("latency recorder observed %d calls, want 0", len(recorder.calls()))
 	}
 }

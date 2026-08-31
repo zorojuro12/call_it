@@ -40,7 +40,7 @@ func wsURL(httpURL string) string {
 func TestHandlerUpgrade(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
-	hub := NewHub()
+	hub := NewHub(nil, nil)
 	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
@@ -125,7 +125,7 @@ func TestHandlerRejects(t *testing.T) {
 	issuer := newTestIssuer(t, time.Hour)
 	otherIssuer := newOtherSecretIssuer(t, time.Hour)
 	expiredIssuer := newTestIssuer(t, time.Millisecond)
-	hub := NewHub()
+	hub := NewHub(nil, nil)
 	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
@@ -175,7 +175,7 @@ func TestHandlerRejects(t *testing.T) {
 func TestHandlerRequiresRoom(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
-	hub := NewHub()
+	hub := NewHub(nil, nil)
 	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
@@ -206,7 +206,7 @@ func TestHandlerRequiresRoom(t *testing.T) {
 func TestPresenceJoin(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
-	hub := NewHub()
+	hub := NewHub(nil, nil)
 	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
@@ -281,7 +281,7 @@ func TestPresenceJoin(t *testing.T) {
 func TestPresenceJoinTellsNewcomerAboutExistingMembers(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
-	hub := NewHub()
+	hub := NewHub(nil, nil)
 	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
@@ -341,7 +341,7 @@ func TestPresenceJoinTellsNewcomerAboutExistingMembers(t *testing.T) {
 func TestPresenceLeave(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
-	hub := NewHub()
+	hub := NewHub(nil, nil)
 	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
@@ -398,7 +398,7 @@ func TestPresenceLeave(t *testing.T) {
 func TestHandlerHostClaim(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
-	hub := NewHub()
+	hub := NewHub(nil, nil)
 	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil))
 	defer server.Close()
 
@@ -455,7 +455,7 @@ func TestHandlerHostClaim(t *testing.T) {
 func TestHandlerAllowedOrigins(t *testing.T) {
 	// Arrange
 	issuer := newTestIssuer(t, time.Hour)
-	hub := NewHub()
+	hub := NewHub(nil, nil)
 	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, nil, WithAllowedOrigins([]string{"http://localhost:3000"})))
 	defer server.Close()
 

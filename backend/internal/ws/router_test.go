@@ -130,7 +130,8 @@ func TestWagerAccepted(t *testing.T) {
 
 		// Assert
 		select {
-		case payload := <-c.send:
+		case env0 := <-c.send:
+			payload := env0.payload
 			env, err := Decode(payload)
 			if err != nil {
 				t.Fatalf("Decode() = %v, want nil", err)
@@ -151,7 +152,8 @@ func TestWagerAccepted(t *testing.T) {
 		}
 
 		select {
-		case payload := <-c.send:
+		case env0 := <-c.send:
+			payload := env0.payload
 			t.Fatalf("unexpected second message sent: %s", payload)
 		default:
 		}
@@ -171,7 +173,8 @@ func TestWagerAccepted(t *testing.T) {
 
 		// Assert
 		select {
-		case payload := <-c.send:
+		case env0 := <-c.send:
+			payload := env0.payload
 			env, err := Decode(payload)
 			if err != nil {
 				t.Fatalf("Decode() = %v, want nil", err)
@@ -184,7 +187,8 @@ func TestWagerAccepted(t *testing.T) {
 		}
 
 		select {
-		case payload := <-c.send:
+		case env0 := <-c.send:
+			payload := env0.payload
 			t.Fatalf("unexpected second message sent: %s", payload)
 		default:
 		}
@@ -205,7 +209,8 @@ func TestInvalidSpec(t *testing.T) {
 
 	// Assert
 	select {
-	case payload := <-c.send:
+	case env0 := <-c.send:
+		payload := env0.payload
 		env, err := Decode(payload)
 		if err != nil {
 			t.Fatalf("Decode() = %v, want nil", err)
@@ -252,7 +257,8 @@ func TestRouterErrors(t *testing.T) {
 			r.Handle(c, Envelope{Type: TypePlaceWager, Data: data})
 
 			select {
-			case payload := <-c.send:
+			case env0 := <-c.send:
+				payload := env0.payload
 				env, err := Decode(payload)
 				if err != nil {
 					t.Fatalf("Decode() = %v, want nil", err)

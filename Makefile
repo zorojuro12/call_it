@@ -52,8 +52,15 @@ migrate:
 ledger-worker:
 	cd backend && go run ./cmd/ledger-worker
 
+SCENARIO ?= rest_throughput
+
+# Requires k6 on PATH (user-local install, see loadtest/README.md) and a
+# live stack: `make up` plus a running cmd/api with METRICS_ADDR set.
+# `SCENARIO=wager_latency` runs the socket scenario instead.
 loadtest:
-	@echo "no k6 scripts yet — added in Phase 7"
+	@command -v k6 >/dev/null 2>&1 || { \
+	  echo "k6 not found. Install it user-locally — see loadtest/README.md"; exit 1; }
+	k6 run loadtest/$(SCENARIO).js
 
 fe-install:
 	cd frontend && npm ci

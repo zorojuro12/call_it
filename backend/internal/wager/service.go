@@ -46,21 +46,45 @@ type Accepted struct {
 	Players     int
 }
 
+// Recorder observes one latency sample. Satisfied structurally by
+// *metrics.Histogram — internal/wager does not import internal/metrics.
+type Recorder interface {
+	Observe(d time.Duration)
+}
+
 // Service places wagers and reports the wagerer's new state.
 type Service struct {
 	store       *redisstore.Store
 	broadcaster round.Broadcaster
+	okLatency   Recorder
+	errLatency  Recorder
 }
 
-// NewService constructs a Service bound to store and b.
-func NewService(store *redisstore.Store, b round.Broadcaster) *Service {
-	return &Service{store: store, broadcaster: b}
+// NewService constructs a Service bound to store and b. ok records the
+// latency of a successful Place; failed records the latency of a
+// rejected one. Either may be nil, which disables that recording.
+func NewService(store *redisstore.Store, b round.Broadcaster, ok, failed Recorder) *Service {
+	return &Service{store: store, broadcaster: b, okLatency: ok, errLatency: failed}
 }
 
 // Place validates and places a wager, then reports the wagerer's new
 // state. No Go-side balance or lockout check — place_wager.lua is the
 // authority on both.
-func (s *Service) Place(ctx context.Context, req Request) (Accepted, error) {
+func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, err error) {
+	start := time.Now()
+	defer func() {
+		elapsed := time.Since(start)
+		if err != nil {
+			if s.errLatency != nil {
+				s.errLatency.Observe(elapsed)
+			}
+			return
+		}
+		if s.okLatency != nil {
+			s.okLatency.Observe(elapsed)
+		}
+	}()
+
 	decision, err := s.store.Allow(ctx, Scope, req.UserID, Limit, Window)
 	if err != nil {
 		return Accepted{}, err
@@ -116,7 +140,7 @@ func (s *Service) Place(ctx context.Context, req Request) (Accepted, error) {
 		return Accepted{}, err
 	}
 
-	accepted := Accepted{
+	accepted = Accepted{
 		RoundID:     roundID,
 		Balance:     result.Balance,
 		Pools:       result.Pools,

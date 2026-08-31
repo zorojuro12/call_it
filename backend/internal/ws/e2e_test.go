@@ -155,7 +155,7 @@ func TestEndToEndRound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auth.NewIssuer() = %v, want nil", err)
 	}
-	hub := ws.NewHub()
+	hub := ws.NewHub(nil, nil)
 
 	accounts := account.NewService(store, issuer)
 	rooms := room.NewService(store, issuer)
@@ -164,7 +164,7 @@ func TestEndToEndRound(t *testing.T) {
 	defer restServer.Close()
 
 	roundSvc := round.NewService(context.Background(), store, hub)
-	wagerSvc := wager.NewService(store, hub)
+	wagerSvc := wager.NewService(store, hub, nil, nil)
 	router := ws.NewRouter(roundSvc, wagerSvc)
 	wsMux := http.NewServeMux()
 	wsMux.Handle("GET /api/v1/socket", ws.Handler(hub, issuer, ws.DefaultClientConfig(), router.Handle, roundSvc))

@@ -6,7 +6,7 @@ import (
 )
 
 func TestHubBroadcastByID(t *testing.T) {
-	h := NewHub()
+	h := NewHub(nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1", DisplayName: "Ada"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2", DisplayName: "Grace"}, 4)
 	c3 := newClient(nil, Identity{UserID: "u3", DisplayName: "Margaret"}, 4)
@@ -20,8 +20,8 @@ func TestHubBroadcastByID(t *testing.T) {
 	for _, c := range []*Client{c1, c2} {
 		select {
 		case got := <-c.send:
-			if string(got) != string(payload) {
-				t.Errorf("client %s got %s, want %s", c.UserID, got, payload)
+			if string(got.payload) != string(payload) {
+				t.Errorf("client %s got %s, want %s", c.UserID, got.payload, payload)
 			}
 		case <-time.After(100 * time.Millisecond):
 			t.Errorf("client %s received nothing, want the broadcast payload", c.UserID)
@@ -29,7 +29,7 @@ func TestHubBroadcastByID(t *testing.T) {
 	}
 	select {
 	case got := <-c3.send:
-		t.Errorf("client %s (in a different room) received %s, want nothing", c3.UserID, got)
+		t.Errorf("client %s (in a different room) received %s, want nothing", c3.UserID, got.payload)
 	case <-time.After(20 * time.Millisecond):
 	}
 
@@ -50,7 +50,7 @@ func TestHubBroadcastByID(t *testing.T) {
 
 func TestHubJoin(t *testing.T) {
 	// Arrange
-	h := NewHub()
+	h := NewHub(nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
 	c3 := newClient(nil, Identity{UserID: "u3"}, 4)
@@ -97,7 +97,7 @@ func TestHubJoin(t *testing.T) {
 
 func TestHubReaps(t *testing.T) {
 	// Arrange
-	h := NewHub()
+	h := NewHub(nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
 	firstRoom := h.Join("r1", c1)
@@ -132,7 +132,7 @@ func TestHubReaps(t *testing.T) {
 
 func TestHubShutdown(t *testing.T) {
 	// Arrange
-	h := NewHub()
+	h := NewHub(nil, nil)
 	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
 	c2 := newClient(nil, Identity{UserID: "u2"}, 4)
 	h.Join("r1", c1)

@@ -28,6 +28,22 @@ never two).
   the same way it does without `JWT_SECRET`.
 - Never accepts `*`, in any environment.
 
+### `METRICS_ADDR`
+
+Optional `host:port` for a second, plain-text metrics listener
+(`internal/metrics.Handler`) — server-side latency histograms for the wager
+placement and WebSocket broadcast paths, added in Phase 7a.
+
+- **Disabled by default** — unset or empty, the listener never starts and no
+  `/metrics`-style route exists on the public API port at all.
+- Serves the registry's rendered text at any path on its own
+  `http.Server`, never wrapped in `httpapi.CORS` and never registered on the
+  public mux — it adds no second origin allowlist.
+- Under `ENV=production`, the host must be loopback (`127.0.0.1`, `::1`, or
+  `localhost`) — the process fails fast otherwise.
+- Carries no per-user, per-room, or per-round data — every metric is a
+  process-aggregate count or latency quantile.
+
 ## Frontend
 
 ```bash

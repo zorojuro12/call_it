@@ -15,29 +15,30 @@ tool selection; read this for "how work actually gets done in this repo."
 
 ## Stack
 
-Go 1.22.10 (backend) · Redis 7.2 (atomic Lua, rate limiting) · Kafka 3.7
+Go 1.26.7 (backend) · Redis 7.2 (atomic Lua, rate limiting) · Kafka 3.7
 KRaft-mode (event backbone, Phase 5+) · PostgreSQL 16 (double-entry ledger,
 Phase 5+) · Next.js/React 19 + TypeScript (frontend, Phase 6a+) · Docker
 Compose (local dev).
 
-**Never run `go get -u`.** Five dependencies are pinned because newer
-versions declare a `go` directive above 1.22.10 and `go get` will silently
-rewrite this module's directive to accept them, breaking CI: `go-redis/v9`
-**v9.18.0** (v9.19.0+ needs `go 1.24`), `golang.org/x/crypto` **v0.33.0**
-(v0.34.0 needs `go 1.23.0`), `jackc/pgx/v5` **v5.7.4** (v5.7.5 needs `go
-1.23.0`), `segmentio/kafka-go` **v0.4.48** (v0.4.49 needs `go 1.23`), and
-`golang-migrate/migrate/v4` **v4.18.2** (v4.18.3 needs `go 1.23.0`) — the
-last three landed in Phase 5a, the first phase where *every* new
-dependency hit this wall (Go 1.22 is past upstream EOL, so it's a real
-Phase 7 candidate now, not a theoretical one). Raising the toolchain means
-moving CI's `go-version` pin first. `golang-jwt/jwt/v5`, `google/uuid`,
-and `gorilla/websocket` are safe. **A version-less `go get` on a
-multi-package module can still upgrade the parent past its pin** — Phase
-5a hit this getting `golang-migrate/migrate/v4/database/postgres` and
-`.../source/iofs` without repeating `@v4.18.2` on each; always pin every
-`go get` target explicitly, subpackages included. Before adding any
-dependency, check its `go` directive. Verification log:
-`docs/project-history.md`.
+**Toolchain raised to `go 1.26.7` (CI pin `1.26`) in Phase 7a**, off the
+EOL 1.22.10 it started on. The raise lifted the `go`-directive ceiling
+that used to force five dependency pins — `go-redis/v9` **v9.18.0**,
+`golang.org/x/crypto` **v0.33.0**, `jackc/pgx/v5` **v5.7.4**,
+`segmentio/kafka-go` **v0.4.48**, and `golang-migrate/migrate/v4`
+**v4.18.2** — but Phase 7a held all five versions unchanged on purpose:
+upgrading them inside the phase whose job is a stable performance
+baseline would add a second variable to every number it measured. They're
+a deliberate hold now, not a constraint; the upgrades themselves are 7b/8
+work. `backend/internal/toolchain`'s `TestToolchainPinsMeetFloorAndAgree`
+fails CI if `go.mod`'s directive and either CI `go-version` pin ever fall
+below the `1.26` floor or drift apart from each other — the automated
+form of the manual rule this paragraph used to state by hand. **Never run
+`go get -u`, and always pin every `go get` target explicitly, subpackages
+included** — a version-less `go get` on a multi-package module can still
+upgrade the parent past its pin, which is exactly how Phase 5a picked up
+`golang-migrate/migrate/v4/database/postgres` and `.../source/iofs`
+without repeating `@v4.18.2` on each. Before adding any dependency, check
+its `go` directive. Verification log: `docs/project-history.md`.
 
 Monorepo: `backend/`, `frontend/` (Next.js App Router, scaffolded by Phase
 6a Task 2), root `docker-compose.yml`.
@@ -87,11 +88,19 @@ binaries and removes the race. Don't drop it to "speed up" `go test
 
 **Running the server itself needs `JWT_SECRET`** (32+ bytes, no
 default — the process fails fast without it) and, optionally,
-`JWT_TTL` (default `2h`, valid `1m`–`24h`). Example:
-`JWT_SECRET=$(openssl rand -hex 32) go run ./cmd/api`.
+`JWT_TTL` (default `2h`, valid `1m`–`24h`) and `METRICS_ADDR` (optional
+`host:port` for the separate metrics listener added in Phase 7a; unset
+disables it; must be loopback under `ENV=production` — see README.md).
+Example: `JWT_SECRET=$(openssl rand -hex 32) go run ./cmd/api`.
 
-`make loadtest` exists as a stub — no k6 scripts exist yet (Phase 7).
-`make migrate` and `make ledger-worker` are real as of Phase 5a/5b
+`make loadtest` runs `SCENARIO ?= rest_throughput` (`loadtest/rest_throughput.js`,
+a REST throughput ramp); `make loadtest SCENARIO=wager_latency` runs the
+WebSocket wager-latency scenario (`loadtest/wager_latency.js`) instead
+(Phase 7a). Both need k6 on `PATH` (external binary, user-local install —
+`loadtest/README.md` — deliberately not a Go dependency) and a live stack
+(`make up` plus a running `cmd/api`, `METRICS_ADDR` set so the
+server-side histograms are reachable). `make migrate` and `make ledger-worker`
+are real as of Phase 5a/5b
 respectively.
 
 CI (`.github/workflows/ci.yml`) runs `go vet`, `gofmt -l` (fails on any
@@ -257,6 +266,14 @@ Gotchas).
   shape this file already rejects for Redis keys
   (`internal/redisstore/keys.go`) and the rate limiter — don't fork a
   second list for either surface.
+- **Metrics are process-aggregate only and never labelled by user, room,
+  or round** (Phase 7a): `internal/metrics`'s histograms and counters
+  observe totals across the whole process — a per-user label would let a
+  scraper reconstruct wager activity the same anonymity invariant above
+  exists to withhold. The metrics listener (`METRICS_ADDR`) is a
+  separate `http.Server`, never wrapped in `httpapi.CORS` and never
+  registered on the public mux, so it adds no second origin allowlist to
+  the rule above.
 
 (These bind Phases 1-5 as they're built; Phase 0 — config and health check —
 doesn't yet touch most of them. See the plan for full context on each.)
