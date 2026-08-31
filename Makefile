@@ -65,7 +65,7 @@ fe-test:
 	cd frontend && npx vitest run
 
 fe-lint:
-	cd frontend && npm run lint && npx tsc --noEmit
+	cd frontend && npm run lint && npm run typecheck
 
 fe-build:
 	cd frontend && npm run build
