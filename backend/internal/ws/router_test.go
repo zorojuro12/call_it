@@ -39,15 +39,16 @@ func (s *stubRoundService) Resolve(ctx context.Context, roomID, callerID string,
 }
 
 type stubWagerService struct {
-	placeReq wager.Request
-	placeErr error
-	placed   bool
+	placeReq    wager.Request
+	placeErr    error
+	placeResult wager.Accepted
+	placed      bool
 }
 
 func (s *stubWagerService) Place(ctx context.Context, req wager.Request) (wager.Accepted, error) {
 	s.placeReq = req
 	s.placed = true
-	return wager.Accepted{}, s.placeErr
+	return s.placeResult, s.placeErr
 }
 
 func testClient(userID, roomID string) *Client {
@@ -110,6 +111,82 @@ func TestRouterDispatch(t *testing.T) {
 
 		if rounds.resolveRoomID != "room1" || rounds.resolveCallerID != "host1" || rounds.resolveOutcome != 2 {
 			t.Errorf("Resolve called with (%q, %q, %d), want (%q, %q, 2)", rounds.resolveRoomID, rounds.resolveCallerID, rounds.resolveOutcome, "room1", "host1")
+		}
+	})
+}
+
+func TestWagerAccepted(t *testing.T) {
+	t.Run("a successful wager privately reports the placer's new balance", func(t *testing.T) {
+		// Arrange
+		wagers := &stubWagerService{placeResult: wager.Accepted{RoundID: "rd1", Balance: 900}}
+		rounds := &stubRoundService{}
+		r := &Router{rounds: rounds, wagers: wagers}
+		c := testClient("u1", "room1")
+
+		data, _ := json.Marshal(placeWagerPayload{Outcome: 0, Amount: 100, IdempotencyKey: "11111111-1111-4111-8111-111111111111"})
+
+		// Act
+		r.Handle(c, Envelope{Type: TypePlaceWager, Data: data})
+
+		// Assert
+		select {
+		case payload := <-c.send:
+			env, err := Decode(payload)
+			if err != nil {
+				t.Fatalf("Decode() = %v, want nil", err)
+			}
+			if env.Type != TypeWagerAccepted {
+				t.Fatalf("Type = %q, want %q", env.Type, TypeWagerAccepted)
+			}
+			var ev WagerAcceptedEvent
+			if err := json.Unmarshal(env.Data, &ev); err != nil {
+				t.Fatalf("decode WagerAcceptedEvent: %v", err)
+			}
+			want := WagerAcceptedEvent{RoundID: "rd1", Outcome: 0, Amount: 100, Balance: 900}
+			if ev != want {
+				t.Errorf("WagerAcceptedEvent = %+v, want %+v", ev, want)
+			}
+		default:
+			t.Fatal("no wager_accepted reply sent to the client's send channel")
+		}
+
+		select {
+		case payload := <-c.send:
+			t.Fatalf("unexpected second message sent: %s", payload)
+		default:
+		}
+	})
+
+	t.Run("a failed wager sends only an error, never wager_accepted", func(t *testing.T) {
+		// Arrange
+		wagers := &stubWagerService{placeErr: domain.ErrInsufficientFunds}
+		rounds := &stubRoundService{}
+		r := &Router{rounds: rounds, wagers: wagers}
+		c := testClient("u1", "room1")
+
+		data, _ := json.Marshal(placeWagerPayload{Outcome: 0, Amount: 100, IdempotencyKey: "11111111-1111-4111-8111-111111111111"})
+
+		// Act
+		r.Handle(c, Envelope{Type: TypePlaceWager, Data: data})
+
+		// Assert
+		select {
+		case payload := <-c.send:
+			env, err := Decode(payload)
+			if err != nil {
+				t.Fatalf("Decode() = %v, want nil", err)
+			}
+			if env.Type != TypeError {
+				t.Fatalf("Type = %q, want %q", env.Type, TypeError)
+			}
+		default:
+			t.Fatal("no error reply sent to the client's send channel")
+		}
+
+		select {
+		case payload := <-c.send:
+			t.Fatalf("unexpected second message sent: %s", payload)
+		default:
 		}
 	})
 }
