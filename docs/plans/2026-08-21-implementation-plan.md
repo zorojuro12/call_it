@@ -426,9 +426,10 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 5a | **Outbox → Kafka + ledger schema** ✅ | Outbox relay binary (`cmd/relay`), `wagers-placed`/`rounds-settled` producers, `internal/events` schemas, PostgreSQL migrations, ledger schema, deferred constraint trigger | 2, 4b | `postgres-patterns`, `database-migrations` skills |
 | 5b | **Double-entry ledger** ✅ | `cmd/ledger-worker` consumer, `internal/ledger` repository, idempotent replay on the `idempotency_key` unique constraint, Redis↔PostgreSQL reconciliation test | 5a | None new |
 | 6a | **Frontend shell** ✅ | Next.js/TypeScript scaffold, typed REST + WebSocket clients, register/login, room creation and join-by-code, live presence roster — in a room and connected, no gameplay yet. Also the backend's browser-origin admission (CORS + WS `CheckOrigin`), without which no browser can reach the API at all | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
-| 6b | **Gameplay UI** | Host console (open/resolve round), participant wager pad, live odds, lockout countdown, aggregate bettors counter, settlement reveal, Web Audio feedback | 6a | None new |
-| 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5b, 6b | None new — spec already names k6 directly |
-| 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7 | Decide when unblocked |
+| 6b | **Gameplay UI** ✅ | Host console (open/resolve round), participant wager pad, live odds, lockout countdown, aggregate bettors counter, settlement reveal, Web Audio feedback | 6a | None new |
+| 7a | **Instrumentation + load harness** | Go toolchain raise off EOL 1.22.10, `internal/metrics` server-side latency histograms on the wager and broadcast paths, real k6 scripts behind `make loadtest`, and a recorded baseline of measured p99 and throughput against spec §7's SLAs | 5b, 6b | None new — spec already names k6 directly |
+| 7b | **Hardening + tuning** | Tuning driven by 7a's measured numbers, the three security items open by design (login timing, reconnect grace window, `RoundSettled.Payouts` length cap), the §12 reconciliation re-run after a real k6 load run, README with architecture diagram | 7a | None new |
+| 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7b | Decide when unblocked |
 
 **Phase 5 split into 5a/5b (added at Phase 5's planning pass).** Done
 *before* writing the detailed task breakdown, which is what the
@@ -452,10 +453,11 @@ plumbing that can be verified structurally while 5b keeps the
 cross-cutting attention that kind of proof needs.
 
 **✅ marks a phase whose branch is merged into `dev` and whose tests were
-green at merge.** Phases 0–6a are done
-(`docs/plans/2026-08-30-phase-6a-frontend-shell.md`) — 6a's
-`phase-6a-frontend-shell` merged with `--no-ff`, full backend + frontend
-+ E2E suites re-verified green on the merged result before merging.
+green at merge.** Phases 0–6b are done — 6a's `phase-6a-frontend-shell`
+and 6b's `phase-6b-gameplay-ui` both merged with `--no-ff`, full backend
++ frontend + E2E suites re-verified green on the merged result before
+merging (`docs/plans/2026-08-30-phase-6a-frontend-shell.md`,
+`docs/plans/2026-08-30-phase-6b-gameplay-ui.md`).
 
 **Amendment discovered by 6a's own E2E acceptance test.** The WS join
 handler (`internal/ws/handler.go`, built in Phase 4a) only ever broadcast
@@ -521,6 +523,55 @@ was installed in `1a2c2f2`. TypeScript earns its place on this project
 specifically: the socket protocol has eight message types carrying
 integer token amounts, and `lib/protocol.ts` mirrors Go structs that no
 compiler otherwise checks it against.
+
+**Phase 7 split into 7a/7b (added at Phase 7's planning pass).** Done
+*before* writing the detailed task breakdown, same as Phase 5's and Phase
+6's splits and for the same reason. The original Phase 7 row named four
+deliverables, but the work actually queued against it had grown to ten,
+spread across three documents: the row's own four (k6 scripts, p99
+histograms, tuning, README/diagram), the three security items
+`docs/project-history.md` records as open by design, the Go 1.22.10
+toolchain raise `CLAUDE.md` has since promoted from theoretical to "a
+real Phase 7 candidate now", §12's still-unchecked "reconciliation test
+passes after a load run", and §6's optional `JoinRoom`→Lua rewrite. That
+is more than Phase 3 carried when it became the most expensive phase
+measured.
+
+Split at the **evidence boundary**: 7a ends when spec §7's SLAs have real
+measured numbers behind them — instrumentation reporting server-side p99,
+a k6 harness driving real load, and a recorded baseline stating which
+targets are met and which are not. 7b is everything that acts on those
+numbers.
+
+The seam is drawn there rather than at "all hardening in one phase" for
+the same reason 5a/5b was drawn at the durability boundary. Tuning
+without measurement is guesswork, so the tuning half is worthless before
+the measuring half exists. And all three deferred security items change
+the very paths under measurement — the login-timing fix adds an argon2id
+verify to the auth miss path, and the reconnect grace window changes
+session lifecycle on the socket — so landing them before a baseline
+exists means measuring twice and comparing two figures taken under two
+different systems. 7a is also independently shippable in the way this
+table asks a phase to be: a repeatable load harness plus honest p99
+numbers is a deliverable even if nothing is tuned afterward.
+
+**The toolchain raise is 7a's Task 1, deliberately** — the same reasoning
+6a used for its CORS task, applied to a different kind of prerequisite. A
+p99 baseline measured on Go 1.22.10 and then re-taken on a newer runtime
+was never a baseline, so the raise cannot follow the measurement; and the
+five dependencies `CLAUDE.md` pins are pinned *only* because they declare
+a `go` directive above 1.22.10, so one raise unblocks all five at once.
+Retiring a toolchain past upstream EOL is itself hardening, which is what
+this phase is for. It is a task inside 7a rather than a micro-phase of
+its own because nothing it produces is verifiable except by the suites
+7a already runs.
+
+**§6's `JoinRoom`→Lua rewrite is adopted into neither half.** It was
+recorded as a Phase 7 *candidate*, not a commitment: it rewrites a
+working Phase 4 write path so that a reconciliation assertion can read as
+the literal `redis_wallet == ledger_balance` instead of subtracting the
+opening stake. The identity it would simplify is already proven as-is by
+`internal/ledger/reconcile_test.go`. It stays a candidate.
 
 **Phase 4 split into 4a/4b (added at Phase 4a close-out).** Scoping Phase 4
 as written above produced ~13 tasks / ~38 checkpoints — the shape this
@@ -606,8 +657,14 @@ same bundling Phase 3 hit.
 
 **Checked, and it did.** Phase 5 was split into 5a/5b at its planning
 pass, before the task breakdown was written — see the split note above.
-This is the first time the recommendation was applied as intended rather
-than noted after the fact.
+That was the first time the recommendation was applied as intended rather
+than noted after the fact; Phases 6 and 7 were both split the same way at
+their own planning passes, so it is now standing practice rather than a
+one-off. Phase 7's split is the first to draw on sources outside this
+table — the deferred items in `docs/project-history.md` and the toolchain
+note in `CLAUDE.md` — which is worth repeating: a late phase's real size
+is not what its §9 row says, it is that row plus everything earlier
+phases deferred into it.
 
 Two sequencing choices are deliberate. **Phase 1 precedes all
 infrastructure** because the money math is where correctness bugs hide, and
