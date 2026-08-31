@@ -76,7 +76,7 @@ func TestSocketRoutesToServices(t *testing.T) {
 	// Arrange
 	deps := testDeps(t)
 	deps.Rounds = round.NewService(context.Background(), deps.Store, deps.Hub)
-	deps.Wagers = wager.NewService(deps.Store, deps.Hub)
+	deps.Wagers = wager.NewService(deps.Store, deps.Hub, nil, nil)
 	mux := NewMux(deps)
 	server := httptest.NewServer(mux)
 	defer server.Close()

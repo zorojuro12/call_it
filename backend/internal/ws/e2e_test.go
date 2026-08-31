@@ -164,7 +164,7 @@ func TestEndToEndRound(t *testing.T) {
 	defer restServer.Close()
 
 	roundSvc := round.NewService(context.Background(), store, hub)
-	wagerSvc := wager.NewService(store, hub)
+	wagerSvc := wager.NewService(store, hub, nil, nil)
 	router := ws.NewRouter(roundSvc, wagerSvc)
 	wsMux := http.NewServeMux()
 	wsMux.Handle("GET /api/v1/socket", ws.Handler(hub, issuer, ws.DefaultClientConfig(), router.Handle, roundSvc))

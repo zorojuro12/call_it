@@ -72,7 +72,7 @@ func run() error {
 	roundsCtx, roundsCancel := context.WithCancel(context.Background())
 	defer roundsCancel()
 	rounds := round.NewService(roundsCtx, store, hub)
-	wagers := wager.NewService(store, hub)
+	wagers := wager.NewService(store, hub, nil, nil)
 
 	mux := httpapi.NewMux(httpapi.Deps{
 		Accounts:       accounts,
