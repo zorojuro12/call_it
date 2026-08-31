@@ -16,16 +16,18 @@ function unwrapData(res) {
 }
 
 // registerUser registers a unique user and returns {token, userId}.
-// Email is unique per VU/iteration/timestamp so a repeated scenario run
-// never collides with account.ErrEmailTaken.
+// Email is unique per call — Date.now() plus a random suffix, rather
+// than __VU/__ITER, since this runs from setup() too, where neither is
+// defined — so a repeated scenario run never collides with
+// account.ErrEmailTaken.
 export function registerUser() {
-  const email = `vu-${__VU}-${__ITER}-${Date.now()}@loadtest.local`;
+  const email = `loadtest-${Date.now()}-${Math.floor(Math.random() * 1e9)}@loadtest.local`;
   const res = http.post(
     `${BASE}/api/v1/auth/register`,
     JSON.stringify({
       email,
       password: 'correct horse battery staple',
-      display_name: `LoadTest ${__VU}-${__ITER}`,
+      display_name: `LoadTest ${Math.floor(Math.random() * 1e9)}`,
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
