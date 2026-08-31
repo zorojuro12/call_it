@@ -427,9 +427,10 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 5b | **Double-entry ledger** ✅ | `cmd/ledger-worker` consumer, `internal/ledger` repository, idempotent replay on the `idempotency_key` unique constraint, Redis↔PostgreSQL reconciliation test | 5a | None new |
 | 6a | **Frontend shell** ✅ | Next.js/TypeScript scaffold, typed REST + WebSocket clients, register/login, room creation and join-by-code, live presence roster — in a room and connected, no gameplay yet. Also the backend's browser-origin admission (CORS + WS `CheckOrigin`), without which no browser can reach the API at all | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
 | 6b | **Gameplay UI** ✅ | Host console (open/resolve round), participant wager pad, live odds, lockout countdown, aggregate bettors counter, settlement reveal, Web Audio feedback | 6a | None new |
-| 7a | **Instrumentation + load harness** | Go toolchain raise off EOL 1.22.10, `internal/metrics` server-side latency histograms on the wager and broadcast paths, real k6 scripts behind `make loadtest`, and a recorded baseline of measured p99 and throughput against spec §7's SLAs | 5b, 6b | None new — spec already names k6 directly |
-| 7b | **Hardening + tuning** | Tuning driven by 7a's measured numbers, the three security items open by design (login timing, reconnect grace window, `RoundSettled.Payouts` length cap), the §12 reconciliation re-run after a real k6 load run, README with architecture diagram | 7a | None new |
-| 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7b | Decide when unblocked |
+| 7a | **Instrumentation + load harness** ✅ | Go toolchain raise off EOL 1.22.10, `internal/metrics` server-side latency histograms on the wager and broadcast paths, real k6 scripts behind `make loadtest`, and a recorded baseline of measured p99 and throughput against spec §7's SLAs | 5b, 6b | None new — spec already names k6 directly |
+| 7b | **Tuning + reconciliation under load** | Acts on 7a's two MISSED targets: profile and tune the wager-placement path (five sequential Redis round trips today) against the p99 < 15 ms target, re-baseline throughput on an optimized `go build` binary and either close the 5,000 rps gap or record this environment's ceiling with evidence, and re-run the Redis↔PostgreSQL reconciliation after a real k6 load run (closes §12's last unchecked money-correctness box) | 7a | None new |
+| 7c | **Security debt + docs** | The three security items open by design (login timing, reconnect grace window, `RoundSettled.Payouts` length cap), and the README with an architecture diagram | 7b | None new |
+| 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7c | Decide when unblocked |
 
 **Phase 5 split into 5a/5b (added at Phase 5's planning pass).** Done
 *before* writing the detailed task breakdown, which is what the
@@ -565,6 +566,34 @@ Retiring a toolchain past upstream EOL is itself hardening, which is what
 this phase is for. It is a task inside 7a rather than a micro-phase of
 its own because nothing it produces is verifiable except by the suites
 7a already runs.
+
+**Phase 7b split into 7b/7c (added at Phase 7b's planning pass).** Done
+*before* writing the detailed task breakdown, same as the 5a/5b, 6a/6b, and
+7a/7b splits before it. The 7b row named five deliverables across two
+unrelated kinds of work — tuning driven by measurement, and security debt
+deferred from four earlier phases — which is more than Phase 3 carried when
+it became the most expensive phase measured.
+
+Split at the **same evidence boundary the 7a/7b seam was drawn on, applied
+once more.** 7a's own split rationale already argues that the deferred
+security items "change the very paths under measurement," and that landing
+them next to a measurement means comparing two figures taken under two
+different systems. That argument does not stop being true once 7a ships: the
+reconnect grace window changes socket session lifecycle, and the
+login-timing fix adds an argon2id verify to the auth miss path — both sit on
+routes 7b is trying to get a clean before/after number for. So 7b holds the
+system still and changes only what the profile says is slow; 7c changes
+behavior afterward, with 7b's re-baseline as its reference point.
+
+The §12 reconciliation re-run goes to **7b, not 7c**, because it is the same
+kind of work as the rest of 7b: it needs a real k6 load run to have happened,
+which is exactly what 7b's re-baseline produces. Pairing it with the tuning
+pass means one load run serves both, rather than 7c standing the whole stack
+up again to drive traffic it has no other use for.
+
+7b is independently shippable in the way this table asks: a tuned wager path
+with a revised, honest baseline and a proven post-load reconciliation is a
+deliverable even if no security item is closed afterward.
 
 **§6's `JoinRoom`→Lua rewrite is adopted into neither half.** It was
 recorded as a Phase 7 *candidate*, not a commitment: it rewrites a
