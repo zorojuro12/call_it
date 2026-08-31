@@ -129,6 +129,22 @@ export function reduceRound(state: RoundState, action: RoundAction): RoundState 
       }
       return { ...state, balance: action.data.balance, my_stake: state.my_stake + action.data.amount };
 
+    case "round_resolved": {
+      if (isStale(state, action.data.round_id)) {
+        return state;
+      }
+      const myRow = action.data.results.find((r) => r.user_id === state.self_id);
+      const net = myRow?.net ?? 0;
+      return {
+        ...state,
+        phase: "revealed",
+        results: action.data.results,
+        dust: action.data.dust,
+        refunded: action.data.refunded,
+        balance: (state.balance_at_open ?? state.balance) + net,
+      };
+    }
+
     default:
       return state;
   }

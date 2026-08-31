@@ -228,3 +228,90 @@ describe("reduceRound: wager_accepted", () => {
     expect(after).toBe(opened);
   });
 });
+
+describe("reduceRound: round_resolved", () => {
+  function lockedRoundWithStake(): RoundState {
+    let state = reduceRound(initialRoundState(1000), {
+      type: "round_opened",
+      data: { round_id: "rd1", question: "Q?", outcomes: ["Home", "Away"], lock_at_ms: 1000 },
+    });
+    state = { ...state, self_id: "u1" };
+    state = reduceRound(state, {
+      type: "wager_accepted",
+      data: { round_id: "rd1", outcome: 0, amount: 100, balance: 900 },
+    });
+    state = reduceRound(state, { type: "round_locked", data: { round_id: "rd1" } });
+    return state;
+  }
+
+  it("reveals results and settles the winner's balance from their own net", () => {
+    // Arrange
+    const before = lockedRoundWithStake();
+    const results = [
+      { user_id: "u1", display_name: "Ann", staked: 100, returned: 250, net: 150 },
+      { user_id: "u2", display_name: "Bob", staked: 100, returned: 0, net: -100 },
+    ];
+
+    // Act
+    const after = reduceRound(before, {
+      type: "round_resolved",
+      data: { round_id: "rd1", winning_outcome: 0, results, dust: 3, refunded: false },
+    });
+
+    // Assert
+    expect(after.phase).toBe("revealed");
+    expect(after.results).toEqual(results);
+    expect(after.dust).toBe(3);
+    expect(after.refunded).toBe(false);
+    expect(after.balance).toBe(1150);
+  });
+
+  it("settles a non-participant's balance at balance_at_open plus zero", () => {
+    // Arrange
+    const before = { ...lockedRoundWithStake(), self_id: "u9" };
+    const results = [
+      { user_id: "u1", display_name: "Ann", staked: 100, returned: 250, net: 150 },
+      { user_id: "u2", display_name: "Bob", staked: 100, returned: 0, net: -100 },
+    ];
+
+    // Act
+    const after = reduceRound(before, {
+      type: "round_resolved",
+      data: { round_id: "rd1", winning_outcome: 0, results, dust: 3, refunded: false },
+    });
+
+    // Assert
+    expect(after.balance).toBe(1000);
+  });
+
+  it("settles every stake returned when nobody backed the winner", () => {
+    // Arrange
+    const before = lockedRoundWithStake();
+    const results = [{ user_id: "u1", display_name: "Ann", staked: 100, returned: 100, net: 0 }];
+
+    // Act
+    const after = reduceRound(before, {
+      type: "round_resolved",
+      data: { round_id: "rd1", winning_outcome: 1, results, dust: 0, refunded: true },
+    });
+
+    // Assert
+    expect(after.refunded).toBe(true);
+    expect(after.phase).toBe("revealed");
+    expect(after.balance).toBe(1000);
+  });
+
+  it("drops a stale round_resolved for a round that is no longer current", () => {
+    // Arrange
+    const before = lockedRoundWithStake();
+
+    // Act
+    const after = reduceRound(before, {
+      type: "round_resolved",
+      data: { round_id: "rd0", winning_outcome: 0, results: [], dust: 0, refunded: false },
+    });
+
+    // Assert
+    expect(after).toBe(before);
+  });
+});
