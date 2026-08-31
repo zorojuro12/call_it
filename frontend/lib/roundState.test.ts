@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import { initialRoundState, reduceRound } from "./roundState";
 import type { RoundState } from "./roundState";
 
+function lockedRoundWithStake(): RoundState {
+  let state = reduceRound(initialRoundState(1000), {
+    type: "round_opened",
+    data: { round_id: "rd1", question: "Q?", outcomes: ["Home", "Away"], lock_at_ms: 1000 },
+  });
+  state = { ...state, self_id: "u1" };
+  state = reduceRound(state, {
+    type: "wager_accepted",
+    data: { round_id: "rd1", outcome: 0, amount: 100, balance: 900 },
+  });
+  state = reduceRound(state, { type: "round_locked", data: { round_id: "rd1" } });
+  return state;
+}
+
 describe("initialRoundState", () => {
   it("returns the idle baseline for a fresh room", () => {
     // Arrange & Act
@@ -230,20 +244,6 @@ describe("reduceRound: wager_accepted", () => {
 });
 
 describe("reduceRound: round_resolved", () => {
-  function lockedRoundWithStake(): RoundState {
-    let state = reduceRound(initialRoundState(1000), {
-      type: "round_opened",
-      data: { round_id: "rd1", question: "Q?", outcomes: ["Home", "Away"], lock_at_ms: 1000 },
-    });
-    state = { ...state, self_id: "u1" };
-    state = reduceRound(state, {
-      type: "wager_accepted",
-      data: { round_id: "rd1", outcome: 0, amount: 100, balance: 900 },
-    });
-    state = reduceRound(state, { type: "round_locked", data: { round_id: "rd1" } });
-    return state;
-  }
-
   it("reveals results and settles the winner's balance from their own net", () => {
     // Arrange
     const before = lockedRoundWithStake();
@@ -310,6 +310,34 @@ describe("reduceRound: round_resolved", () => {
       type: "round_resolved",
       data: { round_id: "rd0", winning_outcome: 0, results: [], dust: 0, refunded: false },
     });
+
+    // Assert
+    expect(after).toBe(before);
+  });
+});
+
+describe("reduceRound: round_refunded", () => {
+  it("restores the pre-round balance, with no per-player rows", () => {
+    // Arrange
+    const before = lockedRoundWithStake();
+
+    // Act
+    const after = reduceRound(before, { type: "round_refunded", data: { round_id: "rd1", total: 400 } });
+
+    // Assert
+    expect(after.phase).toBe("revealed");
+    expect(after.balance).toBe(1000);
+    expect(after.refunded).toBe(true);
+    expect(after.refund_total).toBe(400);
+    expect(after.results).toBeNull();
+  });
+
+  it("drops a stale round_refunded for a round that is no longer current", () => {
+    // Arrange
+    const before = lockedRoundWithStake();
+
+    // Act
+    const after = reduceRound(before, { type: "round_refunded", data: { round_id: "rd0", total: 400 } });
 
     // Assert
     expect(after).toBe(before);

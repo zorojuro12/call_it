@@ -145,7 +145,17 @@ export function reduceRound(state: RoundState, action: RoundAction): RoundState 
       };
     }
 
-    default:
-      return state;
+    case "round_refunded":
+      if (isStale(state, action.data.round_id)) {
+        return state;
+      }
+      return {
+        ...state,
+        phase: "revealed",
+        balance: state.balance_at_open ?? state.balance,
+        refunded: true,
+        refund_total: action.data.total,
+        results: null,
+      };
   }
 }
