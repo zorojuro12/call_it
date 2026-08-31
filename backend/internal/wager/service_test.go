@@ -407,6 +407,71 @@ func TestPlaceRecordsSuccessLatency(t *testing.T) {
 	}
 }
 
+func TestPlaceRecordsFailureLatency(t *testing.T) {
+	t.Run("bad idempotency key", func(t *testing.T) {
+		store := newTestStore(t)
+		ctx := context.Background()
+		hostID := testID(t, "host")
+		u1 := testID(t, "user")
+		roomID, _ := setupOpenRound(t, store, hostID, 1000, 2, map[string]domain.Tokens{u1: 1000})
+
+		bc := &stubBroadcaster{}
+		okRecorder := &stubRecorder{}
+		failRecorder := &stubRecorder{}
+		svc := NewService(store, bc, okRecorder, failRecorder)
+
+		_, err := svc.Place(ctx, Request{
+			RoomID:         roomID,
+			UserID:         u1,
+			Outcome:        0,
+			Amount:         200,
+			IdempotencyKey: "not-a-uuid",
+		})
+		if !errors.Is(err, ErrBadIdempotency) {
+			t.Fatalf("Place() error = %v, want ErrBadIdempotency", err)
+		}
+		if failRecorder.calls != 1 {
+			t.Errorf("failure recorder calls = %d, want 1", failRecorder.calls)
+		}
+		if okRecorder.calls != 0 {
+			t.Errorf("success recorder calls = %d, want 0", okRecorder.calls)
+		}
+	})
+
+	t.Run("rate limited", func(t *testing.T) {
+		store := newTestStore(t)
+		ctx := context.Background()
+		hostID := testID(t, "host")
+		u1 := testID(t, "user")
+		roomID, _ := setupOpenRound(t, store, hostID, 1000, 2, map[string]domain.Tokens{u1: 10000})
+
+		bc := &stubBroadcaster{}
+		okRecorder := &stubRecorder{}
+		failRecorder := &stubRecorder{}
+		svc := NewService(store, bc, okRecorder, failRecorder)
+
+		for i := 0; i < Limit; i++ {
+			if _, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 1, IdempotencyKey: uuid.NewString()}); err != nil {
+				t.Fatalf("Place() attempt %d = %v, want nil", i+1, err)
+			}
+		}
+		okCallsBefore := okRecorder.calls
+		failCallsBefore := failRecorder.calls
+
+		_, err := svc.Place(ctx, Request{RoomID: roomID, UserID: u1, Outcome: 0, Amount: 1, IdempotencyKey: uuid.NewString()})
+		var rlErr *RateLimitError
+		if !errors.As(err, &rlErr) {
+			t.Fatalf("Place() error = %v, want *RateLimitError", err)
+		}
+		if failRecorder.calls != failCallsBefore+1 {
+			t.Errorf("failure recorder calls = %d, want %d", failRecorder.calls, failCallsBefore+1)
+		}
+		if okRecorder.calls != okCallsBefore {
+			t.Errorf("success recorder calls = %d, want unchanged at %d", okRecorder.calls, okCallsBefore)
+		}
+	})
+}
+
 func TestPlaceBroadcastSuppressed(t *testing.T) {
 	t.Run("rejected wager broadcasts nothing", func(t *testing.T) {
 		store := newTestStore(t)

@@ -70,8 +70,21 @@ func NewService(store *redisstore.Store, b round.Broadcaster, ok, failed Recorde
 // Place validates and places a wager, then reports the wagerer's new
 // state. No Go-side balance or lockout check — place_wager.lua is the
 // authority on both.
-func (s *Service) Place(ctx context.Context, req Request) (Accepted, error) {
+func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, err error) {
 	start := time.Now()
+	defer func() {
+		elapsed := time.Since(start)
+		if err != nil {
+			if s.errLatency != nil {
+				s.errLatency.Observe(elapsed)
+			}
+			return
+		}
+		if s.okLatency != nil {
+			s.okLatency.Observe(elapsed)
+		}
+	}()
+
 	decision, err := s.store.Allow(ctx, Scope, req.UserID, Limit, Window)
 	if err != nil {
 		return Accepted{}, err
@@ -127,7 +140,7 @@ func (s *Service) Place(ctx context.Context, req Request) (Accepted, error) {
 		return Accepted{}, err
 	}
 
-	accepted := Accepted{
+	accepted = Accepted{
 		RoundID:     roundID,
 		Balance:     result.Balance,
 		Pools:       result.Pools,
@@ -157,8 +170,5 @@ func (s *Service) Place(ctx context.Context, req Request) (Accepted, error) {
 	}
 	s.broadcaster.Broadcast(req.RoomID, payload)
 
-	if s.okLatency != nil {
-		s.okLatency.Observe(time.Since(start))
-	}
 	return accepted, nil
 }
