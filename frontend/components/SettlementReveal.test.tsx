@@ -35,4 +35,43 @@ describe("SettlementReveal", () => {
 
     expect(screen.getByText(/Dust: 3/)).toBeInTheDocument();
   });
+
+  test("nobody backed the winning outcome — shows the refund message and still renders per-player rows", () => {
+    render(
+      <SettlementReveal
+        results={[{ user_id: "u1", display_name: "Ann", staked: 100, returned: 100, net: 0 }]}
+        outcomes={["Home", "Away"]}
+        winningOutcome={1}
+        dust={0}
+        refunded={true}
+        refundTotal={null}
+        selfId="u1"
+      />,
+    );
+
+    expect(
+      screen.getByText("Nobody backed the winning outcome — every stake was returned"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Ann/)).toBeInTheDocument();
+    expect(screen.getByRole("table")).toBeInTheDocument();
+  });
+
+  test("host-disconnect fallback — shows the unresolved message and renders no per-player rows", () => {
+    render(
+      <SettlementReveal
+        results={null}
+        outcomes={["Home", "Away"]}
+        winningOutcome={null}
+        dust={0}
+        refunded={true}
+        refundTotal={400}
+        selfId="u1"
+      />,
+    );
+
+    expect(
+      screen.getByText("The round went unresolved — all 400 tokens were refunded"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
 });
