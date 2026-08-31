@@ -703,6 +703,6 @@ reliably take longer than they appear.
 
 - [x] Phases 0–4 complete, producing an end-to-end playable round — `internal/ws.TestEndToEndRound` (Phase 4b Task 10 CP1) is the evidence: a host and two players register/join over REST, open a round, wager, lock, and resolve over the real socket transport, with token conservation (`wallets + dust == combined opening stakes`) asserted at the end.
 - [ ] Concurrency suite proves zero double-spend under contention
-- [ ] Redis↔PostgreSQL reconciliation test passes after a load run
+- [ ] Redis↔PostgreSQL reconciliation test passes after a load run — belongs to Phase 7b, not 7a; see `docs/reports/2026-08-31-phase-7a-baseline.md` for 7a's load numbers this re-run will act on
 - [ ] Test coverage meets the project's 80% minimum
 - [ ] Security review run against the auth and wager-placement paths

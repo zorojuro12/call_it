@@ -93,8 +93,14 @@ default — the process fails fast without it) and, optionally,
 disables it; must be loopback under `ENV=production` — see README.md).
 Example: `JWT_SECRET=$(openssl rand -hex 32) go run ./cmd/api`.
 
-`make loadtest` exists as a stub — no k6 scripts exist yet (Phase 7).
-`make migrate` and `make ledger-worker` are real as of Phase 5a/5b
+`make loadtest` runs `SCENARIO ?= rest_throughput` (`loadtest/rest_throughput.js`,
+a REST throughput ramp); `make loadtest SCENARIO=wager_latency` runs the
+WebSocket wager-latency scenario (`loadtest/wager_latency.js`) instead
+(Phase 7a). Both need k6 on `PATH` (external binary, user-local install —
+`loadtest/README.md` — deliberately not a Go dependency) and a live stack
+(`make up` plus a running `cmd/api`, `METRICS_ADDR` set so the
+server-side histograms are reachable). `make migrate` and `make ledger-worker`
+are real as of Phase 5a/5b
 respectively.
 
 CI (`.github/workflows/ci.yml`) runs `go vet`, `gofmt -l` (fails on any
