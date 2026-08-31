@@ -104,3 +104,47 @@ describe("reduceRound: round_opened", () => {
     expect(after.round_id).toBe("rd2");
   });
 });
+
+describe("reduceRound: odds_updated", () => {
+  it("records the six aggregate fields without touching balance or stake", () => {
+    // Arrange
+    const before = reduceRound(initialRoundState(1000), {
+      type: "round_opened",
+      data: { round_id: "rd1", question: "Q?", outcomes: ["Home", "Away"], lock_at_ms: 1000 },
+    });
+
+    // Act
+    const after = reduceRound(before, {
+      type: "odds_updated",
+      data: { round_id: "rd1", pools: [300, 100], total: 400, multipliers: [1.333, 4], bettors: 2, players: 5 },
+    });
+
+    // Assert
+    expect(after).toEqual({
+      ...before,
+      pools: [300, 100],
+      total: 400,
+      multipliers: [1.333, 4],
+      bettors: 2,
+      players: 5,
+    });
+    expect(after.phase).toBe("open");
+  });
+
+  it("drops a stale odds_updated for a round that is no longer current", () => {
+    // Arrange
+    const before = reduceRound(initialRoundState(1000), {
+      type: "round_opened",
+      data: { round_id: "rd1", question: "Q?", outcomes: ["Home", "Away"], lock_at_ms: 1000 },
+    });
+
+    // Act
+    const after = reduceRound(before, {
+      type: "odds_updated",
+      data: { round_id: "rd0", pools: [1, 1], total: 2, multipliers: [1, 1], bettors: 1, players: 1 },
+    });
+
+    // Assert
+    expect(after).toBe(before);
+  });
+});

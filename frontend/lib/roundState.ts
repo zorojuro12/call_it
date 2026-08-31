@@ -71,6 +71,14 @@ export function initialRoundState(balance: number): RoundState {
   };
 }
 
+// isStale reports whether action targets a round other than the one
+// state is currently tracking. A late broadcast from a previous round
+// must be dropped rather than corrupting the current one. round_opened
+// is exempt by construction — a new round always supersedes.
+function isStale(state: RoundState, roundID: string): boolean {
+  return state.round_id !== null && roundID !== state.round_id;
+}
+
 export function reduceRound(state: RoundState, action: RoundAction): RoundState {
   switch (action.type) {
     case "connected":
@@ -94,6 +102,19 @@ export function reduceRound(state: RoundState, action: RoundAction): RoundState 
         dust: 0,
         refunded: false,
         refund_total: null,
+      };
+
+    case "odds_updated":
+      if (isStale(state, action.data.round_id)) {
+        return state;
+      }
+      return {
+        ...state,
+        pools: action.data.pools,
+        total: action.data.total,
+        multipliers: action.data.multipliers,
+        bettors: action.data.bettors,
+        players: action.data.players,
       };
 
     default:
