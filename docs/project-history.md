@@ -71,6 +71,35 @@ in `journal/2026-08-26_0250_ansh_tuned-plan-experiment-verdict.md`.
 
 ---
 
+## Amendments discovered mid-phase
+
+**Phase 6b, Task 1 — three backend socket-contract gaps, found while planning
+against a real browser client (the same class of gap 6a's newcomer-roster fix
+was: invisible to every backend-only test, because nothing before 6a/6b put a
+browser in front of the server).**
+
+1. **No host/player discriminator reached the client.** `RoomSummary.guest:
+   false` is not "is host" — an account holder who *joins* also gets `guest:
+   false`, so `app/room/[code]/page.tsx` rendered identically for a host and
+   a player. Fixed: `auth.Claims` and `ws.ConnectedEvent` gain a `Host bool`
+   claim/field, set at the two room-token issue sites
+   (`internal/room/service.go:81,147`). Advisory-for-rendering only —
+   `round.Service` still re-checks `rm.HostID` against Redis for every
+   host-gated action, so a forged claim buys nothing.
+2. **The router computed a wager's authoritative post-wager balance and threw
+   it away.** `_, err := r.wagers.Place(...)` in `internal/ws/router.go`
+   discarded `wager.Accepted`, leaving a player with no server-anchored
+   balance after wagering. Fixed: `wager.Accepted` gains `RoundID`, and the
+   router sends a private `wager_accepted` reply (`c.Send`, never broadcast)
+   carrying the placer's own new balance and stake.
+3. **`round.ErrInvalidSpec` was unmapped** in `replyServiceError`, so a host
+   who mistyped a round spec got a generic `internal_error` instead of an
+   actionable code. Fixed: mapped to `invalid_spec`.
+
+All three landed as Task 1 of `docs/plans/2026-08-30-phase-6b-gameplay-ui.md`,
+each with its own RED→GREEN commit, before any gameplay UI was built against
+them.
+
 ## Security reviews
 
 ### Phase 3 — `internal/auth`, `internal/account`, `internal/httpapi`, three new Lua scripts

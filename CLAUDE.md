@@ -167,9 +167,15 @@ Gotchas).
   (REST payloads), Phase 4 (WebSocket broadcasts), and Phase 6a/6b (the
   frontend must not reconstruct per-user state client-side — 6a receives
   no wager data at all and must stay that way; 6b renders the reveal only
-  from `round_resolved`). Implemented
+  from `round_resolved`/`round_refunded`, in `lib/roundState.ts`'s reducer
+  and `components/SettlementReveal.tsx`). Implemented
   as `round:{roundID}:bettors`, a Redis SET — `SCARD` is the numerator,
   and a player's repeat wager is a no-op `SADD` that doesn't move it.
+  **One narrow, explicit exception (added Phase 6b):** `wager_accepted`
+  privately tells a placer their own new balance and stake, over their
+  own connection only (`ws.Router`'s `c.Send`, never `Broadcast`) — a
+  wagerer already knows their own stake; this discloses nothing about
+  anyone else's, and the room-wide `odds_updated` broadcast is unchanged.
 - **Settlement math is not duplicated in Lua.** `internal/domain.Settle`
   computes payouts, dust, and the nobody-backed-the-winner refund path at
   100% coverage with a fuzz test proving `Σ payouts + dust == Σ stakes`;
@@ -292,8 +298,21 @@ frontend/                    # Next.js App Router, TypeScript strict, Tailwind
 │   ├── api.ts               # REST client, envelope unwrap, ApiError
 │   ├── session.ts           # sessionStorage wrapper — account token, room token, room summary
 │   └── socket.ts            # WebSocket client, typed on(type, handler) dispatch table
-├── components/               # PresenceRoster, ErrorBanner — reused by 6b unchanged
+├── components/               # PresenceRoster, ErrorBanner
 └── e2e/                      # Playwright acceptance tests
+```
+
+Phase 6b adds, in the same `frontend/` tree:
+```
+lib/
+├── roundState.ts            # pure reducer — the client-side counterpart of internal/domain
+├── countdown.ts              # remainingMs + useCountdown, the display-only lockout timer
+└── audio.ts                  # Web Audio cues behind an injectable AudioContext factory
+components/
+├── OddsBoard.tsx              # pool totals, multipliers, the aggregate bettors counter
+├── WagerPad.tsx                # outcome selection and stake entry
+├── HostConsole.tsx             # open-round form and resolve picker
+└── SettlementReveal.tsx        # the terminal-state reveal
 ```
 
 **`relay` and `ledger-worker` are separate binaries under `cmd/` deliberately** —
