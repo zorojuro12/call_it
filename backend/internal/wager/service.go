@@ -37,6 +37,7 @@ type Request struct {
 // Accepted is the wagerer's new anonymous state after a successful
 // Place — never another player's stake.
 type Accepted struct {
+	RoundID     string
 	Balance     domain.Tokens
 	Pools       []domain.Tokens
 	Total       domain.Tokens
@@ -116,6 +117,7 @@ func (s *Service) Place(ctx context.Context, req Request) (Accepted, error) {
 	}
 
 	accepted := Accepted{
+		RoundID:     roundID,
 		Balance:     result.Balance,
 		Pools:       result.Pools,
 		Total:       result.Total,

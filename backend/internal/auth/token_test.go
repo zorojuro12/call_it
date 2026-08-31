@@ -50,9 +50,9 @@ func TestIssueVerifyRoundTrip(t *testing.T) {
 	}
 
 	cases := []Claims{
-		{UserID: "u1", DisplayName: "Alice", RoomID: "", Guest: false},
-		{UserID: "u1", DisplayName: "Alice", RoomID: "r1", Guest: false},
-		{UserID: "g1", DisplayName: "Bob", RoomID: "r1", Guest: true},
+		{UserID: "u1", DisplayName: "Alice", RoomID: "", Guest: false, Host: false},
+		{UserID: "u1", DisplayName: "Alice", RoomID: "r1", Guest: false, Host: true},
+		{UserID: "g1", DisplayName: "Bob", RoomID: "r1", Guest: true, Host: false},
 	}
 
 	for _, want := range cases {
@@ -169,17 +169,19 @@ func TestVerifyForged(t *testing.T) {
 	}
 }
 
+// flipLastChar corrupts a base64url-encoded signature by flipping a bit
+// in its last decoded byte, then re-encoding. Flipping the *character*
+// instead is not reliable: a base64 group's trailing character can
+// carry unused padding bits (e.g. 'a' and 'b' decode to the same
+// meaningful bits), so a char-level flip can silently produce the
+// exact same signature bytes and defeat the tamper check.
 func flipLastChar(s string) string {
-	if s == "" {
+	decoded, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil || len(decoded) == 0 {
 		return "x"
 	}
-	b := []byte(s)
-	if b[len(b)-1] == 'a' {
-		b[len(b)-1] = 'b'
-	} else {
-		b[len(b)-1] = 'a'
-	}
-	return string(b)
+	decoded[len(decoded)-1] ^= 0x01
+	return base64.RawURLEncoding.EncodeToString(decoded)
 }
 
 // hs512Sign builds a token whose header claims HS512, signed with

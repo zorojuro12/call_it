@@ -88,7 +88,7 @@ func (r *Router) Handle(c *Client, e Envelope) {
 			r.replyError(c, "malformed", "malformed place_wager payload")
 			return
 		}
-		_, err := r.wagers.Place(context.Background(), wager.Request{
+		accepted, err := r.wagers.Place(context.Background(), wager.Request{
 			RoomID:         c.RoomID,
 			UserID:         c.UserID,
 			Outcome:        p.Outcome,
@@ -97,7 +97,14 @@ func (r *Router) Handle(c *Client, e Envelope) {
 		})
 		if err != nil {
 			r.replyServiceError(c, err)
+			return
 		}
+		c.Send(mustEncode(TypeWagerAccepted, WagerAcceptedEvent{
+			RoundID: accepted.RoundID,
+			Outcome: p.Outcome,
+			Amount:  p.Amount,
+			Balance: int64(accepted.Balance),
+		}))
 
 	case TypeResolveRound:
 		var p resolveRoundPayload
@@ -140,6 +147,8 @@ func (r *Router) replyServiceError(c *Client, err error) {
 		r.replyError(c, "invalid_outcome", err.Error())
 	case errors.Is(err, round.ErrNotHost):
 		r.replyError(c, "not_host", err.Error())
+	case errors.Is(err, round.ErrInvalidSpec):
+		r.replyError(c, "invalid_spec", err.Error())
 	case errors.Is(err, round.ErrRoundInProgress):
 		r.replyError(c, "round_in_progress", err.Error())
 	case errors.Is(err, wager.ErrNoActiveRound):

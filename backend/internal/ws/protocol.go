@@ -16,10 +16,11 @@ type Envelope struct {
 }
 
 const (
-	TypeConnected    = "connected"
-	TypePlayerJoined = "player_joined"
-	TypePlayerLeft   = "player_left"
-	TypeError        = "error"
+	TypeConnected     = "connected"
+	TypePlayerJoined  = "player_joined"
+	TypePlayerLeft    = "player_left"
+	TypeWagerAccepted = "wager_accepted"
+	TypeError         = "error"
 )
 
 var ErrMalformed = errors.New("ws: malformed message envelope")
@@ -31,6 +32,7 @@ type ConnectedEvent struct {
 	DisplayName string `json:"display_name"`
 	RoomID      string `json:"room_id"`
 	Guest       bool   `json:"guest"`
+	Host        bool   `json:"host"`
 }
 
 // PresenceEvent announces a join or leave to the room.
@@ -38,6 +40,18 @@ type PresenceEvent struct {
 	UserID      string `json:"user_id"`
 	DisplayName string `json:"display_name"`
 	PlayerCount int    `json:"player_count"`
+}
+
+// WagerAcceptedEvent is a private reply to the placer of a successful
+// wager, carrying the placer's own new balance — never another
+// player's stake. This discloses only the sender's own stake and
+// balance to that sender alone; the room-wide odds_updated broadcast
+// stays pool-totals-only.
+type WagerAcceptedEvent struct {
+	RoundID string `json:"round_id"`
+	Outcome int    `json:"outcome"`
+	Amount  int64  `json:"amount"`
+	Balance int64  `json:"balance"`
 }
 
 // ErrorEvent is a private reply to the sender of a bad message.

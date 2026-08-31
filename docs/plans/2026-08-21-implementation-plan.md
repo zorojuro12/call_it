@@ -495,6 +495,25 @@ is unverifiable without a browser client to prove it against, so it lands
 as 6a's Task 1 rather than a separate micro-phase. It is a network
 surface, so `security-reviewer` runs before 6a closes (`CLAUDE.md`).
 
+**6b, likewise, carries three backend amendments as its Task 1** —
+the same reasoning as 6a's CORS task, applied a phase later: none of the
+three is verifiable without a browser client, so none could be caught
+before 6a put a real socket client in front of the server. `auth.Claims`
+and `ws.ConnectedEvent` gain a `Host bool` claim/field (advisory-for-
+rendering only — `round.Service` still re-checks `rm.HostID` against
+Redis for every host-gated action) so the room page can tell a host from
+a player instead of rendering identically for both; `wager.Accepted`
+gains `RoundID`, and the router now sends a private `wager_accepted`
+reply carrying the placer's own new balance, closing the gap where
+`internal/ws/router.go` computed that balance and threw it away; and
+`round.ErrInvalidSpec` is mapped to the `invalid_spec` error code instead
+of falling through to a generic `internal_error`. Delivered scope:
+`lib/roundState.ts` (a pure reducer, the client-side counterpart of
+`internal/domain`), `lib/countdown.ts`, `lib/audio.ts`, the four gameplay
+components (`OddsBoard`, `WagerPad`, `HostConsole`, `SettlementReveal`),
+and the room page wired to a full round — proven by
+`e2e/round.spec.ts`, two browsers playing a round to settlement.
+
 **Frontend stack fixed here (resolving `CLAUDE.md`'s open question).**
 TypeScript with `strict: true`, the Next.js **App Router**, and Tailwind
 — confirming the assumption under which `.claude/rules/ecc/typescript/`
