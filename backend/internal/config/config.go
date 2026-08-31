@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -35,6 +36,7 @@ type Config struct {
 	JWTSecret      string        // REQUIRED — no default, min 32 bytes
 	JWTTTL         time.Duration // default 2h, valid 1m..24h
 	AllowedOrigins []string      // REQUIRED when Env == "production"; defaults to localhost:3000 otherwise
+	MetricsAddr    string        // optional host:port; empty means the metrics listener is disabled
 }
 
 var validEnvs = map[string]bool{
@@ -133,7 +135,58 @@ func Load(lookup LookupFunc) (Config, error) {
 		cfg.JWTTTL = ttl
 	}
 
+	if err := loadMetricsAddr(&cfg, lookup); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+// loadMetricsAddr parses METRICS_ADDR into cfg.MetricsAddr. Unset or
+// empty leaves it at "", which disables the metrics listener — an
+// unauthenticated latency-metrics endpoint must be opt-in, never
+// on-by-default. Set, it must be a valid host:port with a port in
+// 1-65535; under ENV=production the host must additionally be loopback
+// (see loadMetricsAddrProductionLoopback).
+func loadMetricsAddr(cfg *Config, lookup LookupFunc) error {
+	raw, ok := lookup("METRICS_ADDR")
+	if !ok || raw == "" {
+		return nil
+	}
+
+	host, portStr, err := net.SplitHostPort(raw)
+	if err != nil {
+		return fmt.Errorf("config: METRICS_ADDR %q is not a valid host:port: %w", raw, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("config: METRICS_ADDR %q has a non-numeric port", raw)
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("config: METRICS_ADDR %q port out of valid range 1-65535", raw)
+	}
+
+	if cfg.Env == "production" {
+		if err := requireLoopbackHost(host); err != nil {
+			return fmt.Errorf("config: METRICS_ADDR %q must be loopback in production: %w", raw, err)
+		}
+	}
+
+	cfg.MetricsAddr = raw
+	return nil
+}
+
+// requireLoopbackHost accepts "localhost" literally and otherwise
+// requires host to parse as a loopback IP.
+func requireLoopbackHost(host string) error {
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("host %q is not loopback", host)
+	}
+	return nil
 }
 
 // loadAllowedOrigins parses CORS_ALLOWED_ORIGINS into cfg.AllowedOrigins.

@@ -226,3 +226,93 @@ func TestLoad(t *testing.T) {
 		})
 	}
 }
+
+// lookupFrom builds a LookupFunc over env, with base's JWT_SECRET as a
+// fallback and unset keys forced absent regardless of either map — the
+// same pattern TestLoad uses inline, factored out for the metrics tests.
+func lookupFrom(env map[string]string, unset []string) LookupFunc {
+	base := map[string]string{"JWT_SECRET": validJWTSecret}
+	return func(key string) (string, bool) {
+		for _, u := range unset {
+			if u == key {
+				return "", false
+			}
+		}
+		if v, ok := env[key]; ok {
+			return v, true
+		}
+		v, ok := base[key]
+		return v, ok
+	}
+}
+
+func TestLoadMetricsAddr(t *testing.T) {
+	tests := []struct {
+		name          string
+		env           map[string]string
+		want          string
+		wantErr       bool
+		wantErrSubstr string
+	}{
+		{
+			name: "unset defaults to disabled",
+			env:  map[string]string{},
+			want: "",
+		},
+		{
+			name: "loopback host:port accepted",
+			env:  map[string]string{"METRICS_ADDR": "127.0.0.1:9090"},
+			want: "127.0.0.1:9090",
+		},
+		{
+			name: "localhost accepted",
+			env:  map[string]string{"METRICS_ADDR": "localhost:9090"},
+			want: "localhost:9090",
+		},
+		{
+			name:          "no host, no colon, is rejected",
+			env:           map[string]string{"METRICS_ADDR": "9090"},
+			wantErr:       true,
+			wantErrSubstr: "METRICS_ADDR",
+		},
+		{
+			name:          "non-numeric port is rejected",
+			env:           map[string]string{"METRICS_ADDR": "127.0.0.1:notaport"},
+			wantErr:       true,
+			wantErrSubstr: "METRICS_ADDR",
+		},
+		{
+			name:          "port out of range is rejected",
+			env:           map[string]string{"METRICS_ADDR": "127.0.0.1:99999"},
+			wantErr:       true,
+			wantErrSubstr: "METRICS_ADDR",
+		},
+		{
+			name: "explicitly empty is treated as unset",
+			env:  map[string]string{"METRICS_ADDR": ""},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Load(lookupFrom(tt.env, nil))
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() with env %v: got nil error, want an error", tt.env)
+				}
+				if tt.wantErrSubstr != "" && !strings.Contains(err.Error(), tt.wantErrSubstr) {
+					t.Errorf("Load() with env %v: error %q does not contain %q", tt.env, err.Error(), tt.wantErrSubstr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() with env %v: unexpected error: %v", tt.env, err)
+			}
+			if got.MetricsAddr != tt.want {
+				t.Errorf("Load().MetricsAddr = %q, want %q", got.MetricsAddr, tt.want)
+			}
+		})
+	}
+}
