@@ -179,6 +179,58 @@ literal Gate 1 comparison is confounded by a harness artifact orthogonal
 to what Tasks 2–4 changed**, and the control run demonstrates that
 directly rather than asserting it.
 
+## Phase 7b throughput re-baseline and gap attribution (Task 6)
+
+```bash
+JWT_SECRET=$(openssl rand -hex 32) make loadtest-api &
+k6 run loadtest/rest_throughput.js
+```
+
+Two runs, optimized `bin/api`, fresh process each time, this environment
+(`nproc` reports **16** cores — not the 4 the 7a report assumed; see
+below):
+
+| Metric | Run 1 | Run 2 | 7a (for reference) |
+|---|---|---|---|
+| `http_reqs` rate | 3174.30/s | 3174.24/s | 3174.16/s |
+| `http_req_failed` | 0.00% | 0.00% | 0 failed |
+| `http_req_duration` p99 | 837µs | 725µs | — |
+| `http_req_duration` avg | 363µs | 340µs | — |
+
+**Gate 2 — is the server or the host the binding constraint?** Sampled
+mid-run both times:
+
+| Sample | `bin/api` CPU | `k6` CPU | Load avg (16 cores) | DB containers |
+|---|---|---|---|---|
+| Run 1, t=25s (ramping to 3000) | 26.5% of 1 core | not sampled | 1.36 | each <1% |
+| Run 2, t=40s (at 5000 target) | 46.1% of 1 core | **120%** (>1 core) | 1.76 | each <1% |
+
+Neither `cmd/api` nor Redis/PostgreSQL/Kafka were ever close to
+saturated — at most 46% of a single core out of 16, on a host whose load
+average never exceeded 1.76/16. k6 itself, though, was running **hotter
+than the server it was testing** (120% CPU vs. 46%) while using only 3–6
+of its 200 preallocated VUs — if the server were slow, k6 would need many
+more concurrent VUs blocked waiting on responses; it needed almost none,
+because `http_req_duration` averaged under 400µs the whole run.
+
+**Gate 3 — MISSED, environment-bound, but not the environment 7a named.**
+7a attributed its identical-shaped result to "a 4-core WSL2 VM that also
+hosts Redis, PostgreSQL, and Kafka." That attribution doesn't survive
+this run: this environment has 16 cores, the optimized binary removes
+`go run`'s overhead, and the database containers sit at <1% CPU
+throughout — yet the ceiling reproduced within 0.06/s of 7a's figure
+across three independent runs (7a's, and this phase's two). Holding
+constant while every named variable changed points at k6's own
+`ramping-arrival-rate` executor as the actual ceiling on this host — most
+likely WSL2's syscall/timer characteristics interacting with k6's
+open-model iteration scheduler — not `cmd/api`'s request handling, not
+the database stack, and not raw core count. **Named finding for Phase 7c
+or 8:** measuring the 5,000 req/s target fairly needs either a load
+generator run natively (outside WSL2, or on a dedicated host separate
+from the server under test) or a k6 configuration proven not to bind on
+its own scheduler at this rate — not more `cmd/api` tuning, since nothing
+gathered here points at the server.
+
 ## Server-side figures are primary, k6's are secondary
 
 k6's own client-side timing is measured from wherever k6 runs, which under
