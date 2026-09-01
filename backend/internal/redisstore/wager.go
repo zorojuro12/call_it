@@ -2,9 +2,12 @@ package redisstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 	lua "github.com/zorojuro12/call_it/backend/scripts/lua"
@@ -129,4 +132,69 @@ func toStringSlice(res interface{}) ([]string, error) {
 		out[i] = s
 	}
 	return out, nil
+}
+
+// Preflight is the result of WagerPreflight's one pipelined round trip:
+// the rate-limit decision, the room's current round (empty when it has
+// none), and its player count. Fetching all three earlier than
+// wager.Service.Place used to does not change which rejection wins —
+// only the order Place examines them does.
+type Preflight struct {
+	Decision Decision
+	RoundID  string // "" when the room has no current round
+	Players  int
+}
+
+// WagerPreflight fetches the rate-limit decision, the room's current
+// round, and the player count in one pipelined round trip — the three
+// pre-write reads on wager.Service.Place's happy path that are
+// independent of each other and of place_wager.lua's write. A room with
+// no current round yields RoundID == "" and a nil error: the pipeline's
+// redis.Nil on that leg is an expected state, not a failure. error is
+// returned only for a genuine infrastructure or decode failure.
+func (s *Store) WagerPreflight(ctx context.Context, scope, userID, roomID string, limit int, window time.Duration) (Preflight, error) {
+	member := uuid.NewString()
+
+	pipe := s.client.Pipeline()
+	rlCmd := rateLimitScript.EvalSha(ctx, pipe,
+		[]string{RateLimitKey(scope, userID)},
+		strconv.FormatInt(window.Milliseconds(), 10),
+		strconv.Itoa(limit),
+		member,
+	)
+	roundCmd := pipe.Get(ctx, RoomRoundKey(roomID))
+	playersCmd := pipe.HLen(ctx, RoomWalletsKey(roomID))
+
+	// Exec's own error is not decisive: it is non-nil whenever any
+	// queued command errored, including the expected redis.Nil from Get
+	// on a room with no round. Each leg's own result is read below
+	// instead.
+	_, _ = pipe.Exec(ctx)
+
+	if err := rlCmd.Err(); err != nil {
+		return Preflight{}, fmt.Errorf("redisstore: wager preflight %s:%s: %w", scope, userID, err)
+	}
+	decision, err := decodeRateLimitReply(rlCmd.Val(), scope, userID)
+	if err != nil {
+		return Preflight{}, err
+	}
+
+	roundID := roundCmd.Val()
+	if err := roundCmd.Err(); err != nil {
+		if !errors.Is(err, redis.Nil) {
+			return Preflight{}, fmt.Errorf("redisstore: wager preflight: current round for room %s: %w", roomID, err)
+		}
+		roundID = ""
+	}
+
+	n, err := playersCmd.Result()
+	if err != nil {
+		return Preflight{}, fmt.Errorf("redisstore: wager preflight: player count for room %s: %w", roomID, err)
+	}
+	players := int(n) - 1
+	if players < 0 {
+		players = 0
+	}
+
+	return Preflight{Decision: decision, RoundID: roundID, Players: players}, nil
 }

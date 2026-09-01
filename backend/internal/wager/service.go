@@ -6,7 +6,6 @@ package wager
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,12 +84,12 @@ func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, er
 		}
 	}()
 
-	decision, err := s.store.Allow(ctx, Scope, req.UserID, Limit, Window)
+	pre, err := s.store.WagerPreflight(ctx, Scope, req.UserID, req.RoomID, Limit, Window)
 	if err != nil {
 		return Accepted{}, err
 	}
-	if !decision.Allowed {
-		return Accepted{}, &RateLimitError{RetryAfter: decision.RetryAfter}
+	if !pre.Decision.Allowed {
+		return Accepted{}, &RateLimitError{RetryAfter: pre.Decision.RetryAfter}
 	}
 
 	parsed, err := uuid.Parse(req.IdempotencyKey)
@@ -104,13 +103,9 @@ func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, er
 
 	roundID := req.RoundID
 	if roundID == "" {
-		var err error
-		roundID, err = s.store.CurrentRound(ctx, req.RoomID)
-		if errors.Is(err, redisstore.ErrNotFound) {
+		roundID = pre.RoundID
+		if roundID == "" {
 			return Accepted{}, ErrNoActiveRound
-		}
-		if err != nil {
-			return Accepted{}, err
 		}
 	}
 
@@ -126,11 +121,6 @@ func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, er
 		return Accepted{}, err
 	}
 
-	players, err := s.store.PlayerCount(ctx, req.RoomID)
-	if err != nil {
-		return Accepted{}, err
-	}
-
 	accepted = Accepted{
 		RoundID:     roundID,
 		Balance:     result.Balance,
@@ -138,7 +128,7 @@ func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, er
 		Total:       result.Total,
 		Multipliers: domain.Multipliers(result.Total, result.Pools),
 		Bettors:     result.BettorCount,
-		Players:     players,
+		Players:     pre.Players,
 	}
 
 	// Broadcast after the Lua call succeeds, never before — an
