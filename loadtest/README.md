@@ -109,6 +109,76 @@ from 7a's reported 50ms, but 7a's figure came from only 150 samples where
 this comes from ~6,000 — consistent with the plan's own suspicion that
 7a's number was one or two GC-pause outliers rather than a systemic cost.
 
+## Phase 7b post-tuning measurement (Task 5)
+
+Same procedure as Task 1, same knobs, a freshly started `bin/api` — after
+Tasks 2–4 cut the wager path from five sequential Redis round trips to
+two (one pipelined preflight, then `place_wager.lua`):
+
+```bash
+JWT_SECRET=$(openssl rand -hex 32) make loadtest-api &
+WAGER_TEST_DURATION_S=240 WAGER_PLAYERS=25 k6 run loadtest/wager_latency.js
+curl -s http://127.0.0.1:9090/
+```
+
+| Metric | Task 1 (pre) | Task 5 (post) | Delta |
+|---|---|---|---|
+| `callit_wager_place_ok_count` | 5971 | 5980 | — |
+| `callit_wager_place_ok_p50_ms` | 5 | 5 | unchanged |
+| `callit_wager_place_ok_p99_ms` | 15 | 15 | unchanged (same bucket) |
+| avg latency (`sum_ms`/`count`) | 4.76ms | 2.73ms | **−43%** |
+| `callit_wager_place_err_count` | 4 | 8 | +4 (investigated below) |
+| `callit_ws_sync_p50_ms` / `p99_ms` | 0 / 1 | 0 / 1 | unchanged |
+
+**Verdict, applying the bucket-resolution rule without softening it:**
+`callit_wager_place_ok_p99_ms` rendered `15` both before and after —
+**INCONCLUSIVE-AT-BOUNDARY**, not MET. The instrument proves "≤ 15 ms" on
+both sides of the tuning; the rendered p99 did not move by even one
+bucket. That is itself the finding the plan asked this gate to state
+plainly if it happened: **the 5→2 round-trip reduction was not the
+dominant cost at the tail.** The *average*-case win is real and
+substantial — mean per-wager latency nearly halved (4.76ms → 2.73ms,
+computed from the server's own `sum_ms`/`count`) — but whatever sits at
+p99 (GC pause, goroutine scheduling, or the WSL2 network stack the
+"server-side figures are primary" section below already flags as a
+known fidelity risk) evidently isn't Redis round-trip count. Settling
+which needs finer histogram bucket bounds than the current `[…10, 15,
+20…]` ladder provides — out of this phase's scope, carried to Phase 7c
+or 8.
+
+**The `err_count` increase (4 → 8) does not clear the plan's literal Gate
+1 acceptance bar** ("err_count no higher than Task 1's — a tuning pass
+that traded latency for rejections has not tuned anything"), so it was
+investigated rather than waved through:
+
+- A second same-knobs run (240s/25 players, fresh process) produced
+  `ok_count = 5980` — **bit-for-bit identical** to the first post-tuning
+  run — with `err_count = 20` and `p99 = 10ms` this time. An identical
+  success count across two independent runs, with only the error count
+  and p99 bucket moving, is the signature of a fixed success ceiling
+  plus a noisy tail, not a shifting success/failure split.
+- A control run was added specifically to isolate the tuning from the
+  scenario's own round-cycling: 70s/40 players, chosen so the whole run
+  fits inside one 90s round and **no lock→resolve→reopen transition
+  happens at all**. Result: `err_count = 0`, `ok_count = 2800` — exactly
+  40 × 70, the theoretical maximum with zero rejections.
+
+That control run is conclusive: with the round-transition window removed
+entirely, Tasks 2–4's tuned path rejects nothing. The 4/8/20 error
+counts across the three round-cycling runs are attempts landing in the
+brief locked-or-between-rounds window `wager_latency.js`'s host cycling
+(Task 1, not Task 2–4) opens roughly every 90 seconds — a k6-harness
+artifact, present in Task 1's own baseline too, whose count is sensitive
+to exact timing (a single slow resolve+reopen round trip, e.g. from a GC
+pause, widens that window for one cycle and can multiply the hit count
+for that run alone). Nothing in Tasks 2–4 touches the code paths that
+decide `POOL_LOCKED` or `no_active_round` — only how the preflight values
+reach `wager.Service.Place`, not when a round is considered locked or
+absent. **Conclusion: no correctness regression from the tuning; the
+literal Gate 1 comparison is confounded by a harness artifact orthogonal
+to what Tasks 2–4 changed**, and the control run demonstrates that
+directly rather than asserting it.
+
 ## Server-side figures are primary, k6's are secondary
 
 k6's own client-side timing is measured from wherever k6 runs, which under
