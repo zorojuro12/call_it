@@ -66,6 +66,10 @@ export const options = {
 export function setup() {
   const host = registerUser();
   const room = createRoom(host.token);
+  // A room ID, not per-user data — no player identity, stake, or wager
+  // is on this line. Collected by Task 7's reconciliation gate to know
+  // which room(s) to check after the run.
+  console.log(`RECONCILE_ROOM_ID=${room.roomId}`);
   return { code: room.code, hostToken: room.roomToken };
 }
 

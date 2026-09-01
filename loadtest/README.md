@@ -231,6 +231,59 @@ from the server under test) or a k6 configuration proven not to bind on
 its own scheduler at this rate — not more `cmd/api` tuning, since nothing
 gathered here points at the server.
 
+## Phase 7b reconciliation after a real load run (Task 7)
+
+Closes parent plan §12's last unchecked money-correctness box:
+`internal/ledger/reconcile_test.go` proves
+`redis_wallet(user, room) − opening_stake(user, room) == ledger_balance(user, room)`
+over fixtures it builds itself; `TestReconcileAfterLoad`
+(`backend/internal/ledger/reconcile_after_load_test.go`) proves the same
+identity over state a real k6 run produced — the whole
+socket → Redis → outbox → Kafka → PostgreSQL pipeline, not a fixture.
+
+```bash
+JWT_SECRET=$(openssl rand -hex 32) make loadtest-api &
+make relay &
+POSTGRES_DSN="postgres://callit:callit@localhost:5432/callit?sslmode=disable" make ledger-worker &
+WAGER_TEST_DURATION_S=240 WAGER_PLAYERS=25 k6 run loadtest/wager_latency.js
+# note the RECONCILE_ROOM_ID= line k6 prints from setup(), then:
+cd backend && RECONCILE_ROOM_IDS=<that id> \
+  go test ./internal/ledger/ -run TestReconcileAfterLoad -count=1 -race -v
+```
+
+**Result: PASS**, over the room the run above created — 5,983 wager
+transactions plus 2 settlements (this run's two round-cycle transitions),
+all reconciled: every wallet's `redis − opening == ledger` identity held,
+every transaction balanced (Σdebits == Σcredits), and the wager-transaction
+count matched the wallet-debit-entry count exactly. Well past the plan's
+1,000-wager floor for this to count as evidence under load rather than a
+fixture-scale pass.
+
+**A build-time correction the test's own investigation caught:** the
+plan's spec named the transaction kind `wager_placed`; the actual value
+`internal/ledger/mapping.go` writes is `wager`. Caught before the real
+run by cross-checking a live query's kind breakdown
+(`wager: 5983, settlement: 2`) against the test's own filter — recorded
+here since a plan and the code it describes can drift, and this is what
+checking against the real schema instead of the plan's prose looks like.
+
+**An unrelated environmental failure surfaced and was fixed on the way
+to this result, not part of Tasks 2–4's tuning:** running the full
+`internal/ledger` suite immediately after this load run made
+`TestReconcileSequential`/`Conservation`/`Replay` (fixture-based tests,
+unrelated to this task) time out at their 60s drain deadline. Cause: this
+phase's own load runs (Tasks 1, 5, 6, 7) had pushed roughly 44,000
+messages into the shared `wagers-placed`/`rounds-settled` Kafka topics —
+verified via `kafka-get-offsets.sh` — and each of those tests reads its
+own fresh consumer group from the beginning, so it had to page through
+that entire backlog before reaching its own ~40 fixture events. This is
+purely a local persistent-Kafka artifact from an unusually load-test-heavy
+session; a normal CI run starts Kafka empty and never accumulates it.
+Fix: delete and let the two topics recreate empty
+(`kafka-topics.sh --delete`) — no data of record was touched, since
+PostgreSQL (already reconciled above) is the ledger of record, not the
+Kafka topics. Suite runtime returned to its normal ~118s afterward.
+
 ## Server-side figures are primary, k6's are secondary
 
 k6's own client-side timing is measured from wherever k6 runs, which under

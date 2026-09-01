@@ -1,4 +1,4 @@
-.PHONY: up up-full down test test-unit lint build migrate ledger-worker loadtest loadtest-api \
+.PHONY: up up-full down test test-unit lint build migrate relay ledger-worker loadtest loadtest-api \
         fe-install fe-dev fe-test fe-lint fe-build fe-e2e api-lan fe-dev-lan
 
 # Core services only (Redis, PostgreSQL) — what Phases 0-4 need.
@@ -45,6 +45,13 @@ build:
 # docker-compose.yml's postgres service. `make migrate ARGS=down` reverts it.
 migrate:
 	cd backend && go run ./cmd/migrate $(ARGS)
+
+# Runs the Redis Stream → Kafka outbox relay. Requires REDIS_ADDR/REDIS_DB
+# to match the wallet-mutating cmd/api instance's own (both default to
+# localhost:6379 db 0), and KAFKA_BROKERS to reach the same broker
+# cmd/ledger-worker consumes from.
+relay:
+	cd backend && go run ./cmd/relay
 
 # Runs the Kafka → PostgreSQL ledger writer. Requires POSTGRES_DSN — e.g.
 # postgres://callit:callit@localhost:5432/callit?sslmode=disable. Apply the
