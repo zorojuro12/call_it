@@ -114,19 +114,6 @@ func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, er
 		}
 	}
 
-	// A zero/negative stake, or one exceeding the wagerer's session
-	// balance, is rejected here so it never costs a Redis round trip —
-	// but only when a balance is available to check against. A user
-	// with no wallet in this room falls through to place_wager.lua,
-	// which is the authority on ErrNotInRoom.
-	if balance, err := s.store.Balance(ctx, req.RoomID, req.UserID); err == nil {
-		if err := domain.ValidateStake(req.Amount, balance); err != nil {
-			return Accepted{}, err
-		}
-	} else if !errors.Is(err, redisstore.ErrNotFound) {
-		return Accepted{}, err
-	}
-
 	result, err := s.store.PlaceWager(ctx, redisstore.WagerRequest{
 		RoomID:         req.RoomID,
 		RoundID:        roundID,
