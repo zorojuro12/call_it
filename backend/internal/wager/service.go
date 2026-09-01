@@ -98,6 +98,10 @@ func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, er
 		return Accepted{}, ErrBadIdempotency
 	}
 
+	if err := domain.ValidateStakeAmount(req.Amount); err != nil {
+		return Accepted{}, err
+	}
+
 	roundID := req.RoundID
 	if roundID == "" {
 		var err error

@@ -210,6 +210,31 @@ func TestPlaceRejects(t *testing.T) {
 	}
 }
 
+func TestPlaceRejectsNonPositiveStakeBeforeRoundLookup(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	hostID := testID(t, "host")
+	joined := testID(t, "user")
+	roomID, _ := setupOpenRound(t, store, hostID, 1000, 2, map[string]domain.Tokens{joined: 1000})
+	if err := store.ClearCurrentRound(ctx, roomID); err != nil {
+		t.Fatalf("ClearCurrentRound() = %v, want nil", err)
+	}
+
+	bc := &stubBroadcaster{}
+	svc := NewService(store, bc, nil, nil)
+
+	_, err := svc.Place(ctx, Request{
+		RoomID:         roomID,
+		UserID:         joined,
+		Outcome:        0,
+		Amount:         -100,
+		IdempotencyKey: uuid.NewString(),
+	})
+	if !errors.Is(err, domain.ErrInvalidStake) {
+		t.Fatalf("Place() error = %v, want domain.ErrInvalidStake (stake sign checked before round lookup, even with no open round)", err)
+	}
+}
+
 func TestPlaceIdempotent(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
