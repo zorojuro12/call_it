@@ -1,4 +1,4 @@
-.PHONY: up up-full down test test-unit lint build migrate ledger-worker loadtest \
+.PHONY: up up-full down test test-unit lint build migrate relay ledger-worker loadtest loadtest-api \
         fe-install fe-dev fe-test fe-lint fe-build fe-e2e api-lan fe-dev-lan
 
 # Core services only (Redis, PostgreSQL) — what Phases 0-4 need.
@@ -46,6 +46,13 @@ build:
 migrate:
 	cd backend && go run ./cmd/migrate $(ARGS)
 
+# Runs the Redis Stream → Kafka outbox relay. Requires REDIS_ADDR/REDIS_DB
+# to match the wallet-mutating cmd/api instance's own (both default to
+# localhost:6379 db 0), and KAFKA_BROKERS to reach the same broker
+# cmd/ledger-worker consumes from.
+relay:
+	cd backend && go run ./cmd/relay
+
 # Runs the Kafka → PostgreSQL ledger writer. Requires POSTGRES_DSN — e.g.
 # postgres://callit:callit@localhost:5432/callit?sslmode=disable. Apply the
 # schema with `make migrate` first; this binary never migrates.
@@ -61,6 +68,16 @@ loadtest:
 	@command -v k6 >/dev/null 2>&1 || { \
 	  echo "k6 not found. Install it user-locally — see loadtest/README.md"; exit 1; }
 	k6 run loadtest/$(SCENARIO).js
+
+# Builds an optimized cmd/api binary and runs it — `go run` builds
+# unoptimized with disabled inlining, a confound Phase 7a's own baseline
+# report flagged. Every load run in Phase 7b+ uses this, never `go run
+# ./cmd/api`. Requires JWT_SECRET from the environment (cmd/api fails fast
+# without it); METRICS_ADDR defaults to the loopback listener load runs
+# scrape.
+loadtest-api:
+	cd backend && go build -o bin/api ./cmd/api
+	cd backend && METRICS_ADDR=$${METRICS_ADDR:-127.0.0.1:9090} ./bin/api
 
 fe-install:
 	cd frontend && npm ci

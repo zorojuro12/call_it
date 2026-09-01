@@ -39,6 +39,14 @@ func (s *Store) Allow(ctx context.Context, scope, id string, limit int, window t
 		return Decision{}, fmt.Errorf("redisstore: rate limit %s:%s: %w", scope, id, err)
 	}
 
+	return decodeRateLimitReply(res, scope, id)
+}
+
+// decodeRateLimitReply decodes rate_limit.lua's reply into a Decision.
+// Shared by Allow (a standalone EVALSHA) and WagerPreflight (the same
+// script queued inside a pipeline) — one limiter, one decoder, never two
+// copies of this parsing.
+func decodeRateLimitReply(res interface{}, scope, id string) (Decision, error) {
 	reply, err := toStringSlice(res)
 	if err != nil {
 		return Decision{}, fmt.Errorf("redisstore: rate limit %s:%s: %w", scope, id, err)

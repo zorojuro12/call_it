@@ -66,6 +66,10 @@ export const options = {
 export function setup() {
   const host = registerUser();
   const room = createRoom(host.token);
+  // A room ID, not per-user data — no player identity, stake, or wager
+  // is on this line. Collected by Task 7's reconciliation gate to know
+  // which room(s) to check after the run.
+  console.log(`RECONCILE_ROOM_ID=${room.roomId}`);
   return { code: room.code, hostToken: room.roomToken };
 }
 
@@ -85,23 +89,53 @@ function uuidv4() {
   );
 }
 
-// hostVU opens one round wide enough to cover the whole scenario, then
-// stays connected (never wagering) so the room isn't reaped mid-run.
+// round.Service.Open (backend/internal/round/service.go) caps a round's
+// lock window at MaxLockIn = 120s and rejects anything longer with
+// ErrInvalidSpec — a single round cannot cover a scenario run longer
+// than that. ROUND_LOCK_IN_MS stays comfortably under the cap regardless
+// of TEST_DURATION_S.
+const ROUND_LOCK_IN_MS = 90 * 1000;
+
+// hostVU cycles rounds for the whole scenario: open, resolve as soon as
+// it locks, open the next one — never wagering itself. playerVU does not
+// track round identity; a place_wager between rounds gets no_active_round
+// or pool_locked and retries a second later (its existing error-handling
+// path), so it picks up each new round with no extra coordination.
 export function hostVU(data) {
   return new Promise((resolve) => {
     const ws = new WebSocket(`${WS_BASE}/api/v1/socket?token=${data.hostToken}`);
 
-    ws.onopen = () => {
+    function openRound() {
       ws.send(
         JSON.stringify({
           type: 'create_round',
           data: {
             question: 'load test round',
             outcomes: ['Yes', 'No'],
-            lock_in_ms: (SCENARIO_TIMEOUT_S + 10) * 1000,
+            lock_in_ms: ROUND_LOCK_IN_MS,
           },
         })
       );
+    }
+
+    ws.onopen = () => openRound();
+
+    ws.onmessage = (msg) => {
+      let env;
+      try {
+        env = JSON.parse(msg.data);
+      } catch (e) {
+        return;
+      }
+      if (env.type === 'round_locked') {
+        ws.send(
+          JSON.stringify({ type: 'resolve_round', data: { winning_outcome: 0 } })
+        );
+        return;
+      }
+      if (env.type === 'round_resolved') {
+        openRound();
+      }
     };
     ws.onerror = () => resolve();
     ws.onclose = () => resolve();

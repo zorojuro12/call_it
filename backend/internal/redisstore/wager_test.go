@@ -546,3 +546,183 @@ func TestPlaceWager_GuardPrecedence(t *testing.T) {
 		}
 	})
 }
+
+func TestPlaceWagerRejectsNonPositiveStake(t *testing.T) {
+	tests := []struct {
+		name   string
+		amount domain.Tokens
+	}{
+		{name: "negative stake", amount: -100},
+		{name: "zero stake", amount: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestStore(t)
+			ctx := context.Background()
+			lockAt := time.Now().Add(30 * time.Second)
+			roomID, roundID := setupWagerRoom(t, store, "host-1", 500, 2, lockAt, map[string]domain.Tokens{"player-1": 1000})
+
+			before := snapshotWager(t, store, roomID, roundID, "player-1")
+			idemKey := testID(t, "idem")
+
+			_, err := store.PlaceWager(ctx, WagerRequest{
+				RoomID: roomID, RoundID: roundID, UserID: "player-1",
+				Outcome: 0, Amount: tt.amount, IdempotencyKey: idemKey,
+			})
+			if !errors.Is(err, domain.ErrInvalidStake) {
+				t.Fatalf("PlaceWager() error = %v, want domain.ErrInvalidStake", err)
+			}
+			assertNoMutation(t, store, roomID, roundID, "player-1", before)
+
+			exists, err := store.client.Exists(ctx, IdemKey(idemKey)).Result()
+			if err != nil {
+				t.Fatalf("EXISTS idem key: %v", err)
+			}
+			if exists != 0 {
+				t.Errorf("idem key exists after a rejected wager, want absent (a rejection caches no reply)")
+			}
+		})
+	}
+}
+
+// countingHook counts one Redis round trip per pipeline execution and
+// per standalone command, so a test can assert exactly how many round
+// trips a call made.
+type countingHook struct {
+	count int
+}
+
+func (h *countingHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (h *countingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		h.count++
+		return next(ctx, cmd)
+	}
+}
+
+func (h *countingHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		h.count++
+		return next(ctx, cmds)
+	}
+}
+
+func TestWagerPreflight(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	t.Run("values", func(t *testing.T) {
+		roomID := testID(t, "room")
+		if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host-1", 500); err != nil {
+			t.Fatalf("CreateRoom() = %v, want nil", err)
+		}
+		for _, u := range []string{"host-1", "player-1", "player-2"} {
+			if _, err := store.JoinRoom(ctx, roomID, u, 500); err != nil {
+				t.Fatalf("JoinRoom(%s) = %v, want nil", u, err)
+			}
+		}
+		if err := store.client.Set(ctx, RoomRoundKey(roomID), "round-abc", 0).Err(); err != nil {
+			t.Fatalf("SET current round: %v", err)
+		}
+
+		p, err := store.WagerPreflight(ctx, "wager", "player-1", roomID, 20, 10*time.Second)
+		if err != nil {
+			t.Fatalf("WagerPreflight() = %v, want nil", err)
+		}
+		if !p.Decision.Allowed {
+			t.Errorf("Decision.Allowed = false, want true")
+		}
+		if p.Decision.Remaining != 19 {
+			t.Errorf("Decision.Remaining = %d, want 19", p.Decision.Remaining)
+		}
+		if p.RoundID != "round-abc" {
+			t.Errorf("RoundID = %q, want %q", p.RoundID, "round-abc")
+		}
+		if p.Players != 2 {
+			t.Errorf("Players = %d, want 2 (three wallets minus the host)", p.Players)
+		}
+	})
+
+	t.Run("missing round", func(t *testing.T) {
+		roomID := testID(t, "room")
+		if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host-2", 500); err != nil {
+			t.Fatalf("CreateRoom() = %v, want nil", err)
+		}
+		if _, err := store.JoinRoom(ctx, roomID, "player-3", 500); err != nil {
+			t.Fatalf("JoinRoom() = %v, want nil", err)
+		}
+
+		p, err := store.WagerPreflight(ctx, "wager", "player-3", roomID, 20, 10*time.Second)
+		if err != nil {
+			t.Fatalf("WagerPreflight() = %v, want nil (a missing round is an expected state, not a failure)", err)
+		}
+		if p.RoundID != "" {
+			t.Errorf("RoundID = %q, want empty", p.RoundID)
+		}
+	})
+
+	t.Run("survives a script-cache flush", func(t *testing.T) {
+		roomID := testID(t, "room")
+		if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host-4", 500); err != nil {
+			t.Fatalf("CreateRoom() = %v, want nil", err)
+		}
+		if _, err := store.JoinRoom(ctx, roomID, "host-4", 500); err != nil {
+			t.Fatalf("JoinRoom(host) = %v, want nil", err)
+		}
+		if _, err := store.JoinRoom(ctx, roomID, "player-5", 500); err != nil {
+			t.Fatalf("JoinRoom() = %v, want nil", err)
+		}
+		if _, err := store.JoinRoom(ctx, roomID, "player-6", 500); err != nil {
+			t.Fatalf("JoinRoom() = %v, want nil", err)
+		}
+		if err := store.client.Set(ctx, RoomRoundKey(roomID), "round-abc", 0).Err(); err != nil {
+			t.Fatalf("SET current round: %v", err)
+		}
+
+		if _, err := store.WagerPreflight(ctx, "wager", "player-5", roomID, 20, 10*time.Second); err != nil {
+			t.Fatalf("WagerPreflight() first call = %v, want nil", err)
+		}
+
+		if err := store.client.ScriptFlush(ctx).Err(); err != nil {
+			t.Fatalf("SCRIPT FLUSH: %v", err)
+		}
+
+		p, err := store.WagerPreflight(ctx, "wager", "player-6", roomID, 20, 10*time.Second)
+		if err != nil {
+			t.Fatalf("WagerPreflight() after SCRIPT FLUSH = %v, want nil", err)
+		}
+		if !p.Decision.Allowed {
+			t.Errorf("Decision.Allowed = false, want true")
+		}
+		if p.RoundID != "round-abc" {
+			t.Errorf("RoundID = %q, want %q", p.RoundID, "round-abc")
+		}
+		if p.Players != 2 {
+			t.Errorf("Players = %d, want 2", p.Players)
+		}
+	})
+
+	t.Run("one round trip", func(t *testing.T) {
+		roomID := testID(t, "room")
+		if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host-3", 500); err != nil {
+			t.Fatalf("CreateRoom() = %v, want nil", err)
+		}
+		if _, err := store.JoinRoom(ctx, roomID, "player-4", 500); err != nil {
+			t.Fatalf("JoinRoom() = %v, want nil", err)
+		}
+
+		hook := &countingHook{}
+		store.client.AddHook(hook)
+
+		if _, err := store.WagerPreflight(ctx, "wager", "player-4", roomID, 20, 10*time.Second); err != nil {
+			t.Fatalf("WagerPreflight() = %v, want nil", err)
+		}
+		if hook.count != 1 {
+			t.Errorf("round trips = %d, want exactly 1", hook.count)
+		}
+	})
+}

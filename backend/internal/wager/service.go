@@ -6,7 +6,6 @@ package wager
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,12 +84,12 @@ func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, er
 		}
 	}()
 
-	decision, err := s.store.Allow(ctx, Scope, req.UserID, Limit, Window)
+	pre, err := s.store.WagerPreflight(ctx, Scope, req.UserID, req.RoomID, Limit, Window)
 	if err != nil {
 		return Accepted{}, err
 	}
-	if !decision.Allowed {
-		return Accepted{}, &RateLimitError{RetryAfter: decision.RetryAfter}
+	if !pre.Decision.Allowed {
+		return Accepted{}, &RateLimitError{RetryAfter: pre.Decision.RetryAfter}
 	}
 
 	parsed, err := uuid.Parse(req.IdempotencyKey)
@@ -98,29 +97,16 @@ func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, er
 		return Accepted{}, ErrBadIdempotency
 	}
 
-	roundID := req.RoundID
-	if roundID == "" {
-		var err error
-		roundID, err = s.store.CurrentRound(ctx, req.RoomID)
-		if errors.Is(err, redisstore.ErrNotFound) {
-			return Accepted{}, ErrNoActiveRound
-		}
-		if err != nil {
-			return Accepted{}, err
-		}
+	if err := domain.ValidateStakeAmount(req.Amount); err != nil {
+		return Accepted{}, err
 	}
 
-	// A zero/negative stake, or one exceeding the wagerer's session
-	// balance, is rejected here so it never costs a Redis round trip —
-	// but only when a balance is available to check against. A user
-	// with no wallet in this room falls through to place_wager.lua,
-	// which is the authority on ErrNotInRoom.
-	if balance, err := s.store.Balance(ctx, req.RoomID, req.UserID); err == nil {
-		if err := domain.ValidateStake(req.Amount, balance); err != nil {
-			return Accepted{}, err
+	roundID := req.RoundID
+	if roundID == "" {
+		roundID = pre.RoundID
+		if roundID == "" {
+			return Accepted{}, ErrNoActiveRound
 		}
-	} else if !errors.Is(err, redisstore.ErrNotFound) {
-		return Accepted{}, err
 	}
 
 	result, err := s.store.PlaceWager(ctx, redisstore.WagerRequest{
@@ -135,11 +121,6 @@ func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, er
 		return Accepted{}, err
 	}
 
-	players, err := s.store.PlayerCount(ctx, req.RoomID)
-	if err != nil {
-		return Accepted{}, err
-	}
-
 	accepted = Accepted{
 		RoundID:     roundID,
 		Balance:     result.Balance,
@@ -147,7 +128,7 @@ func (s *Service) Place(ctx context.Context, req Request) (accepted Accepted, er
 		Total:       result.Total,
 		Multipliers: domain.Multipliers(result.Total, result.Pools),
 		Bettors:     result.BettorCount,
-		Players:     players,
+		Players:     pre.Players,
 	}
 
 	// Broadcast after the Lua call succeeds, never before — an

@@ -69,6 +69,8 @@ func mapSettleStatus(reply []string) error {
 func mapWagerStatus(reply []string) error {
 	code := reply[0]
 	switch code {
+	case "INVALID_STAKE":
+		return domain.ErrInvalidStake
 	case "POOL_LOCKED":
 		return ErrPoolLocked
 	case "INVALID_OUTCOME":

@@ -99,8 +99,12 @@ WebSocket wager-latency scenario (`loadtest/wager_latency.js`) instead
 (Phase 7a). Both need k6 on `PATH` (external binary, user-local install —
 `loadtest/README.md` — deliberately not a Go dependency) and a live stack
 (`make up` plus a running `cmd/api`, `METRICS_ADDR` set so the
-server-side histograms are reachable). `make migrate` and `make ledger-worker`
-are real as of Phase 5a/5b
+server-side histograms are reachable). `make loadtest-api` (Phase 7b)
+builds `cmd/api` with `go build` and runs the optimized binary with
+`METRICS_ADDR` defaulted to `127.0.0.1:9090` — every load run against a
+p99 or throughput target uses this, never `go run ./cmd/api`, whose
+disabled inlining confounded 7a's own baseline. `make migrate`, `make relay`,
+and `make ledger-worker` are real as of Phase 5a/5b/7b
 respectively.
 
 CI (`.github/workflows/ci.yml`) runs `go vet`, `gofmt -l` (fails on any
@@ -192,6 +196,17 @@ Gotchas).
   Amendment A1). Reimplementing the payout formula in Lua would create a
   second, less-tested copy that has to agree with the first exactly —
   don't add one.
+- **`place_wager.lua` rejects a non-positive stake itself (Phase 7b).**
+  Its balance guard (`tonumber(existingBalance) < amount`) is passed by a
+  negative `amount`, after which `HINCRBY walletsKey userID -amount`
+  **credits** the wallet instead of debiting it — the amount's sign
+  reaching `HINCRBY` unchecked mints tokens. No caller-side check may be
+  treated as this guard: `wager.Service.Place`'s old balance pre-check
+  was the only thing standing between the write path and this hole until
+  the script gained its own `INVALID_STAKE` rejection, and that pre-check
+  is gone now (Task 3 removed it as the redundant round trip it was).
+  Any future caller of `Store.PlaceWager` must be able to rely on the
+  script alone.
 - **`internal/redisstore/keys.go` is the only place a Redis key may be
   constructed.** Every other file in the package calls its builders
   (`RoomKey`, `RoundWagersKey`, ...) rather than concatenating a key by

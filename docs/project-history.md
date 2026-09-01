@@ -382,6 +382,106 @@ One HIGH found and fixed before merge; everything else confirmed clean.
 
 ---
 
+### Phase 7b — wager-path tuning (5→2 Redis round trips), throughput re-baseline, post-load reconciliation
+
+Full baseline: [`docs/reports/2026-08-31-phase-7b-baseline.md`](reports/2026-08-31-phase-7b-baseline.md).
+
+- **`place_wager.lua` had no stake-sign guard — closed before the code
+  that was accidentally hiding it was removed.** The script's only
+  balance check, `tonumber(existingBalance) < amount`, is passed by a
+  negative `amount` (`1000 < -100` is false), after which
+  `HINCRBY walletsKey userID -amount` **credits** the wallet instead of
+  debiting it, drives the pool and total negative, and still emits a
+  real outbox event `cmd/relay`/`cmd/ledger-worker` would carry into the
+  ledger. Verified empirically against live Redis during planning. The
+  only thing standing between the write path and this hole was
+  `wager.Service.Place`'s Go-side balance pre-check — precisely the read
+  this phase's tuning deletes for performance, so the guard landed in
+  `place_wager.lua` itself (Task 2) strictly before the pre-check's
+  removal (Task 3). Latent, never live: the sole caller chain
+  (`ws.Router` → `wager.Service.Place` → `Store.PlaceWager`) always ran
+  the pre-check first.
+- **Five sequential Redis round trips on the wager-placement path became
+  two.** `wager.Service.Place` used to call `Allow`, `CurrentRound`,
+  `Balance`, `PlaceWager`, and `PlayerCount` in sequence; `Balance` was
+  redundant with a check `place_wager.lua` already performs (Task 3), and
+  `Allow`/`CurrentRound`/`PlayerCount` are mutually independent and
+  independent of the write, so they now travel in one pipelined
+  `Store.WagerPreflight` call (Task 4) ahead of the atomic Lua write. A
+  pipelined `EVALSHA` cannot fall back to `EVAL` on a cache miss the way
+  `Script.Run` does outside a pipeline — verified directly against
+  go-redis v9.18.0 (compiles, then fails `NOSCRIPT` after a
+  restart/`SCRIPT FLUSH`, silently, in production only) — so
+  `WagerPreflight` preloads the script in `Store.New` and reloads-and-
+  retries once on a `NOSCRIPT` miss rather than relying on the
+  general-purpose helper.
+- **Measured before/after, ~6,000 samples each, optimized `bin/api`
+  build:** p50 latency nearly halved (4.76ms → 2.73ms), but the rendered
+  p99 stayed at `15` both before and after — proving "≤ 15 ms," never
+  "< 15 ms" per the bucket-resolution rule, so this is
+  **INCONCLUSIVE-AT-BOUNDARY, not MET**. Most of 7a's reported 50ms MISS
+  turned out to be measurement noise (150 samples, an unoptimized `go
+  run` build) rather than a real cost — the optimized-binary re-baseline
+  alone dropped it to 15ms before Tasks 2–4 changed anything.
+- **Throughput re-attributed, still MISSED.** 7a blamed a 4-core WSL2 VM
+  shared with the database stack; re-run on this environment (16 cores,
+  optimized binary, database containers idle at <1% CPU) reproduced the
+  identical ~3,174 req/s ceiling within 0.06 req/s of 7a's figure twice.
+  Mid-run sampling found k6 itself running hotter (120% CPU) than the
+  server under test (26–46% of one core), using only 3–6 of 200
+  preallocated VUs — the load generator's own scheduler is the binding
+  constraint on this host, not `cmd/api`, the database stack, or core
+  count.
+- **The §12 reconciliation box is now checked.** `TestReconcileAfterLoad`
+  (`backend/internal/ledger/reconcile_after_load_test.go`) proved
+  `redis_wallet − opening_stake == ledger_balance` over a real 240s/25-
+  player k6 run — 5,983 wagers plus 2 settlements, every transaction
+  balanced, wager-transaction count matching wallet-debit-entry count
+  exactly. Gated on `RECONCILE_ROOM_IDS`: fails (never skips) once set,
+  per CLAUDE.md's "fail rather than skip" rule; skips only when unset,
+  meaning "no load run has happened here."
+- **Two issues this phase's own load testing caused, not code defects,
+  both fixed before closing:** the load-test scenario's host originally
+  opened one round sized to the whole run duration, silently exceeding
+  `round.Service.Open`'s 120s `MaxLockIn` past ~90s with no visible
+  error (fixed by cycling rounds instead); and this phase's repeated
+  multi-thousand-wager load runs pushed ~44,000 messages into the shared
+  `wagers-placed`/`rounds-settled` Kafka topics, causing unrelated
+  fixture-based reconciliation tests to time out on consumer-group
+  backlog (fixed by deleting the two topics and letting them recreate
+  empty — no data of record touched, since PostgreSQL is the ledger of
+  record).
+
+**Security review: clean, nothing deferred.** Run against `dev...HEAD`
+per CLAUDE.md's requirement before closing a phase touching money
+movement — no CRITICAL, HIGH, MEDIUM, or LOW findings.
+- The `place_wager.lua` sign guard sits after the idempotency-cache
+  short-circuit (a replayed key still returns its cached reply verbatim)
+  but before every stateful read/write, so a negative amount can no
+  longer reach `existingBalance < amount` or `HINCRBY` — confirmed
+  against `TestPlaceWagerRejectsNonPositiveStake`'s no-mutation and
+  no-idempotency-key-written assertions.
+- Removing the Go-side pre-check did not remove the sign check itself —
+  `domain.ValidateStakeAmount` still runs before any Redis round trip;
+  only the redundant `store.Balance` read was cut, and `place_wager.lua`
+  was already the documented balance authority.
+- `WagerPreflight`'s three pipelined reads (rate limit, current round,
+  player count) can at worst feed the authoritative `place_wager.lua`
+  call a stale value, which the script independently re-validates and
+  rejects — never a bypass, since the write stays a separate atomic call.
+  The NOSCRIPT preload-and-retry-once path re-runs the whole pipeline
+  after `Load()`, so a first-attempt NOSCRIPT (script body never
+  executed) cannot double-consume the rate-limit window.
+- `reconcile_after_load_test.go`'s queries are read-only; its
+  `POSTGRES_DSN`/`REDIS_ADDR` defaults are the same documented local-dev
+  values used elsewhere in this repo, not production secrets; its skip
+  semantics only skip when `RECONCILE_ROOM_IDS` is unset, matching
+  `internal/ledger`'s fail-rather-than-skip convention once it's set.
+- `wager_latency.js`'s new `RECONCILE_ROOM_ID=` line prints only a room
+  UUID — no player identity, stake, or wager data.
+
+---
+
 ## Coverage notes
 
 **Don't keep a coverage table here or in `CLAUDE.md` — it goes stale every
