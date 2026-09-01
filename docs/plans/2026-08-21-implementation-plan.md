@@ -428,7 +428,7 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 6a | **Frontend shell** ✅ | Next.js/TypeScript scaffold, typed REST + WebSocket clients, register/login, room creation and join-by-code, live presence roster — in a room and connected, no gameplay yet. Also the backend's browser-origin admission (CORS + WS `CheckOrigin`), without which no browser can reach the API at all | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
 | 6b | **Gameplay UI** ✅ | Host console (open/resolve round), participant wager pad, live odds, lockout countdown, aggregate bettors counter, settlement reveal, Web Audio feedback | 6a | None new |
 | 7a | **Instrumentation + load harness** ✅ | Go toolchain raise off EOL 1.22.10, `internal/metrics` server-side latency histograms on the wager and broadcast paths, real k6 scripts behind `make loadtest`, and a recorded baseline of measured p99 and throughput against spec §7's SLAs | 5b, 6b | None new — spec already names k6 directly |
-| 7b | **Tuning + reconciliation under load** | Acts on 7a's two MISSED targets: profile and tune the wager-placement path (five sequential Redis round trips today) against the p99 < 15 ms target, re-baseline throughput on an optimized `go build` binary and either close the 5,000 rps gap or record this environment's ceiling with evidence, and re-run the Redis↔PostgreSQL reconciliation after a real k6 load run (closes §12's last unchecked money-correctness box) | 7a | None new |
+| 7b | **Tuning + reconciliation under load** ✅ | Acts on 7a's two MISSED targets: profile and tune the wager-placement path (five sequential Redis round trips today) against the p99 < 15 ms target, re-baseline throughput on an optimized `go build` binary and either close the 5,000 rps gap or record this environment's ceiling with evidence, and re-run the Redis↔PostgreSQL reconciliation after a real k6 load run (closes §12's last unchecked money-correctness box) | 7a | None new |
 | 7c | **Security debt + docs** | The three security items open by design (login timing, reconnect grace window, `RoundSettled.Payouts` length cap), and the README with an architecture diagram | 7b | None new |
 | 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7c | Decide when unblocked |
 
@@ -732,6 +732,6 @@ reliably take longer than they appear.
 
 - [x] Phases 0–4 complete, producing an end-to-end playable round — `internal/ws.TestEndToEndRound` (Phase 4b Task 10 CP1) is the evidence: a host and two players register/join over REST, open a round, wager, lock, and resolve over the real socket transport, with token conservation (`wallets + dust == combined opening stakes`) asserted at the end.
 - [ ] Concurrency suite proves zero double-spend under contention
-- [ ] Redis↔PostgreSQL reconciliation test passes after a load run — belongs to Phase 7b, not 7a; see `docs/reports/2026-08-31-phase-7a-baseline.md` for 7a's load numbers this re-run will act on
+- [x] Redis↔PostgreSQL reconciliation test passes after a load run — `TestReconcileAfterLoad` (`backend/internal/ledger/reconcile_after_load_test.go`), proven over 5,983 wagers a real k6 run produced; see `docs/reports/2026-08-31-phase-7b-baseline.md`
 - [ ] Test coverage meets the project's 80% minimum
 - [ ] Security review run against the auth and wager-placement paths
