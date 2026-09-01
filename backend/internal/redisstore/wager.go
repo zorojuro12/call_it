@@ -145,6 +145,31 @@ type Preflight struct {
 	Players  int
 }
 
+// runWagerPreflightPipeline queues and executes the three-command
+// pipeline, returning each command unread — the caller decides how to
+// treat a NOSCRIPT on the rate-limit leg before decoding anything.
+func (s *Store) runWagerPreflightPipeline(ctx context.Context, scope, userID, roomID string, limit int, window time.Duration) (rlCmd *redis.Cmd, roundCmd *redis.StringCmd, playersCmd *redis.IntCmd) {
+	member := uuid.NewString()
+
+	pipe := s.client.Pipeline()
+	rlCmd = rateLimitScript.EvalSha(ctx, pipe,
+		[]string{RateLimitKey(scope, userID)},
+		strconv.FormatInt(window.Milliseconds(), 10),
+		strconv.Itoa(limit),
+		member,
+	)
+	roundCmd = pipe.Get(ctx, RoomRoundKey(roomID))
+	playersCmd = pipe.HLen(ctx, RoomWalletsKey(roomID))
+
+	// Exec's own error is not decisive: it is non-nil whenever any
+	// queued command errored, including the expected redis.Nil from Get
+	// on a room with no round. Each leg's own result is read by the
+	// caller instead.
+	_, _ = pipe.Exec(ctx)
+
+	return rlCmd, roundCmd, playersCmd
+}
+
 // WagerPreflight fetches the rate-limit decision, the room's current
 // round, and the player count in one pipelined round trip — the three
 // pre-write reads on wager.Service.Place's happy path that are
@@ -153,23 +178,22 @@ type Preflight struct {
 // redis.Nil on that leg is an expected state, not a failure. error is
 // returned only for a genuine infrastructure or decode failure.
 func (s *Store) WagerPreflight(ctx context.Context, scope, userID, roomID string, limit int, window time.Duration) (Preflight, error) {
-	member := uuid.NewString()
+	rlCmd, roundCmd, playersCmd := s.runWagerPreflightPipeline(ctx, scope, userID, roomID, limit, window)
 
-	pipe := s.client.Pipeline()
-	rlCmd := rateLimitScript.EvalSha(ctx, pipe,
-		[]string{RateLimitKey(scope, userID)},
-		strconv.FormatInt(window.Milliseconds(), 10),
-		strconv.Itoa(limit),
-		member,
-	)
-	roundCmd := pipe.Get(ctx, RoomRoundKey(roomID))
-	playersCmd := pipe.HLen(ctx, RoomWalletsKey(roomID))
-
-	// Exec's own error is not decisive: it is non-nil whenever any
-	// queued command errored, including the expected redis.Nil from Get
-	// on a room with no round. Each leg's own result is read below
-	// instead.
-	_, _ = pipe.Exec(ctx)
+	// A pipelined EVALSHA cannot fall back to EVAL the way Script.Run
+	// does outside a pipeline (see the trap this method's package
+	// comment references) — nothing has executed at queue time, so
+	// Script.Run's own NOSCRIPT check never fires. Reload the script and
+	// re-run the whole pipeline exactly once; a second NOSCRIPT is
+	// returned as an error rather than retried, since a loop here would
+	// hide a genuine fault instead of just closing the restart/flush
+	// race this exists for.
+	if redis.HasErrorPrefix(rlCmd.Err(), "NOSCRIPT") {
+		if _, err := rateLimitScript.Load(ctx, s.client).Result(); err != nil {
+			return Preflight{}, fmt.Errorf("redisstore: wager preflight %s:%s: reload rate_limit.lua: %w", scope, userID, err)
+		}
+		rlCmd, roundCmd, playersCmd = s.runWagerPreflightPipeline(ctx, scope, userID, roomID, limit, window)
+	}
 
 	if err := rlCmd.Err(); err != nil {
 		return Preflight{}, fmt.Errorf("redisstore: wager preflight %s:%s: %w", scope, userID, err)

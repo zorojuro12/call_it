@@ -665,6 +665,47 @@ func TestWagerPreflight(t *testing.T) {
 		}
 	})
 
+	t.Run("survives a script-cache flush", func(t *testing.T) {
+		roomID := testID(t, "room")
+		if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host-4", 500); err != nil {
+			t.Fatalf("CreateRoom() = %v, want nil", err)
+		}
+		if _, err := store.JoinRoom(ctx, roomID, "host-4", 500); err != nil {
+			t.Fatalf("JoinRoom(host) = %v, want nil", err)
+		}
+		if _, err := store.JoinRoom(ctx, roomID, "player-5", 500); err != nil {
+			t.Fatalf("JoinRoom() = %v, want nil", err)
+		}
+		if _, err := store.JoinRoom(ctx, roomID, "player-6", 500); err != nil {
+			t.Fatalf("JoinRoom() = %v, want nil", err)
+		}
+		if err := store.client.Set(ctx, RoomRoundKey(roomID), "round-abc", 0).Err(); err != nil {
+			t.Fatalf("SET current round: %v", err)
+		}
+
+		if _, err := store.WagerPreflight(ctx, "wager", "player-5", roomID, 20, 10*time.Second); err != nil {
+			t.Fatalf("WagerPreflight() first call = %v, want nil", err)
+		}
+
+		if err := store.client.ScriptFlush(ctx).Err(); err != nil {
+			t.Fatalf("SCRIPT FLUSH: %v", err)
+		}
+
+		p, err := store.WagerPreflight(ctx, "wager", "player-6", roomID, 20, 10*time.Second)
+		if err != nil {
+			t.Fatalf("WagerPreflight() after SCRIPT FLUSH = %v, want nil", err)
+		}
+		if !p.Decision.Allowed {
+			t.Errorf("Decision.Allowed = false, want true")
+		}
+		if p.RoundID != "round-abc" {
+			t.Errorf("RoundID = %q, want %q", p.RoundID, "round-abc")
+		}
+		if p.Players != 2 {
+			t.Errorf("Players = %d, want 2", p.Players)
+		}
+	})
+
 	t.Run("one round trip", func(t *testing.T) {
 		roomID := testID(t, "room")
 		if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host-3", 500); err != nil {
