@@ -546,3 +546,42 @@ func TestPlaceWager_GuardPrecedence(t *testing.T) {
 		}
 	})
 }
+
+func TestPlaceWagerRejectsNonPositiveStake(t *testing.T) {
+	tests := []struct {
+		name   string
+		amount domain.Tokens
+	}{
+		{name: "negative stake", amount: -100},
+		{name: "zero stake", amount: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestStore(t)
+			ctx := context.Background()
+			lockAt := time.Now().Add(30 * time.Second)
+			roomID, roundID := setupWagerRoom(t, store, "host-1", 500, 2, lockAt, map[string]domain.Tokens{"player-1": 1000})
+
+			before := snapshotWager(t, store, roomID, roundID, "player-1")
+			idemKey := testID(t, "idem")
+
+			_, err := store.PlaceWager(ctx, WagerRequest{
+				RoomID: roomID, RoundID: roundID, UserID: "player-1",
+				Outcome: 0, Amount: tt.amount, IdempotencyKey: idemKey,
+			})
+			if !errors.Is(err, domain.ErrInvalidStake) {
+				t.Fatalf("PlaceWager() error = %v, want domain.ErrInvalidStake", err)
+			}
+			assertNoMutation(t, store, roomID, roundID, "player-1", before)
+
+			exists, err := store.client.Exists(ctx, IdemKey(idemKey)).Result()
+			if err != nil {
+				t.Fatalf("EXISTS idem key: %v", err)
+			}
+			if exists != 0 {
+				t.Errorf("idem key exists after a rejected wager, want absent (a rejection caches no reply)")
+			}
+		})
+	}
+}
