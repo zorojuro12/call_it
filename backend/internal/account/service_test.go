@@ -3,12 +3,14 @@ package account
 import (
 	"context"
 	"errors"
+	"sort"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/zorojuro12/call_it/backend/internal/auth"
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 )
@@ -197,5 +199,57 @@ func TestClaimRefill_NoOpReturnsQuota(t *testing.T) {
 	}
 	if totalCard != trials {
 		t.Errorf("total rate-limit ZCARD across %d independent races = %d, want %d — a no-op claim must have handed its slot back every time", trials, totalCard, trials)
+	}
+}
+
+// medianDuration returns the middle value of samples after sorting;
+// every caller here uses 5 samples, so the result is unambiguous.
+func medianDuration(samples []time.Duration) time.Duration {
+	sorted := append([]time.Duration(nil), samples...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	return sorted[len(sorted)/2]
+}
+
+func TestLoginUnknownEmailCostsSameAsWrongPassword(t *testing.T) {
+	store := newTestStore(t)
+	issuer, err := auth.NewIssuer([]byte("01234567890123456789012345678901"), time.Hour)
+	if err != nil {
+		t.Fatalf("auth.NewIssuer() = %v, want nil", err)
+	}
+	svc := NewService(store, issuer)
+	ctx := context.Background()
+
+	knownEmail := testID(t, "known") + "@example.com"
+	if _, _, err := svc.Register(ctx, knownEmail, "a-valid-password-1", "Known"); err != nil {
+		t.Fatalf("Register() = %v, want nil", err)
+	}
+
+	const samples = 5
+
+	wrongTimes := make([]time.Duration, samples)
+	for i := range wrongTimes {
+		start := time.Now()
+		_, _, err := svc.Login(ctx, knownEmail, "wrong-password-entirely")
+		if !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("Login(known, wrong) err = %v, want ErrInvalidCredentials", err)
+		}
+		wrongTimes[i] = time.Since(start)
+	}
+
+	unknownTimes := make([]time.Duration, samples)
+	for i := range unknownTimes {
+		start := time.Now()
+		_, _, err := svc.Login(ctx, testID(t, "unknown")+"@example.com", "wrong-password-entirely")
+		if !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("Login(unknown, wrong) err = %v, want ErrInvalidCredentials", err)
+		}
+		unknownTimes[i] = time.Since(start)
+	}
+
+	medianWrong := medianDuration(wrongTimes)
+	medianUnknown := medianDuration(unknownTimes)
+
+	if medianUnknown < medianWrong/2 {
+		t.Errorf("median unknown-email login = %v, median wrong-password login = %v; unknown-email path is less than half the cost", medianUnknown, medianWrong)
 	}
 }

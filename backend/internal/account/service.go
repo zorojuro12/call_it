@@ -106,7 +106,12 @@ func (s *Service) Register(ctx context.Context, email, password, displayName str
 // collapse into the single ErrInvalidCredentials — the real cause is
 // logged server-side, never surfaced. An endpoint that answers "no such
 // user" differently from "wrong password" is a free account-enumeration
-// oracle; a corrupted record must not become one either.
+// oracle; a corrupted record must not become one either. The unknown-
+// email path additionally burns an argon2id verify of its own
+// (auth.VerifyDecoyPassword) before returning, so the response *time*
+// stops distinguishing the two cases as well as the response body
+// already does — deleting that call as dead code (it discards its
+// result) would silently reopen the timing oracle this closes.
 func (s *Service) Login(ctx context.Context, email, password string) (Account, string, error) {
 	normalizedEmail := auth.NormalizeEmail(email)
 
@@ -114,6 +119,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (Account, s
 	if err != nil {
 		if errors.Is(err, redisstore.ErrNotFound) {
 			slog.Debug("account: login: unknown email", "email", normalizedEmail)
+			auth.VerifyDecoyPassword(password)
 			return Account{}, "", ErrInvalidCredentials
 		}
 		return Account{}, "", fmt.Errorf("account: login: %w", err)
