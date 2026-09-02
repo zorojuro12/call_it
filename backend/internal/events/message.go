@@ -24,6 +24,15 @@ var ErrInvalidEvent = errors.New("events: invalid event")
 // attacker-supplied message meets.
 const MaxMessageBytes = 1 << 20
 
+// MaxPayouts bounds how many payouts a single RoundSettled message may
+// carry. A settlement carries at most one payout per player who backed
+// the winning outcome, a watch-party room holds tens of players, and
+// Phase 7a/7b's load harness drove a few hundred — so this is three
+// orders of magnitude of headroom, sized to bound the ledger lines one
+// message can create (ledger.TransactionFor emits roughly two per
+// payout) rather than to constrain any real room.
+const MaxPayouts = 10_000
+
 // DecodeMessage decodes a Kafka message value into a typed Event by routing
 // on topic. Returns the concrete event type and any error.
 func DecodeMessage(topic string, value []byte) (Event, error) {
@@ -98,6 +107,9 @@ func validateRoundSettled(s *RoundSettled) error {
 	}
 	if s.Dust < 0 {
 		return fmt.Errorf("%w: dust must be non-negative, got %d", ErrInvalidEvent, s.Dust)
+	}
+	if len(s.Payouts) > MaxPayouts {
+		return fmt.Errorf("%w: payout count is %d, limit %d", ErrInvalidEvent, len(s.Payouts), MaxPayouts)
 	}
 	for _, p := range s.Payouts {
 		if p.UserID == "" {
