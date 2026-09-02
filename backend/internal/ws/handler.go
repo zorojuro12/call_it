@@ -93,10 +93,25 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 			return
 		}
 
-		var balance int64
 		if sessions != nil {
 			sessions.ResumeSession(claims.RoomID, claims.UserID)
+		}
 
+		ident := Identity{UserID: claims.UserID, DisplayName: claims.DisplayName, Guest: claims.Guest}
+		c := NewClient(conn, ident, cfg)
+		c.RoomID = claims.RoomID
+		room := hub.Join(claims.RoomID, c)
+
+		// Balance is looked up only after hub.Join, deliberately: it is a
+		// real Redis round trip, and this client must already be a room
+		// member before anything that takes real I/O runs — otherwise the
+		// window between this connection's handshake completing and its
+		// hub.Join actually landing widens enough for it to miss a
+		// broadcast another member's action sends in between.
+		// ResumeSession above has no such cost (mutex-only, no I/O), which
+		// is why it alone runs ahead of hub.Join.
+		var balance int64
+		if sessions != nil {
 			balance, err = sessions.Balance(claims.RoomID, claims.UserID)
 			if err != nil {
 				// Best-effort: the connection itself is already real by
@@ -107,11 +122,6 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 				log.Printf("ws: read balance for %s in room %s: %v", claims.UserID, claims.RoomID, err)
 			}
 		}
-
-		ident := Identity{UserID: claims.UserID, DisplayName: claims.DisplayName, Guest: claims.Guest}
-		c := NewClient(conn, ident, cfg)
-		c.RoomID = claims.RoomID
-		room := hub.Join(claims.RoomID, c)
 
 		c.Send(mustEncode(TypeConnected, ConnectedEvent{
 			UserID:      claims.UserID,
