@@ -62,3 +62,66 @@ func TestScheduleEndSessionSkipsGuests(t *testing.T) {
 		t.Errorf("Balance() = %d, want 1000 (guest never scheduled)", balance)
 	}
 }
+
+func TestResumeSessionCancelsAPendingEnd(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	bc := &stubBroadcaster{}
+	svc := NewService(context.Background(), store, bc)
+	svc.sessionGrace = 200 * time.Millisecond
+
+	roomID, userID, w := endSessionFixture(t, store, svc, ctx)
+
+	svc.ScheduleEndSession(roomID, userID, false)
+	time.Sleep(50 * time.Millisecond)
+	svc.ResumeSession(roomID, userID)
+	time.Sleep(500 * time.Millisecond)
+
+	acct, err := store.User(ctx, userID)
+	if err != nil {
+		t.Fatalf("User() = %v, want nil", err)
+	}
+	if acct.Balance != 5000 {
+		t.Errorf("User().Balance = %d, want 5000 (untouched, no fold ran)", acct.Balance)
+	}
+	balance, err := store.Balance(ctx, roomID, userID)
+	if err != nil {
+		t.Fatalf("Balance() = %v, want nil", err)
+	}
+	if balance != w {
+		t.Errorf("Balance() = %d, want %d (session survived intact)", balance, w)
+	}
+	opening, err := store.OpeningStake(ctx, roomID, userID)
+	if err != nil {
+		t.Fatalf("OpeningStake() = %v, want nil", err)
+	}
+	if opening != 1000 {
+		t.Errorf("OpeningStake() = %d, want 1000", opening)
+	}
+}
+
+func TestResumeSessionWithNothingPending(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	bc := &stubBroadcaster{}
+	svc := NewService(context.Background(), store, bc)
+
+	roomID := testID(t, "room")
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	userID := testID(t, "user")
+	if _, err := store.JoinRoom(ctx, roomID, userID, 1000); err != nil {
+		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+
+	svc.ResumeSession(roomID, userID)
+
+	balance, err := store.Balance(ctx, roomID, userID)
+	if err != nil {
+		t.Fatalf("Balance() = %v, want nil", err)
+	}
+	if balance != 1000 {
+		t.Errorf("Balance() = %d, want 1000 (unaffected)", balance)
+	}
+}

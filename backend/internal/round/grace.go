@@ -75,3 +75,22 @@ func (s *Service) ScheduleEndSession(roomID, userID string, guest bool) {
 		}
 	}()
 }
+
+// ResumeSession cancels a pending session end for roomID/userID if one
+// exists; a no-op otherwise. Nothing in the system branches on whether
+// an end was actually pending, so this has no return value — safe to
+// call unconditionally on every connect, including a guest's and an
+// ordinary first connect that was never preceded by a disconnect.
+func (s *Service) ResumeSession(roomID, userID string) {
+	key := sessionKey(roomID, userID)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	done, ok := s.pending[key]
+	if !ok {
+		return
+	}
+	close(done)
+	delete(s.pending, key)
+}
