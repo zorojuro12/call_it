@@ -14,9 +14,22 @@ import (
 
 var ErrInvalidEvent = errors.New("events: invalid event")
 
+// MaxMessageBytes bounds a Kafka message's value before it reaches the
+// JSON decoder. internal/events/consumer.go sets the Kafka reader's
+// MaxBytes to 10e6, so without this check a single message may be ten
+// megabytes of decoder input. One mebibyte is above any message this
+// system legitimately produces — the largest real rounds-settled
+// payload is one payout per player, and MaxPayouts worth of them
+// encodes to roughly 600 KB — and it is the first bound an
+// attacker-supplied message meets.
+const MaxMessageBytes = 1 << 20
+
 // DecodeMessage decodes a Kafka message value into a typed Event by routing
 // on topic. Returns the concrete event type and any error.
 func DecodeMessage(topic string, value []byte) (Event, error) {
+	if len(value) > MaxMessageBytes {
+		return nil, fmt.Errorf("%w: message is %d bytes, limit %d", ErrInvalidEvent, len(value), MaxMessageBytes)
+	}
 	switch topic {
 	case TopicWagersPlaced:
 		var w WagerPlaced

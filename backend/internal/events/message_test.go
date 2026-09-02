@@ -1,8 +1,10 @@
 package events
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -353,6 +355,40 @@ func TestDecodeMessageValidation(t *testing.T) {
 				if ev == nil {
 					t.Errorf("DecodeMessage returned nil event")
 				}
+			}
+		})
+	}
+}
+
+func TestDecodeMessageRejectsOversizedValue(t *testing.T) {
+	topics := []string{TopicWagersPlaced, TopicRoundsSettled}
+
+	for _, topic := range topics {
+		t.Run(topic+"/over limit", func(t *testing.T) {
+			value := bytes.Repeat([]byte{'x'}, MaxMessageBytes+1)
+			ev, err := DecodeMessage(topic, value)
+			if ev != nil {
+				t.Errorf("DecodeMessage returned non-nil event %v, want nil", ev)
+			}
+			if !errors.Is(err, ErrInvalidEvent) {
+				t.Fatalf("DecodeMessage error = %v, want errors.Is(err, ErrInvalidEvent)", err)
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf("%d", len(value))) {
+				t.Errorf("DecodeMessage error %q does not name the actual length %d", err.Error(), len(value))
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf("%d", MaxMessageBytes)) {
+				t.Errorf("DecodeMessage error %q does not name the limit %d", err.Error(), MaxMessageBytes)
+			}
+		})
+
+		t.Run(topic+"/at limit", func(t *testing.T) {
+			value := bytes.Repeat([]byte{'x'}, MaxMessageBytes)
+			_, err := DecodeMessage(topic, value)
+			if !errors.Is(err, ErrInvalidEvent) {
+				t.Fatalf("DecodeMessage error = %v, want errors.Is(err, ErrInvalidEvent)", err)
+			}
+			if strings.Contains(err.Error(), fmt.Sprintf("%d", MaxMessageBytes)) {
+				t.Errorf("DecodeMessage error %q names the size limit at exactly MaxMessageBytes; the size check must not fire at the boundary", err.Error())
 			}
 		})
 	}
