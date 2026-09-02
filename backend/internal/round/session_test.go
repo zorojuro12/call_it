@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zorojuro12/call_it/backend/internal/domain"
 	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 )
 
@@ -161,5 +162,77 @@ func TestEndSessionGuest(t *testing.T) {
 	neverJoined := testID(t, "user")
 	if _, err := svc.EndSession(ctx, roomID, neverJoined, false); !errors.Is(err, redisstore.ErrNotFound) {
 		t.Errorf("EndSession(never-joined) error = %v, want ErrNotFound", err)
+	}
+}
+
+// endSessionFixture sets up a user at persistent balance 5000, joined
+// at buy-in 1000, with the wallet moved to a value != 1000 by a losing
+// wager — the shared arrangement Checkpoint 1 and Checkpoint 2 both
+// need to prove a fold cleared or repeated.
+func endSessionFixture(t *testing.T, store *redisstore.Store, svc *Service, ctx context.Context) (roomID, userID string, movedBalance domain.Tokens) {
+	t.Helper()
+
+	userID = testID(t, "user")
+	if err := store.CreateUser(ctx, redisstore.User{
+		ID: userID, Email: userID + "@example.com", DisplayName: "Ada",
+		PasswordHash: "hash", Balance: 5000,
+	}); err != nil {
+		t.Fatalf("CreateUser() = %v, want nil", err)
+	}
+
+	roomID = testID(t, "room")
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, userID, 1000); err != nil {
+		t.Fatalf("JoinRoom(%s) = %v, want nil", userID, err)
+	}
+
+	roundID := testID(t, "round")
+	if err := store.CreateRound(ctx, roundID, roomID, "Q?", []string{"Yes", "No"}, time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("CreateRound() = %v, want nil", err)
+	}
+	// A wager alone moves the wallet off the opening stake — the round
+	// need not resolve for EndSession to have something real to fold.
+	if _, err := store.PlaceWager(ctx, redisstore.WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: userID,
+		Outcome: 0, Amount: 400, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager() = %v, want nil", err)
+	}
+
+	movedBalance, err := store.Balance(ctx, roomID, userID)
+	if err != nil {
+		t.Fatalf("Balance() = %v, want nil", err)
+	}
+	if movedBalance != 600 {
+		t.Fatalf("Balance() = %d, want 600 (test setup assumption)", movedBalance)
+	}
+
+	return roomID, userID, movedBalance
+}
+
+func TestEndSessionClearsTheSession(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	bc := &stubBroadcaster{}
+	svc := NewService(context.Background(), store, bc)
+
+	roomID, userID, w := endSessionFixture(t, store, svc, ctx)
+
+	newBalance, err := svc.EndSession(ctx, roomID, userID, false)
+	if err != nil {
+		t.Fatalf("EndSession() = %v, want nil", err)
+	}
+	wantBalance := domain.ApplySessionResult(5000, 1000, w)
+	if newBalance != wantBalance {
+		t.Errorf("EndSession() = %d, want %d", newBalance, wantBalance)
+	}
+
+	if _, err := store.Balance(ctx, roomID, userID); !errors.Is(err, redisstore.ErrNotFound) {
+		t.Errorf("Balance() after EndSession error = %v, want ErrNotFound", err)
+	}
+	if _, err := store.OpeningStake(ctx, roomID, userID); !errors.Is(err, redisstore.ErrNotFound) {
+		t.Errorf("OpeningStake() after EndSession error = %v, want ErrNotFound", err)
 	}
 }
