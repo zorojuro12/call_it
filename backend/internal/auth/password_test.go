@@ -3,8 +3,10 @@ package auth
 import (
 	"encoding/base64"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fixtureHash is a package-level fixture: argon2id is deliberately slow,
@@ -115,5 +117,51 @@ func TestVerifyPassword_Malformed(t *testing.T) {
 				t.Errorf("VerifyPassword(%q, ...) err = %v, must not also satisfy ErrPasswordMismatch", encoded, err)
 			}
 		})
+	}
+}
+
+// median returns the middle value of samples after sorting; samples must
+// have odd length for this to be unambiguous, which every caller here
+// satisfies with 5 samples.
+func median(samples []time.Duration) time.Duration {
+	sorted := append([]time.Duration(nil), samples...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	return sorted[len(sorted)/2]
+}
+
+func TestVerifyDecoyPasswordCostsAFullVerify(t *testing.T) {
+	// VerifyDecoyPassword must compile and return nothing.
+	VerifyDecoyPassword("anything")
+
+	// The decoy hash must be a well-formed PHC string this package can
+	// parse under its current parameters: VerifyPassword against it must
+	// return ErrPasswordMismatch, never ErrMalformedHash.
+	if err := VerifyPassword(decoyHash(), "x"); !errors.Is(err, ErrPasswordMismatch) {
+		t.Fatalf("VerifyPassword(decoyHash(), ...) err = %v, want ErrPasswordMismatch", err)
+	}
+
+	const samples = 5
+
+	decoyTimes := make([]time.Duration, samples)
+	for i := range decoyTimes {
+		start := time.Now()
+		VerifyDecoyPassword("anything")
+		decoyTimes[i] = time.Since(start)
+	}
+
+	realTimes := make([]time.Duration, samples)
+	for i := range realTimes {
+		start := time.Now()
+		if err := VerifyPassword(fixtureHash, "wrong"); !errors.Is(err, ErrPasswordMismatch) {
+			t.Fatalf("VerifyPassword(fixtureHash, \"wrong\") err = %v, want ErrPasswordMismatch", err)
+		}
+		realTimes[i] = time.Since(start)
+	}
+
+	medianDecoy := median(decoyTimes)
+	medianReal := median(realTimes)
+
+	if medianDecoy < medianReal/2 {
+		t.Errorf("median decoy verify = %v, median real verify = %v; decoy is less than half the real cost", medianDecoy, medianReal)
 	}
 }

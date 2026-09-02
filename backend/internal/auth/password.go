@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -58,6 +59,34 @@ func VerifyPassword(encoded, plain string) error {
 		return ErrPasswordMismatch
 	}
 	return nil
+}
+
+// decoyHash lazily derives a PHC-encoded hash of a random value no
+// password can ever produce, and never retains that value. It is
+// computed rather than hardcoded so that raising argon2Memory/argon2Time
+// re-costs the decoy automatically — a committed constant would keep
+// burning the old parameters' cost and quietly reopen the timing gap
+// VerifyDecoyPassword exists to close.
+var decoyHash = sync.OnceValue(func() string {
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		panic(fmt.Errorf("auth: generate decoy value: %w", err))
+	}
+	h, err := HashPassword(base64.RawStdEncoding.EncodeToString(random))
+	if err != nil {
+		panic(fmt.Errorf("auth: hash decoy value: %w", err))
+	}
+	return h
+})
+
+// VerifyDecoyPassword runs one argon2id derivation against a hash no
+// password can ever match, and discards the result. It exists purely
+// for its cost: a caller with no stored hash for a user (e.g. an unknown
+// email during login) calls this so the response takes the same time as
+// a caller that does have one. The discarded error is the point — a
+// return value would invite branching on it, which defeats the purpose.
+func VerifyDecoyPassword(plain string) {
+	_ = VerifyPassword(decoyHash(), plain)
 }
 
 // phcParams is the parsed parameter triple from a PHC-encoded hash.
