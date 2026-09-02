@@ -55,12 +55,27 @@ describe("reduceRound: connected", () => {
     // Act
     const after = reduceRound(before, {
       type: "connected",
-      data: { user_id: "u1", display_name: "Ann", room_id: "r1", guest: false, host: true },
+      data: { user_id: "u1", display_name: "Ann", room_id: "r1", guest: false, host: true, balance: 1000 },
     });
 
     // Assert
-    expect(after).toEqual({ ...before, self_id: "u1", is_host: true });
+    expect(after).toEqual({ ...before, self_id: "u1", is_host: true, balance: 1000 });
     expect(after).not.toBe(before);
+  });
+
+  it("replaces a stale cached balance with the connected event's current one", () => {
+    // Arrange: initialRoundState(1000) stands in for a client-cached
+    // session_balance from the original join, now stale after a wager.
+    const before = initialRoundState(1000);
+
+    // Act
+    const after = reduceRound(before, {
+      type: "connected",
+      data: { user_id: "u1", display_name: "Ann", room_id: "r1", guest: false, host: false, balance: 600 },
+    });
+
+    // Assert
+    expect(after.balance).toBe(600);
   });
 });
 
