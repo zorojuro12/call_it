@@ -1,14 +1,17 @@
 # 2026-09-02 — ansh — Phase 7c execution: the three deferred security items + README
 
 **Status:** All 8 tasks implemented, verified, and committed on
-`phase-7c-security-debt-docs` (off `dev`). Full backend suite green
-(`make test`, `-race -p 1`), frontend suite green (`npx vitest run`,
-`npx tsc --noEmit`, `make fe-lint`), `security-reviewer` returned clean
-(no CRITICAL/HIGH/MEDIUM/LOW across all five surfaces touched), merged
-coverage profile **88.8%** excluding `cmd/*` (accepted at 0%),
-`internal/domain` still 100%. Docs fully updated (spec §4, `CLAUDE.md`
-invariants, `project-history.md`'s new Phase 7c section, parent plan's §9
-row and §12 boxes). Ready for `finishing-a-development-branch`.
+`phase-7c-security-debt-docs` (off `dev`, 17 commits ahead, pushed to
+`origin`). Full backend suite green (`make test`, `-race -p 1`), frontend
+suite green (`npx vitest run`, `npx tsc --noEmit`, `make fe-lint`),
+`security-reviewer` returned clean (no CRITICAL/HIGH/MEDIUM/LOW across
+all five surfaces touched), merged coverage profile **88.8%** excluding
+`cmd/*` (accepted at 0%), `internal/domain` still 100%. Docs fully updated
+(spec §4, `CLAUDE.md` invariants, `project-history.md`'s new Phase 7c
+section, parent plan's §9 row and §12 boxes). Ran
+`finishing-a-development-branch`; the user chose **keep the branch as-is**
+rather than merge now — `dev` is unchanged, the branch stays open for a
+later merge.
 **Decided:** Three deviations from the written plan, all found empirically
 mid-execution:
 1. A pre-existing goroutine-leak race in `internal/ws/room.go` — fixed, not
@@ -26,8 +29,10 @@ mid-execution:
 **Spec:** Updated — `docs/specs/2026-08-21-callit-design.md` §4's
 "no reconnect-with-session-resume" known-limitation bullet now describes
 the implemented grace-window behavior instead.
-**Next:** Hand off to `finishing-a-development-branch` to merge
-`phase-7c-security-debt-docs` into `dev` with `--no-ff`.
+**Next:** Merge `phase-7c-security-debt-docs` into `dev` (`--no-ff`, per
+this project's self-merge convention) whenever the user is ready — nothing
+further is needed to prepare for it. Only Phase 8 (parked, no plan yet)
+follows.
 **Blocked on:** Nothing.
 **Touches:** `backend/internal/{auth,account,events,redisstore,round,ws,httpapi}/`,
 `README.md`, `CLAUDE.md`, `docs/specs/2026-08-21-callit-design.md`,
@@ -218,10 +223,11 @@ a security-posture section.
 - `0513ec3` — fix: sync the room page's displayed balance from the connected event
 - `cad8b8f` — docs: rewrite the README around an architecture diagram
 - `9ea4916` — fix: look up a connecting client's balance only after it joins the room
-- (pending) — docs: close the three deferred security items and record Phase 7c
+- `24c5157` — docs: close the three deferred security items and record Phase 7c
 
 ## Next Step
 
-Hand off to `finishing-a-development-branch` for the `--no-ff` merge of
-`phase-7c-security-debt-docs` into `dev`. Only Phase 8 (parked, no plan yet)
-follows.
+Merge `phase-7c-security-debt-docs` into `dev` (`--no-ff`) whenever the
+user is ready — `finishing-a-development-branch` was run and the user
+chose to keep the branch as-is for now rather than merge immediately.
+Only Phase 8 (parked, no plan yet) follows.
