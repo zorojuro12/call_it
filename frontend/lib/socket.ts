@@ -35,11 +35,15 @@ export function openRoomSocket(token: string): RoomSocket {
 
   ws.onopen = () => setStatus("open");
 
-  // There is no reconnect timer, no backoff, and no retry — deliberate
-  // (Decisions §3, spec §4's known limitation): reconnecting would re-fire
-  // the backend's EndSession cycle and silently reset the player to the
-  // room buy-in, discarding their in-room result. 6a surfaces a closed
-  // status and stops.
+  // There is still no reconnect timer, no backoff, and no retry here —
+  // that gap is no longer covering for a backend bug (the backend now
+  // holds a 30-second grace window before folding a dropped session, and
+  // a reconnect within it resumes intact — Phase 7c), it is just not
+  // built yet. A reconnect timer with backoff is a Phase 8 candidate. In
+  // the meantime a plain page reload already resumes a session within
+  // the grace window and displays its actual current balance (the
+  // connected event's own balance field, not a cached one) — 6a's closed
+  // status surface below is unchanged.
   ws.onclose = () => setStatus("closed");
 
   ws.onmessage = (event: MessageEvent<string>) => {

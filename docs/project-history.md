@@ -302,21 +302,28 @@ predates the diff and was already sound.
 
 ### Open by design, deferred to Phase 7 hardening
 
-1. **Login timing.** The unknown-email path skips argon2id and so responds
-   faster than the wrong-password path, even though response bodies are
-   byte-identical. Closing it needs a dummy-hash verify on the miss path.
-2. **Room-code modulo bias.** Accepted — the code is a lookup handle, not a
-   secret; authorization rests on the JWT.
-3. **Reconnect ends a session.** `EndSession` fires on socket disconnect, so a
-   dropped player restarts at the room buy-in. Resume needs a grace window.
-4. **`RoundSettled.Payouts` has no slice-length cap (Phase 5b).** A message
-   with an extreme payout count pressures memory before
-   `ledger.TransactionFor`'s balance check rejects it. Deferred because the
-   only path to an attacker-controlled `Payouts` array is already Kafka
-   broker access, which Phase 5b's Critical Invariants now document as
-   ledger-write access — a size cap is defense-in-depth on an
-   already-mitigated path. Revisit if broker ACLs are ever relaxed from
-   today's topology-only enforcement.
+Items 1, 3, and 4 were closed in Phase 7c (below); item 2 is permanently
+accepted, not deferred work.
+
+1. ~~**Login timing.**~~ **Closed in Phase 7c.** The unknown-email path now
+   calls `auth.VerifyDecoyPassword` before returning, burning the same
+   argon2id cost as the wrong-password path.
+2. **Room-code modulo bias.** Permanently accepted — the code is a lookup
+   handle, not a secret; authorization rests on the JWT. Not revisited in
+   Phase 7c and not expected to be; recorded here so a later reader does
+   not go looking for a fix that was never intended.
+3. ~~**Reconnect ends a session.**~~ **Closed in Phase 7c**, as two bugs
+   rather than one: a 30-second grace window (`round.SessionGrace`) plus a
+   once-only fold (`Store.ClearSession` as the claim token). See
+   `CLAUDE.md`'s Critical Invariants and the Phase 7c section below.
+4. ~~**`RoundSettled.Payouts` has no slice-length cap (Phase 5b).**~~
+   **Closed in Phase 7c.** `events.MaxPayouts` (10,000) rejects an
+   over-long array in `validateRoundSettled` before the payout loop runs;
+   `events.MaxMessageBytes` (1 MiB) rejects an oversized message before
+   any JSON decoding at all. Both remain defense-in-depth on a path Kafka
+   broker access already mediates (Phase 5b's Critical Invariants) — the
+   underlying "broker access is ledger-write access" caveat is unchanged
+   and still recorded there.
 
 ### Phase 7a — `internal/metrics`, `METRICS_ADDR`, wager/WebSocket latency instrumentation
 
@@ -479,6 +486,75 @@ movement — no CRITICAL, HIGH, MEDIUM, or LOW findings.
   `internal/ledger`'s fail-rather-than-skip convention once it's set.
 - `wager_latency.js`'s new `RECONCILE_ROOM_ID=` line prints only a room
   UUID — no player identity, stake, or wager data.
+
+### Phase 7c — login timing, reconnect grace window, Kafka message bounding, README
+
+Closes items 1, 3, and 4 of the "Open by design" list above; item 2 stays
+permanently accepted. Full narrative: `journal/2026-09-02_1618_ansh_phase-7c-execution.md`.
+
+**Security review: clean, nothing deferred.** Run against `dev...HEAD`,
+scoped to the three surfaces this phase touches plus two unplanned fixes
+made along the way — no CRITICAL, HIGH, MEDIUM, or LOW findings.
+
+- **Login timing.** `VerifyDecoyPassword`'s decoy path runs unconditionally
+  on the unknown-email branch, with no early return that skips it; its cost
+  tracks `argon2Memory`/`argon2Time` automatically (derived via
+  `sync.OnceValue`, not a hardcoded hash), so raising those parameters
+  later cannot silently reopen the gap. The `auth` rate-limit scope applies
+  before the login service runs, so both the real and decoy paths consume
+  quota identically.
+- **Session-fold ordering.** `Store.ClearSession`'s opening-stake choice as
+  the claim token was re-verified directly against `settle_round.lua`
+  (its `HINCRBY` on a winner's credit can recreate a deleted wallet field;
+  nothing but `JoinRoom` ever writes an opening stake) rather than taken
+  on the code comment's word. Claim-then-credit means a crash between the
+  two loses a result without minting; `ScheduleEndSession`'s
+  identity-recheck-under-lock (`grace.go`) closes the
+  schedule→resume→schedule race a stale goroutine could otherwise exploit
+  to fold a session a live connection still holds.
+- **Kafka bounds.** `MaxMessageBytes` is checked first in `DecodeMessage`,
+  before either topic's decoder is constructed; `MaxPayouts` is checked in
+  `validateRoundSettled` before the payout loop runs. Neither bound sits
+  behind a path that could be bypassed to reach the expensive work it
+  guards.
+- **The `internal/ws/room.go` goroutine-leak fix** (found while writing
+  this phase's own disconnect test, not part of the original plan): every
+  guarded send (`Leave`, `Broadcast`, `Members`, `Count`) now falls through
+  to a no-op once `Room.run()` has exited, via a `done` channel closed
+  exactly once by `run()`'s own deferred close — no send was left
+  unguarded.
+- **`ConnectedEvent.Balance`** (the other unplanned fix, closing a real gap
+  in this phase's own stated "no frontend change needed" assumption) is
+  sent only via `c.Send` to the connecting client's own connection, never
+  `room.Broadcast` — the same disclosure shape `WagerAcceptedEvent`
+  already uses for a wager's placer. No path sends it to anyone else's
+  connection.
+
+**Accepted, unchanged by this phase:** a payout credited to a player who
+already departed lands in a resurrected Redis wallet field (via
+`settle_round.lua`'s `HINCRBY`) with no opening stake beside it, and is
+never folded into their persistent balance. This is today's behavior
+exactly, neither fixed nor worsened here — deciding what a settlement owes
+an absent player is a product question, not a security one. Phase 8
+candidate.
+
+**One deviation from the plan, found and fixed mid-execution, not a
+security finding:** a pre-existing race in `internal/ws/room.go` could
+permanently hang the disconnect-handling goroutine (`Leave`/`Broadcast`
+racing the room's own reap) — closed the same session, see the
+goroutine-leak fix above and `journal/2026-09-02_1618_ansh_phase-7c-execution.md`
+for the full account, including a second, smaller ordering fix: the new
+`sessions.Balance` lookup on connect was initially placed *before*
+`hub.Join`, which (being a real Redis round trip) widened the pre-existing
+window between a client's handshake completing and its room membership
+landing enough to make `TestEndToEndRound` intermittently miss a broadcast
+(~1 in 5 runs). Moved to run after `hub.Join` instead; confirmed clean over
+8 repeated fresh-process runs after the fix.
+
+**Coverage:** `go test ./... -coverpkg=./... -p 1`, merged profile via
+`go tool cover -func`: **88.8%** excluding `cmd/*` (accepted at 0%, per the
+standing exception below) — comfortably above the 80% floor.
+`internal/domain` still reads 100%.
 
 ---
 
