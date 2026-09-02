@@ -236,3 +236,37 @@ func TestEndSessionClearsTheSession(t *testing.T) {
 		t.Errorf("OpeningStake() after EndSession error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestEndSessionIsIdempotent(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	bc := &stubBroadcaster{}
+	svc := NewService(context.Background(), store, bc)
+
+	roomID, userID, w := endSessionFixture(t, store, svc, ctx)
+
+	first, err := svc.EndSession(ctx, roomID, userID, false)
+	if err != nil {
+		t.Fatalf("first EndSession() = %v, want nil", err)
+	}
+	wantBalance := domain.ApplySessionResult(5000, 1000, w)
+	if first != wantBalance {
+		t.Errorf("first EndSession() = %d, want %d", first, wantBalance)
+	}
+
+	second, err := svc.EndSession(ctx, roomID, userID, false)
+	if err != nil {
+		t.Fatalf("second EndSession() = %v, want nil", err)
+	}
+	if second != 0 {
+		t.Errorf("second EndSession() = %d, want 0", second)
+	}
+
+	acct, err := store.User(ctx, userID)
+	if err != nil {
+		t.Fatalf("User() = %v, want nil", err)
+	}
+	if acct.Balance != first {
+		t.Errorf("User().Balance = %d, want %d (folded once, not twice)", acct.Balance, first)
+	}
+}

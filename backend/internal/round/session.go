@@ -2,8 +2,10 @@ package round
 
 import (
 	"context"
+	"errors"
 
 	"github.com/zorojuro12/call_it/backend/internal/domain"
+	"github.com/zorojuro12/call_it/backend/internal/redisstore"
 )
 
 // EndSession folds a departing account holder's net session result into
@@ -39,16 +41,29 @@ func (s *Service) EndSession(ctx context.Context, roomID, userID string, guest b
 		return 0, nil
 	}
 
+	// store.User's error is returned unchanged even when it is
+	// ErrNotFound — deliberately asymmetric with the two reads below.
+	// An unknown user is a genuine bug signal (pinned by this package's
+	// never-joined test case); a known user with no live session here
+	// is simply an already-ended session. Do not "tidy" this into
+	// matching treatment for all three — that would turn a real error
+	// into a silent no-op.
 	acct, err := s.store.User(ctx, userID)
 	if err != nil {
 		return 0, err
 	}
 	opening, err := s.store.OpeningStake(ctx, roomID, userID)
 	if err != nil {
+		if errors.Is(err, redisstore.ErrNotFound) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	current, err := s.store.Balance(ctx, roomID, userID)
 	if err != nil {
+		if errors.Is(err, redisstore.ErrNotFound) {
+			return 0, nil
+		}
 		return 0, err
 	}
 
