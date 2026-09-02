@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -34,13 +35,15 @@ func WithAllowedOrigins(origins []string) HandlerOption {
 	}
 }
 
-// Sessions resumes a room member's pending session end on connect and
-// schedules one on disconnect — *round.Service satisfies this.
-// Declared here (not imported as a concrete type) so Handler does not
-// need a second entry point for tests that don't care about it.
+// Sessions resumes a room member's pending session end on connect,
+// schedules one on disconnect, and reports a room member's current
+// balance — *round.Service satisfies this. Declared here (not imported
+// as a concrete type) so Handler does not need a second entry point for
+// tests that don't care about it.
 type Sessions interface {
 	ResumeSession(roomID, userID string)
 	ScheduleEndSession(roomID, userID string, guest bool)
+	Balance(roomID, userID string) (int64, error)
 }
 
 // Handler builds an http.HandlerFunc that authenticates a room-scoped
@@ -90,8 +93,19 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 			return
 		}
 
+		var balance int64
 		if sessions != nil {
 			sessions.ResumeSession(claims.RoomID, claims.UserID)
+
+			balance, err = sessions.Balance(claims.RoomID, claims.UserID)
+			if err != nil {
+				// Best-effort: the connection itself is already real by
+				// this point, and a display-only balance is not worth
+				// failing it over. JoinRoom always runs (via the REST
+				// join call) before a client ever holds a room token to
+				// connect with, so this should not happen in practice.
+				log.Printf("ws: read balance for %s in room %s: %v", claims.UserID, claims.RoomID, err)
+			}
 		}
 
 		ident := Identity{UserID: claims.UserID, DisplayName: claims.DisplayName, Guest: claims.Guest}
@@ -105,6 +119,7 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 			RoomID:      claims.RoomID,
 			Guest:       claims.Guest,
 			Host:        claims.Host,
+			Balance:     balance,
 		}))
 
 		// Tell the newcomer about every member already in the room —

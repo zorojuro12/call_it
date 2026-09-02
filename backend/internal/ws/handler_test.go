@@ -565,11 +565,14 @@ func unmarshalData(env Envelope, v any) error {
 // instead of touching any real store — the handler-level tests care
 // only about which calls the connect/disconnect paths make and with
 // what arguments, not about round.Service's actual fold behavior
-// (covered by internal/round's own tests).
+// (covered by internal/round's own tests). Balance returns a fixed
+// canned value; no test here cares what number it is, only that the
+// handler passes it through to the connected event untouched.
 type fakeSessions struct {
 	mu        sync.Mutex
 	resumed   []string
 	scheduled []string
+	balance   int64
 }
 
 func (f *fakeSessions) ResumeSession(roomID, userID string) {
@@ -582,6 +585,10 @@ func (f *fakeSessions) ScheduleEndSession(roomID, userID string, guest bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.scheduled = append(f.scheduled, fmt.Sprintf("%s/%s/%v", roomID, userID, guest))
+}
+
+func (f *fakeSessions) Balance(roomID, userID string) (int64, error) {
+	return f.balance, nil
 }
 
 func TestHandlerSchedulesSessionEndOnDisconnect(t *testing.T) {
@@ -673,5 +680,34 @@ func TestHandlerResumesSessionOnConnect(t *testing.T) {
 	}
 	if len(fake.scheduled) != 1 {
 		t.Errorf("scheduled = %v, want exactly 1 entry (unchanged by the reconnect)", fake.scheduled)
+	}
+}
+
+func TestHandlerConnectedEventCarriesBalance(t *testing.T) {
+	issuer := newTestIssuer(t, time.Hour)
+	hub := NewHub(nil, nil)
+	fake := &fakeSessions{balance: 600}
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, fake))
+	defer server.Close()
+
+	token, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+token, nil)
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	defer conn.Close()
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	env := mustReadEnvelope(t, conn, TypeConnected)
+	var got ConnectedEvent
+	if err := unmarshalData(env, &got); err != nil {
+		t.Fatalf("unmarshal ConnectedEvent: %v", err)
+	}
+	if got.Balance != 600 {
+		t.Errorf("ConnectedEvent.Balance = %d, want 600", got.Balance)
 	}
 }

@@ -94,3 +94,15 @@ func (s *Service) ResumeSession(roomID, userID string) {
 	close(done)
 	delete(s.pending, key)
 }
+
+// Balance reports a room member's current session wallet — a thin
+// passthrough to store.Balance, run against the Service's own base
+// context rather than a per-request one, matching ScheduleEndSession
+// and ResumeSession's choice of clock. It exists for ws.Handler to
+// include in the connected event a reconnecting client receives, so a
+// page reload can display its own actual current balance instead of a
+// client-cached value from the original join.
+func (s *Service) Balance(roomID, userID string) (int64, error) {
+	b, err := s.store.Balance(s.ctx, roomID, userID)
+	return int64(b), err
+}

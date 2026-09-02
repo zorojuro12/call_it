@@ -27,12 +27,23 @@ var ErrMalformed = errors.New("ws: malformed message envelope")
 var ErrMissingType = errors.New("ws: message envelope has no type")
 
 // ConnectedEvent is sent once, right after a successful upgrade.
+// Balance is the connecting identity's current room wallet, over its
+// own connection only — the same narrow disclosure WagerAcceptedEvent
+// already makes for its own placer. It is what lets a reload show the
+// session's actual current balance instead of the stale value a client
+// cached at the original join: a full page reload always re-mounts with
+// no memory of any wager placed since, so this is the one place a
+// reconnecting client can learn its own live balance without a second
+// REST round trip — one a guest identity has no way to repeat anyway
+// (a guest has no stable account token to rejoin with; a fresh join
+// call would mint a brand-new random identity, not resume this one).
 type ConnectedEvent struct {
 	UserID      string `json:"user_id"`
 	DisplayName string `json:"display_name"`
 	RoomID      string `json:"room_id"`
 	Guest       bool   `json:"guest"`
 	Host        bool   `json:"host"`
+	Balance     int64  `json:"balance"`
 }
 
 // PresenceEvent announces a join or leave to the room.

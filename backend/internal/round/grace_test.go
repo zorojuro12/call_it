@@ -125,3 +125,31 @@ func TestResumeSessionWithNothingPending(t *testing.T) {
 		t.Errorf("Balance() = %d, want 1000 (unaffected)", balance)
 	}
 }
+
+func TestServiceBalance(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	bc := &stubBroadcaster{}
+	svc := NewService(context.Background(), store, bc)
+
+	roomID := testID(t, "room")
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	userID := testID(t, "user")
+	if _, err := store.JoinRoom(ctx, roomID, userID, 1000); err != nil {
+		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+
+	got, err := svc.Balance(roomID, userID)
+	if err != nil {
+		t.Fatalf("Balance() = %v, want nil", err)
+	}
+	if got != 1000 {
+		t.Errorf("Balance() = %d, want 1000", got)
+	}
+
+	if _, err := svc.Balance(roomID, "never-joined"); !errors.Is(err, redisstore.ErrNotFound) {
+		t.Errorf("Balance(never-joined) error = %v, want ErrNotFound", err)
+	}
+}
