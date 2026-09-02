@@ -1,7 +1,9 @@
 # CallIt — Implementation Plan
 
 **Date:** 2026-08-21
-**Status:** Approved — cleared to begin Phase 0
+**Status:** Phases 0–7c complete (see §9's table for the phase-by-phase
+checklist). Only Phase 8 remains, and it is explicitly parked — "Decide when
+unblocked" — so this plan has no active next phase right now.
 **Source spec:** [`docs/specs/2026-08-21-callit-design.md`](../specs/2026-08-21-callit-design.md)
 
 Resolves the seven open items left for planning in spec §9, then sequences

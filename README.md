@@ -6,6 +6,12 @@ a short prediction round; connected participants place instant wagers
 with virtual tokens; live odds update via a pari-mutuel model; the host
 resolves the round and payouts settle automatically.
 
+**Status:** Phases 0–7c complete — playable end to end (backend, frontend,
+Kafka/PostgreSQL ledger, load-tested, security-reviewed). Only Phase 8
+remains, and it's explicitly parked (LLM question suggestions, Terraform,
+Prometheus/Grafana). See `docs/plans/2026-08-21-implementation-plan.md` §9
+for the full phase-by-phase table.
+
 Full design: [`docs/specs/2026-08-21-callit-design.md`](docs/specs/2026-08-21-callit-design.md).
 Full build plan: [`docs/plans/2026-08-21-implementation-plan.md`](docs/plans/2026-08-21-implementation-plan.md).
 Binding conventions (stack, invariants, workflow): [`CLAUDE.md`](CLAUDE.md).
@@ -41,6 +47,48 @@ This closes a crash window where Redis could debit a wallet while the
 ledger never learned of it — see `CLAUDE.md`'s Critical Invariants for the
 full list this architecture exists to uphold (anonymity until resolution,
 the host-cannot-wager rule, the single rate limiter, and more).
+
+## Repository layout
+
+```
+backend/
+├── cmd/api/               # HTTP/WS server entrypoint
+├── cmd/relay/              # Redis Stream → Kafka outbox relay
+├── cmd/ledger-worker/       # Kafka → PostgreSQL ledger writer
+├── cmd/migrate/             # applies/reverts the ledger schema
+├── cmd/callit-cli/          # CLI client — plays a full round end to end
+├── internal/domain/        # PURE, no I/O: odds, payout+dust, round FSM, wallet rules
+├── internal/auth/           # PURE, no I/O: argon2id, credential validation, JWT issue/verify
+├── internal/redisstore/     # Redis client, key schema, Lua wrappers — every writer lives here
+├── internal/account/        # register, login, refill claims       ─┐ service layer:
+├── internal/room/           # room lifecycle, short codes, joining  │ orchestrates
+├── internal/round/          # round lifecycle, server-side timers   │ redisstore +
+├── internal/wager/          # validate → Lua → broadcast           ─┘ domain
+├── internal/httpapi/        # REST handlers, mux, auth + rate-limit middleware
+├── internal/ws/              # hub, per-room goroutine, client pumps, message router
+├── internal/events/          # Kafka event schemas, producer/consumer
+├── internal/ledger/          # PostgreSQL double-entry repository
+├── internal/metrics/         # process-aggregate latency histograms (METRICS_ADDR)
+├── migrations/                # NNNN_name.up.sql / .down.sql
+└── scripts/lua/               # place_wager, lock_round, settle_round, refund_round, ...
+
+frontend/                       # Next.js App Router, TypeScript strict, Tailwind
+├── app/                        # pages — thin, compose lib/ and components/
+├── lib/                        # protocol types, REST/WS clients, the round-state reducer
+├── components/                 # OddsBoard, WagerPad, HostConsole, SettlementReveal, ...
+└── e2e/                        # Playwright acceptance tests
+
+docs/
+├── specs/                      # the living design spec
+├── plans/                      # one implementation plan per phase
+├── reports/                    # load-test baselines (Phase 7a/7b)
+└── project-history.md          # phase-by-phase outcomes, security-review findings
+
+journal/                        # dated session log — the working history behind the spec
+```
+
+Full rationale for this layout (organized by feature, not by type):
+`docs/plans/2026-08-21-implementation-plan.md` §3.
 
 ## Running it
 

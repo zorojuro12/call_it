@@ -1,7 +1,11 @@
 # CallIt — Design Spec
 
 **Date:** 2026-08-21
-**Status:** Approved for planning
+**Status:** Implemented through Phase 7c (see `docs/plans/2026-08-21-implementation-plan.md`
+§9 for phase-by-phase status). This remains the living design doc — amendments
+discovered during implementation are folded in here rather than left to drift;
+see `docs/project-history.md` for the phase-by-phase record of what changed
+and why.
 
 ## 1. Purpose
 

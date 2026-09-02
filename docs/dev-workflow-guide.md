@@ -358,9 +358,20 @@ fork. Edits get clobbered by `git pull` and can't be pushed.
 
 ## Suggested order for CallIt specifically, right now
 
+Historical note: this section originally sequenced the project's very first
+steps (below), written before Phase 0 existed. Left as-is rather than
+rewritten, since it's the record of how the workflow bootstrapped — not
+because it's still the active to-do list. **Current state:** Phases 0–7c are
+all complete; `CLAUDE.md` has existed since right after Phase 0 and is kept
+current every phase. Only Phase 8 remains, explicitly parked ("Decide when
+unblocked" — LLM question suggestions, Terraform, Prometheus/Grafana). The
+per-phase loop that steps 5–6 describe (branch → `writing-plans` →
+`executing-plans` → merge → `journal` entry → fresh session) is exactly what
+every phase since has followed, including Phase 7c.
+
 1. ~~`/impl-plan`~~ ✅ done — `docs/plans/2026-08-21-implementation-plan.md`.
 2. ~~Import Phase 0 tooling~~ ✅ done — `golang-*` rules/skills, `docker-patterns`.
 3. ~~Phase 0~~ ✅ done — commit `d60bd8d`.
-4. **Write `CLAUDE.md`** — Phase 0 exists now, so the gate is met. Run `/project-init` for a command-verified scaffold, then layer in the "why" content (invariants, rejected alternatives, gotchas) from the spec, plan, and journal. This is also where the commit-granularity convention belongs, since `CLAUDE.md` is always loaded.
-5. **Phase 1** — `git checkout -b phase-1-domain-core dev` → `writing-plans` (break the phase into committable tasks) → `executing-plans` (execute inline, commit per task) → merge to `dev`.
-6. `journal` entry, then a fresh session for Phase 2 (which is also the context reset that makes SDD unnecessary — see §9).
+4. ~~**Write `CLAUDE.md`**~~ ✅ done — right after Phase 0, per this same reasoning; kept current every phase since.
+5. ~~**Phase 1**~~ ✅ done, and so is every phase through **7c** — the loop below repeated verbatim each time: `git checkout -b phase-N-<slug> dev` → `writing-plans` (break the phase into committable tasks) → `executing-plans` (execute inline, commit per task) → merge to `dev`.
+6. ~~`journal` entry, then a fresh session for Phase 2~~ — done every phase since; see `journal/` for the full run.
