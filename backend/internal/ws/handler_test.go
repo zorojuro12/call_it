@@ -622,3 +622,56 @@ func TestHandlerSchedulesSessionEndOnDisconnect(t *testing.T) {
 		t.Errorf("scheduled[0] = %q, want %q", fake.scheduled[0], want)
 	}
 }
+
+func TestHandlerResumesSessionOnConnect(t *testing.T) {
+	issuer := newTestIssuer(t, time.Hour)
+	hub := NewHub(nil, nil)
+	fake := &fakeSessions{}
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, fake))
+	defer server.Close()
+
+	token, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+token, nil)
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mustReadEnvelope(t, conn, TypeConnected) // a real happens-before edge: ResumeSession runs before this frame is sent
+	mustReadEnvelope(t, conn, TypePlayerJoined)
+
+	fake.mu.Lock()
+	resumedAfterFirstConnect := append([]string(nil), fake.resumed...)
+	fake.mu.Unlock()
+	if len(resumedAfterFirstConnect) != 1 || resumedAfterFirstConnect[0] != "r1/u1" {
+		t.Fatalf("resumed after first connect = %v, want exactly [\"r1/u1\"]", resumedAfterFirstConnect)
+	}
+
+	conn.Close()
+	waitFor(t, func() bool {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		return len(fake.scheduled) == 1
+	})
+
+	conn2, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+token, nil)
+	if err != nil {
+		t.Fatalf("second Dial error: %v", err)
+	}
+	defer conn2.Close()
+	conn2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mustReadEnvelope(t, conn2, TypeConnected)
+	mustReadEnvelope(t, conn2, TypePlayerJoined)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.resumed) != 2 {
+		t.Errorf("resumed = %v, want exactly 2 entries", fake.resumed)
+	}
+	if len(fake.scheduled) != 1 {
+		t.Errorf("scheduled = %v, want exactly 1 entry (unchanged by the reconnect)", fake.scheduled)
+	}
+}

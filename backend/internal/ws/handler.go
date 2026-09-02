@@ -34,11 +34,12 @@ func WithAllowedOrigins(origins []string) HandlerOption {
 	}
 }
 
-// Sessions schedules a room member's session-end grace window on
-// disconnect — *round.Service satisfies this. Declared here (not
-// imported as a concrete type) so Handler does not need a second entry
-// point for tests that don't care about it.
+// Sessions resumes a room member's pending session end on connect and
+// schedules one on disconnect — *round.Service satisfies this.
+// Declared here (not imported as a concrete type) so Handler does not
+// need a second entry point for tests that don't care about it.
 type Sessions interface {
+	ResumeSession(roomID, userID string)
 	ScheduleEndSession(roomID, userID string, guest bool)
 }
 
@@ -87,6 +88,10 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
+		}
+
+		if sessions != nil {
+			sessions.ResumeSession(claims.RoomID, claims.UserID)
 		}
 
 		ident := Identity{UserID: claims.UserID, DisplayName: claims.DisplayName, Guest: claims.Guest}
