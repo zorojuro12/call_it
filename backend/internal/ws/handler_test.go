@@ -2,9 +2,11 @@ package ws
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -557,4 +559,66 @@ func mustReadEnvelope(t *testing.T, conn *websocket.Conn, wantType string) Envel
 
 func unmarshalData(env Envelope, v any) error {
 	return json.Unmarshal(env.Data, v)
+}
+
+// fakeSessions records ResumeSession and ScheduleEndSession calls
+// instead of touching any real store — the handler-level tests care
+// only about which calls the connect/disconnect paths make and with
+// what arguments, not about round.Service's actual fold behavior
+// (covered by internal/round's own tests).
+type fakeSessions struct {
+	mu        sync.Mutex
+	resumed   []string
+	scheduled []string
+}
+
+func (f *fakeSessions) ResumeSession(roomID, userID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resumed = append(f.resumed, roomID+"/"+userID)
+}
+
+func (f *fakeSessions) ScheduleEndSession(roomID, userID string, guest bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.scheduled = append(f.scheduled, fmt.Sprintf("%s/%s/%v", roomID, userID, guest))
+}
+
+func TestHandlerSchedulesSessionEndOnDisconnect(t *testing.T) {
+	issuer := newTestIssuer(t, time.Hour)
+	hub := NewHub(nil, nil)
+	fake := &fakeSessions{}
+	server := httptest.NewServer(Handler(hub, issuer, DefaultClientConfig(), nil, fake))
+	defer server.Close()
+
+	token, err := issuer.Issue(auth.Claims{UserID: "u1", DisplayName: "Ada", RoomID: "r1"})
+	if err != nil {
+		t.Fatalf("Issue error: %v", err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL)+"?token="+token, nil)
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	mustReadEnvelope(t, conn, TypeConnected)
+	mustReadEnvelope(t, conn, TypePlayerJoined)
+
+	conn.Close()
+
+	waitFor(t, func() bool {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		return len(fake.scheduled) > 0
+	})
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.scheduled) != 1 {
+		t.Fatalf("scheduled = %v, want exactly one entry", fake.scheduled)
+	}
+	want := "r1/u1/false"
+	if fake.scheduled[0] != want {
+		t.Errorf("scheduled[0] = %q, want %q", fake.scheduled[0], want)
+	}
 }

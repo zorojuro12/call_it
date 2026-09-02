@@ -1,14 +1,11 @@
 package ws
 
 import (
-	"context"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/gorilla/websocket"
 	"github.com/zorojuro12/call_it/backend/internal/auth"
-	"github.com/zorojuro12/call_it/backend/internal/domain"
 )
 
 // handlerOpts collects Handler's optional configuration, built from the
@@ -37,22 +34,22 @@ func WithAllowedOrigins(origins []string) HandlerOption {
 	}
 }
 
-// SessionEnder folds a departing account holder's net session result
-// into their persistent balance — *round.Service satisfies this.
-// Declared here (not imported as a concrete type) so Handler does not
-// need a second entry point for tests that don't care about it.
-type SessionEnder interface {
-	EndSession(ctx context.Context, roomID, userID string, guest bool) (domain.Tokens, error)
+// Sessions schedules a room member's session-end grace window on
+// disconnect — *round.Service satisfies this. Declared here (not
+// imported as a concrete type) so Handler does not need a second entry
+// point for tests that don't care about it.
+type Sessions interface {
+	ScheduleEndSession(roomID, userID string, guest bool)
 }
 
 // Handler builds an http.HandlerFunc that authenticates a room-scoped
 // JWT, upgrades the connection, and wires the resulting client into
 // hub. onMessage is the seam Phase 4b fills for gameplay; a nil value
-// makes every inbound message an unknown-type error reply. sessions is
-// called on disconnect to end the departing client's session; a nil
-// value skips that step (every existing 4a test that doesn't care
-// about it passes nil).
-func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageHandler, sessions SessionEnder, opts ...HandlerOption) http.HandlerFunc {
+// makes every inbound message an unknown-type error reply. sessions
+// resumes a pending session end on connect and schedules one on
+// disconnect; a nil value skips both steps (every existing 4a test that
+// doesn't care about it passes nil).
+func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageHandler, sessions Sessions, opts ...HandlerOption) http.HandlerFunc {
 	var o handlerOpts
 	for _, opt := range opts {
 		opt(&o)
@@ -137,9 +134,7 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 				PlayerCount: room.Count(),
 			}))
 			if sessions != nil {
-				if _, err := sessions.EndSession(context.Background(), claims.RoomID, claims.UserID, claims.Guest); err != nil {
-					log.Printf("ws: end session for %s in room %s: %v", claims.UserID, claims.RoomID, err)
-				}
+				sessions.ScheduleEndSession(claims.RoomID, claims.UserID, claims.Guest)
 			}
 		})
 	}
