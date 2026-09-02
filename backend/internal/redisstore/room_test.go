@@ -327,3 +327,62 @@ func TestJoinRoom_Rejoin(t *testing.T) {
 		t.Fatalf("JoinRoom(u3, 0) err = %v, want ErrInvalidStake — unchanged from Phase 2", err)
 	}
 }
+
+func TestClearSession(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
+		t.Fatalf("JoinRoom(u1) = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, "u2", 1000); err != nil {
+		t.Fatalf("JoinRoom(u2) = %v, want nil", err)
+	}
+
+	// A live session is claimed and cleared.
+	claimed, err := store.ClearSession(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("ClearSession(u1) = %v, want nil", err)
+	}
+	if !claimed {
+		t.Errorf("ClearSession(u1) claimed = false, want true")
+	}
+	if _, err := store.Balance(ctx, roomID, "u1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Balance(u1) after ClearSession = %v, want ErrNotFound", err)
+	}
+	if _, err := store.OpeningStake(ctx, roomID, "u1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("OpeningStake(u1) after ClearSession = %v, want ErrNotFound", err)
+	}
+
+	// A second call claims nothing.
+	claimedAgain, err := store.ClearSession(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("second ClearSession(u1) = %v, want nil", err)
+	}
+	if claimedAgain {
+		t.Errorf("second ClearSession(u1) claimed = true, want false")
+	}
+
+	// Another member's session is untouched.
+	balance, err := store.Balance(ctx, roomID, "u2")
+	if err != nil || balance != 1000 {
+		t.Errorf("Balance(u2) after clearing u1 = (%d, %v), want (1000, nil)", balance, err)
+	}
+	opening, err := store.OpeningStake(ctx, roomID, "u2")
+	if err != nil || opening != 1000 {
+		t.Errorf("OpeningStake(u2) after clearing u1 = (%d, %v), want (1000, nil)", opening, err)
+	}
+
+	// A user who never joined claims nothing.
+	claimedNever, err := store.ClearSession(ctx, roomID, "never-joined")
+	if err != nil {
+		t.Fatalf("ClearSession(never-joined) = %v, want nil", err)
+	}
+	if claimedNever {
+		t.Errorf("ClearSession(never-joined) claimed = true, want false")
+	}
+}

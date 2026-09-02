@@ -141,6 +141,34 @@ func (s *Store) JoinRoom(ctx context.Context, roomID, userID string, balance dom
 	return domain.Tokens(eff), nil
 }
 
+// ClearSession claims and clears one user's session state in a room,
+// deleting their fields from both the wallets hash and the
+// opening-stake hash in one pipeline. claimed reports whether the
+// opening-stake field existed before this call — that field, not the
+// wallet, is the claim token: settle_round.lua can resurrect a deleted
+// wallet field via HINCRBY when it credits a winner, so only the
+// opening stake (written once, by JoinRoom, and never rewritten) can
+// tell a caller "this call was the one that ended the session" from
+// "someone already ended it." Exactly one concurrent caller observes
+// claimed == true for a given session.
+func (s *Store) ClearSession(ctx context.Context, roomID, userID string) (claimed bool, err error) {
+	cmds, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HDel(ctx, RoomOpeningKey(roomID), userID)
+		pipe.HDel(ctx, RoomWalletsKey(roomID), userID)
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("redisstore: clear session for %s in room %s: %w", userID, roomID, err)
+	}
+
+	openingDeleted, err := cmds[0].(*redis.IntCmd).Result()
+	if err != nil {
+		return false, fmt.Errorf("redisstore: clear session for %s in room %s: %w", userID, roomID, err)
+	}
+
+	return openingDeleted == 1, nil
+}
+
 // Balance reads a user's session balance in a room.
 func (s *Store) Balance(ctx context.Context, roomID, userID string) (domain.Tokens, error) {
 	v, err := s.client.HGet(ctx, RoomWalletsKey(roomID), userID).Result()
