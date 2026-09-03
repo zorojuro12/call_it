@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,10 +21,13 @@ const (
 // Service opens and resolves rounds, and owns each round's server-side
 // clock.
 type Service struct {
-	ctx         context.Context
-	store       *redisstore.Store
-	broadcaster Broadcaster
-	refundGrace time.Duration
+	ctx          context.Context
+	store        *redisstore.Store
+	broadcaster  Broadcaster
+	refundGrace  time.Duration
+	sessionGrace time.Duration
+	mu           sync.Mutex
+	pending      map[string]chan struct{}
 }
 
 // NewService constructs a Service bound to store and b. ctx is the
@@ -32,7 +36,14 @@ type Service struct {
 // request never cancels a round's clock. Cancel ctx to stop every
 // in-flight timer, e.g. on process shutdown.
 func NewService(ctx context.Context, store *redisstore.Store, b Broadcaster) *Service {
-	return &Service{ctx: ctx, store: store, broadcaster: b, refundGrace: RefundGrace}
+	return &Service{
+		ctx:          ctx,
+		store:        store,
+		broadcaster:  b,
+		refundGrace:  RefundGrace,
+		sessionGrace: SessionGrace,
+		pending:      make(map[string]chan struct{}),
+	}
 }
 
 // Open opens a round in roomID on callerID's behalf, persists it, then

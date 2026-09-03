@@ -1,8 +1,10 @@
 package events
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -356,4 +358,103 @@ func TestDecodeMessageValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDecodeMessageRejectsOversizedValue(t *testing.T) {
+	topics := []string{TopicWagersPlaced, TopicRoundsSettled}
+
+	for _, topic := range topics {
+		t.Run(topic+"/over limit", func(t *testing.T) {
+			value := bytes.Repeat([]byte{'x'}, MaxMessageBytes+1)
+			ev, err := DecodeMessage(topic, value)
+			if ev != nil {
+				t.Errorf("DecodeMessage returned non-nil event %v, want nil", ev)
+			}
+			if !errors.Is(err, ErrInvalidEvent) {
+				t.Fatalf("DecodeMessage error = %v, want errors.Is(err, ErrInvalidEvent)", err)
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf("%d", len(value))) {
+				t.Errorf("DecodeMessage error %q does not name the actual length %d", err.Error(), len(value))
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf("%d", MaxMessageBytes)) {
+				t.Errorf("DecodeMessage error %q does not name the limit %d", err.Error(), MaxMessageBytes)
+			}
+		})
+
+		t.Run(topic+"/at limit", func(t *testing.T) {
+			value := bytes.Repeat([]byte{'x'}, MaxMessageBytes)
+			_, err := DecodeMessage(topic, value)
+			if !errors.Is(err, ErrInvalidEvent) {
+				t.Fatalf("DecodeMessage error = %v, want errors.Is(err, ErrInvalidEvent)", err)
+			}
+			if strings.Contains(err.Error(), fmt.Sprintf("%d", MaxMessageBytes)) {
+				t.Errorf("DecodeMessage error %q names the size limit at exactly MaxMessageBytes; the size check must not fire at the boundary", err.Error())
+			}
+		})
+	}
+}
+func TestDecodeMessageRejectsExcessivePayouts(t *testing.T) {
+	buildSettled := func(payoutCount int) RoundSettled {
+		payouts := make([]Payout, payoutCount)
+		var total int64
+		for i := range payouts {
+			payouts[i] = Payout{UserID: fmt.Sprintf("u%d", i), Amount: 1}
+			total++
+		}
+		return RoundSettled{
+			RoomID:         "r1",
+			RoundID:        "rd1",
+			IdempotencyKey: "k1",
+			WinningOutcome: 0,
+			Total:          total,
+			Dust:           0,
+			Payouts:        payouts,
+			Refunded:       false,
+		}
+	}
+
+	t.Run("over limit", func(t *testing.T) {
+		s := buildSettled(MaxPayouts + 1)
+		value, err := json.Marshal(s)
+		if err != nil {
+			t.Fatalf("json.Marshal() = %v, want nil", err)
+		}
+		if len(value) >= MaxMessageBytes {
+			t.Fatalf("encoded length %d is not under MaxMessageBytes %d; this test would re-prove the size check instead of the payout count check", len(value), MaxMessageBytes)
+		}
+
+		ev, err := DecodeMessage(TopicRoundsSettled, value)
+		if ev != nil {
+			t.Errorf("DecodeMessage returned non-nil event %v, want nil", ev)
+		}
+		if !errors.Is(err, ErrInvalidEvent) {
+			t.Fatalf("DecodeMessage error = %v, want errors.Is(err, ErrInvalidEvent)", err)
+		}
+		if !strings.Contains(err.Error(), fmt.Sprintf("%d", MaxPayouts+1)) {
+			t.Errorf("DecodeMessage error %q does not name the actual count %d", err.Error(), MaxPayouts+1)
+		}
+		if !strings.Contains(err.Error(), fmt.Sprintf("%d", MaxPayouts)) {
+			t.Errorf("DecodeMessage error %q does not name the limit %d", err.Error(), MaxPayouts)
+		}
+	})
+
+	t.Run("at limit", func(t *testing.T) {
+		s := buildSettled(MaxPayouts)
+		value, err := json.Marshal(s)
+		if err != nil {
+			t.Fatalf("json.Marshal() = %v, want nil", err)
+		}
+
+		ev, err := DecodeMessage(TopicRoundsSettled, value)
+		if err != nil {
+			t.Fatalf("DecodeMessage() error = %v, want nil", err)
+		}
+		settled, ok := ev.(RoundSettled)
+		if !ok {
+			t.Fatalf("DecodeMessage() returned %T, want RoundSettled", ev)
+		}
+		if len(settled.Payouts) != MaxPayouts {
+			t.Errorf("decoded Payouts length = %d, want %d", len(settled.Payouts), MaxPayouts)
+		}
+	})
 }

@@ -76,6 +76,7 @@ describe("room page", () => {
       display_name: "Ann",
       room_id: "r1",
       guest: true,
+      balance: 200,
     });
 
     expect(await screen.findByText(/Ann/)).toBeInTheDocument();
@@ -100,6 +101,7 @@ describe("room page", () => {
       display_name: "Ann",
       room_id: "r1",
       guest: false,
+      balance: 1000,
     });
 
     await screen.findByText(/Ann/);
@@ -131,6 +133,7 @@ describe("room page", () => {
       display_name: "Ann",
       room_id: "r1",
       guest: false,
+      balance: 1000,
     });
     await screen.findByText(/Ann/);
 
@@ -185,6 +188,7 @@ describe("room page", () => {
       display_name: "Ann",
       room_id: "r1",
       guest: false,
+      balance: 1000,
     });
     await screen.findByText(/Ann/);
     fire(instances[0], "player_joined", {
@@ -208,6 +212,7 @@ describe("room page", () => {
       room_id: "r1",
       guest: false,
       host: false,
+      balance: 1000,
     });
     await screen.findByText(/Ann/);
 
@@ -248,6 +253,7 @@ describe("room page", () => {
       room_id: "r1",
       guest: false,
       host: true,
+      balance: 1000,
     });
 
     expect(await screen.findByLabelText("Question")).toBeInTheDocument();
@@ -266,6 +272,7 @@ describe("room page", () => {
       room_id: "r1",
       guest: false,
       host: false,
+      balance: 1000,
     });
     fire(instances[0], "round_opened", {
       round_id: "rd1",
@@ -301,6 +308,7 @@ describe("room page", () => {
       room_id: "r1",
       guest: false,
       host: false,
+      balance: 1000,
     });
     fire(instances[0], "round_opened", {
       round_id: "rd1",

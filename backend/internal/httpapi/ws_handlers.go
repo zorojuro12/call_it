@@ -16,19 +16,20 @@ const (
 
 // registerWSRoutes wires the room-scoped WebSocket socket to the real
 // message router — d.Rounds and d.Wagers replace Phase 4a's nil
-// MessageHandler seam. d.Rounds also ends a departing client's session
-// on disconnect (its EndSession satisfies ws.SessionEnder).
+// MessageHandler seam. d.Rounds also schedules a departing client's
+// session-end grace window on disconnect (its ScheduleEndSession
+// satisfies ws.Sessions).
 func registerWSRoutes(mux *http.ServeMux, d Deps) {
 	router := ws.NewRouter(d.Rounds, d.Wagers)
 
-	// A nil *round.Service assigned directly to the ws.SessionEnder
+	// A nil *round.Service assigned directly to the ws.Sessions
 	// parameter would not compare equal to a nil interface (the classic
 	// typed-nil-in-interface gotcha) — Handler's own "sessions != nil"
-	// check would then pass and call EndSession on a nil receiver.
-	// Building the interface value only when d.Rounds is actually set
-	// keeps it a true nil for callers (tests) that construct Deps
-	// without a round service.
-	var sessions ws.SessionEnder
+	// check would then pass and call ScheduleEndSession on a nil
+	// receiver. Building the interface value only when d.Rounds is
+	// actually set keeps it a true nil for callers (tests) that
+	// construct Deps without a round service.
+	var sessions ws.Sessions
 	if d.Rounds != nil {
 		sessions = d.Rounds
 	}

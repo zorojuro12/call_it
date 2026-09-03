@@ -1,7 +1,11 @@
 # CallIt — Design Spec
 
 **Date:** 2026-08-21
-**Status:** Approved for planning
+**Status:** Implemented through Phase 7c (see `docs/plans/2026-08-21-implementation-plan.md`
+§9 for phase-by-phase status). This remains the living design doc — amendments
+discovered during implementation are folded in here rather than left to drift;
+see `docs/project-history.md` for the phase-by-phase record of what changed
+and why.
 
 ## 1. Purpose
 
@@ -156,13 +160,21 @@ token gestures at each technology.
   of the board before resolving — not that no individual stake can ever
   be guessed.
 
-- **Known limitation: no reconnect-with-session-resume (Phase 4b Task
-  8 CP2).** `EndSession` — folding a session's net result into an
-  account holder's persistent balance — fires on socket disconnect. A
-  player who drops and reconnects therefore ends their session and
-  starts a new one at the room's buy-in, losing any in-room profit or
-  loss accrued before the drop. Fixing this needs a grace window before
-  a disconnect is treated as final, deferred to Phase 7 hardening.
+- **Reconnect resumes a session within a 30-second grace window (closed
+  Phase 7c).** A socket disconnect no longer folds a session
+  immediately: it schedules the fold after `round.SessionGrace`, and a
+  reconnect within that window cancels the pending fold, leaving the
+  session's Redis state — wallet and opening stake — untouched. A
+  session that does expire is folded exactly once: the fold atomically
+  claims the session (`Store.ClearSession`) before crediting anything,
+  so a rapid reconnect racing the fold's own timer can never double-fold
+  the same result. A session that is genuinely gone starts a fresh one
+  at the room's buy-in on rejoin, same as always. The client does not
+  auto-reconnect on a dropped socket — a plain page reload is what
+  exercises this today, and it now also carries the reconnecting
+  client's own current balance, so the reload displays it rather than a
+  cached value from the original join. A reconnect timer with backoff
+  remains a Phase 8 candidate.
 
 ## 5. Write Path / Data Flow
 

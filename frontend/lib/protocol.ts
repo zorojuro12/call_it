@@ -42,6 +42,7 @@ export type ConnectedEvent = {
   room_id: string;
   guest: boolean;
   host: boolean;
+  balance: number;
 };
 
 export type PresenceEvent = {

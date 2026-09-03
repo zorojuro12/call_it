@@ -84,7 +84,11 @@ function isStale(state: RoundState, roundID: string): boolean {
 export function reduceRound(state: RoundState, action: RoundAction): RoundState {
   switch (action.type) {
     case "connected":
-      return { ...state, self_id: action.data.user_id, is_host: action.data.host };
+      // balance comes from the server's own live read, not a client-
+      // cached value — the only way a reload can show a session's
+      // actual current balance instead of a stale one from the
+      // original join.
+      return { ...state, self_id: action.data.user_id, is_host: action.data.host, balance: action.data.balance };
 
     case "round_opened":
       return {

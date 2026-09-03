@@ -1,14 +1,12 @@
 package ws
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/gorilla/websocket"
 	"github.com/zorojuro12/call_it/backend/internal/auth"
-	"github.com/zorojuro12/call_it/backend/internal/domain"
 )
 
 // handlerOpts collects Handler's optional configuration, built from the
@@ -37,22 +35,25 @@ func WithAllowedOrigins(origins []string) HandlerOption {
 	}
 }
 
-// SessionEnder folds a departing account holder's net session result
-// into their persistent balance — *round.Service satisfies this.
-// Declared here (not imported as a concrete type) so Handler does not
-// need a second entry point for tests that don't care about it.
-type SessionEnder interface {
-	EndSession(ctx context.Context, roomID, userID string, guest bool) (domain.Tokens, error)
+// Sessions resumes a room member's pending session end on connect,
+// schedules one on disconnect, and reports a room member's current
+// balance — *round.Service satisfies this. Declared here (not imported
+// as a concrete type) so Handler does not need a second entry point for
+// tests that don't care about it.
+type Sessions interface {
+	ResumeSession(roomID, userID string)
+	ScheduleEndSession(roomID, userID string, guest bool)
+	Balance(roomID, userID string) (int64, error)
 }
 
 // Handler builds an http.HandlerFunc that authenticates a room-scoped
 // JWT, upgrades the connection, and wires the resulting client into
 // hub. onMessage is the seam Phase 4b fills for gameplay; a nil value
-// makes every inbound message an unknown-type error reply. sessions is
-// called on disconnect to end the departing client's session; a nil
-// value skips that step (every existing 4a test that doesn't care
-// about it passes nil).
-func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageHandler, sessions SessionEnder, opts ...HandlerOption) http.HandlerFunc {
+// makes every inbound message an unknown-type error reply. sessions
+// resumes a pending session end on connect and schedules one on
+// disconnect; a nil value skips both steps (every existing 4a test that
+// doesn't care about it passes nil).
+func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageHandler, sessions Sessions, opts ...HandlerOption) http.HandlerFunc {
 	var o handlerOpts
 	for _, opt := range opts {
 		opt(&o)
@@ -92,10 +93,35 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 			return
 		}
 
+		if sessions != nil {
+			sessions.ResumeSession(claims.RoomID, claims.UserID)
+		}
+
 		ident := Identity{UserID: claims.UserID, DisplayName: claims.DisplayName, Guest: claims.Guest}
 		c := NewClient(conn, ident, cfg)
 		c.RoomID = claims.RoomID
 		room := hub.Join(claims.RoomID, c)
+
+		// Balance is looked up only after hub.Join, deliberately: it is a
+		// real Redis round trip, and this client must already be a room
+		// member before anything that takes real I/O runs — otherwise the
+		// window between this connection's handshake completing and its
+		// hub.Join actually landing widens enough for it to miss a
+		// broadcast another member's action sends in between.
+		// ResumeSession above has no such cost (mutex-only, no I/O), which
+		// is why it alone runs ahead of hub.Join.
+		var balance int64
+		if sessions != nil {
+			balance, err = sessions.Balance(claims.RoomID, claims.UserID)
+			if err != nil {
+				// Best-effort: the connection itself is already real by
+				// this point, and a display-only balance is not worth
+				// failing it over. JoinRoom always runs (via the REST
+				// join call) before a client ever holds a room token to
+				// connect with, so this should not happen in practice.
+				log.Printf("ws: read balance for %s in room %s: %v", claims.UserID, claims.RoomID, err)
+			}
+		}
 
 		c.Send(mustEncode(TypeConnected, ConnectedEvent{
 			UserID:      claims.UserID,
@@ -103,6 +129,7 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 			RoomID:      claims.RoomID,
 			Guest:       claims.Guest,
 			Host:        claims.Host,
+			Balance:     balance,
 		}))
 
 		// Tell the newcomer about every member already in the room —
@@ -137,9 +164,7 @@ func Handler(hub *Hub, issuer *auth.Issuer, cfg ClientConfig, onMessage MessageH
 				PlayerCount: room.Count(),
 			}))
 			if sessions != nil {
-				if _, err := sessions.EndSession(context.Background(), claims.RoomID, claims.UserID, claims.Guest); err != nil {
-					log.Printf("ws: end session for %s in room %s: %v", claims.UserID, claims.RoomID, err)
-				}
+				sessions.ScheduleEndSession(claims.RoomID, claims.UserID, claims.Guest)
 			}
 		})
 	}

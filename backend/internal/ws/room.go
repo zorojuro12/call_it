@@ -13,6 +13,7 @@ type DropCounter interface {
 type Room struct {
 	ID    string
 	cmds  chan any
+	done  chan struct{}
 	sync  Recorder
 	drops DropCounter
 }
@@ -52,12 +53,22 @@ type shutdownCmd struct {
 // enqueue-to-write latency observation; drops counts a payload dropped
 // by a full send buffer. Either may be nil.
 func NewRoom(id string, onEmpty func(roomID string), sync Recorder, drops DropCounter) *Room {
-	r := &Room{ID: id, cmds: make(chan any), sync: sync, drops: drops}
+	r := &Room{ID: id, cmds: make(chan any), done: make(chan struct{}), sync: sync, drops: drops}
 	go r.run(onEmpty)
 	return r
 }
 
+// run owns the room's whole lifecycle. done closes when it returns —
+// via the empty closeCmd branch below, the only exit — so a caller
+// racing a send against reaping (Leave, Broadcast, Members, Count) can
+// select on done instead of blocking on cmds forever: once run() has
+// already decided to close, cmds has no reader left, and an unguarded
+// send would hang. shutdownCmd's own exit is unreachable by that race
+// (Hub.Shutdown is a one-time, process-ending call with no room-level
+// caller left to race it), but closes done too since it is run()'s
+// only other return.
 func (r *Room) run(onEmpty func(roomID string)) {
+	defer close(r.done)
 	clients := make(map[*Client]struct{})
 
 	for cmd := range r.cmds {
@@ -140,9 +151,16 @@ func (r *Room) Join(c *Client) {
 }
 
 // Leave removes c from the room's membership and closes its send
-// channel. A client that is not a member is a harmless no-op.
+// channel. A client that is not a member is a harmless no-op, and so is
+// a call arriving after the room has already reaped itself (r.done):
+// without that guard, this send would block forever on cmds once run()
+// has no reader left — the exact hang a caller two steps behind a
+// concurrent reap could otherwise hit.
 func (r *Room) Leave(c *Client) {
-	r.cmds <- leaveCmd{c: c}
+	select {
+	case r.cmds <- leaveCmd{c: c}:
+	case <-r.done:
+	}
 }
 
 // Broadcast delivers payload to every member's send channel,
@@ -150,16 +168,25 @@ func (r *Room) Leave(c *Client) {
 // call, and is instead evicted and counted as a drop. The enqueue
 // timestamp is stamped once, here, so the sync-latency metric includes
 // time spent waiting on this room's own command channel, not only time
-// in a client's send buffer.
+// in a client's send buffer. A room that has already reaped itself
+// (r.done) makes this a silent no-op too, same as Leave — the room
+// being gone is not this call's problem to report.
 func (r *Room) Broadcast(payload []byte) {
-	r.cmds <- broadcastCmd{payload: payload, enqueued: time.Now()}
+	select {
+	case r.cmds <- broadcastCmd{payload: payload, enqueued: time.Now()}:
+	case <-r.done:
+	}
 }
 
 // Members returns a snapshot of the room's current identities, in
-// unspecified order.
+// unspecified order — nil if the room has already reaped itself.
 func (r *Room) Members() []Identity {
 	reply := make(chan []Identity)
-	r.cmds <- membersCmd{reply: reply}
+	select {
+	case r.cmds <- membersCmd{reply: reply}:
+	case <-r.done:
+		return nil
+	}
 	return <-reply
 }
 
@@ -184,6 +211,10 @@ func (r *Room) shutdown() {
 // Count returns the number of clients currently in the room.
 func (r *Room) Count() int {
 	reply := make(chan int)
-	r.cmds <- countCmd{reply: reply}
+	select {
+	case r.cmds <- countCmd{reply: reply}:
+	case <-r.done:
+		return 0
+	}
 	return <-reply
 }

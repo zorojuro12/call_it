@@ -260,9 +260,24 @@ Gotchas).
   `redisstore/room.go:114`, not a Lua script), so the opening stake never
   reaches Kafka or the ledger. The reconciliation identity is
   `redis_wallet(user, room) − opening_stake(user, room) ==
-  ledger_balance(user, room)` — do not "fix" a reconciliation check by
-  comparing the ledger directly to the absolute Redis wallet, that
-  comparison is false by construction.
+  ledger_balance(user, room)` for a **live** session — do not "fix" a
+  reconciliation check by comparing the ledger directly to the absolute
+  Redis wallet, that comparison is false by construction. A folded
+  session has no Redis wallet left to compare against at all: `Store.
+  ClearSession` deletes both the wallet and opening-stake fields when
+  `round.Service.EndSession` folds a session's result (Phase 7c), so the
+  identity applies only while a session is still live.
+- **A session's result is folded exactly once, and the fold claims the
+  session before it credits (Phase 7c).** `Store.ClearSession`'s
+  opening-stake `HDEL` reply is the claim token — `1` means this call is
+  the one that gets to credit, `0` means someone already did. The wallet
+  cannot serve as the claim instead: `settle_round.lua` can resurrect a
+  deleted wallet field via `HINCRBY` when it credits a winner, so a
+  wallet's mere existence proves nothing about whether this session has
+  already been folded. `EndSession` reads the session's state, then
+  claims it, then credits — never the reverse: crediting before the
+  claim succeeds would mint tokens on a retry that raced the claim,
+  which this codebase's invariants forbid.
 - **Kafka broker access is equivalent to ledger-write access.**
   `cmd/ledger-worker` writes PostgreSQL money rows from any message on the
   `wagers-placed`/`rounds-settled` topics without authenticating the

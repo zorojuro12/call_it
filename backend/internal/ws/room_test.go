@@ -194,6 +194,46 @@ func TestRoomOnEmptyNilIsLegal(t *testing.T) {
 	}
 }
 
+// TestBroadcastAfterReapDoesNotHang is a regression test for a race
+// found while writing Phase 7c's disconnect-grace-window test: when the
+// last member leaves, removeAndNotify's onEmpty runs in its own
+// goroutine, concurrently with whatever the caller of Leave does next.
+// If that next call is Broadcast (as the WS handler's disconnect path
+// always does, to announce player_left) and onEmpty's round trip
+// reaches this room's own close() and returns before Broadcast's send
+// arrives, run() has already exited and nobody is left reading cmds —
+// an unguarded send would block forever. onEmpty here calls room.close()
+// directly, standing in for the hub's real reap step, to force that
+// ordering deterministically instead of hoping a real race reproduces.
+func TestBroadcastAfterReapDoesNotHang(t *testing.T) {
+	var room *Room
+	room = NewRoom("r1", func(roomID string) { room.close() }, nil, nil)
+	c1 := newClient(nil, Identity{UserID: "u1"}, 4)
+	room.Join(c1)
+
+	room.Leave(c1)
+	waitFor(t, func() bool {
+		select {
+		case <-room.done:
+			return true
+		default:
+			return false
+		}
+	})
+
+	done := make(chan struct{})
+	go func() {
+		room.Broadcast([]byte("late broadcast"))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Broadcast after the room reaped itself did not return — regression of the room.done guard")
+	}
+}
+
 // stubDropCounter counts Inc() calls.
 type stubDropCounter struct {
 	calls int
