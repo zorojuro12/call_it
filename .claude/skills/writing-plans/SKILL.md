@@ -13,7 +13,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
 
-**Context:** If working in an isolated worktree, it should have been created via the `superpowers:using-git-worktrees` skill at execution time.
+**Context:** If working in an isolated worktree, it should have been created via the `using-git-worktrees` skill at execution time. (No `superpowers:` prefix — that skill is installed project-locally here and the prefixed name does not resolve, same as `finishing-a-development-branch`.)
 
 **Save plans to:** `docs/plans/YYYY-MM-DD-<feature-name>.md`
 - (This project keeps all plans in `docs/plans/`, alongside the top-level
@@ -46,14 +46,14 @@ independently testable deliverable.
 
 ## Bite-Sized Task Granularity
 
-**Each step is one action (2-5 minutes). A task may contain multiple
-checkpoints — one per distinct behavior/case — each checkpoint running its
-own cycle:**
-- "Write the failing test" - step
-- "Run it to make sure it fails" - step
-- "Implement the minimal code to make the test pass" - step
-- "Run the tests and make sure they pass" - step
-- "Commit" - step
+**A task may contain multiple checkpoints — one per distinct behavior/case —
+each running its own RED→GREEN cycle in two steps:**
+- **Step 1** — write the failing test, then run it. Expect FAIL.
+- **Step 2** — implement, then verify-and-commit in one chained command.
+
+The commit never needs a step of its own. Chained behind the verification
+command with `&&` it becomes free *and* safer: a red test makes the commit
+unreachable rather than merely inadvisable.
 
 A task with one straightforward behavior has one checkpoint (one commit). A
 task covering several cases gets one checkpoint per case (several commits) —
@@ -67,13 +67,37 @@ the behavior they cover. A checkpoint whose test passes the moment it's written
 is the signal that granularity has been pushed one notch past where the cycle
 actually divides.
 
-This matters beyond tidiness. Every checkpoint's Step 2 says "expect FAIL", so
+This matters beyond tidiness. Every checkpoint's Step 1 says "expect FAIL", so
 a checkpoint that expects PASS contradicts its own template — and
 `executing-plans` requires stopping on any mismatch between an instruction and
 reality. A cold executor hits that, halts, and may "fix" a correct test until
 it fails. (Observed in the Phase 1 plan, 2026-08-23: four such checkpoints —
 regression pins for behavior an earlier checkpoint's implementation already
 satisfied.)
+
+**Name the observable signal, at the interface the test actually calls.** A
+checkpoint can also fail to RED for a second, unrelated reason: the behavior it
+specifies is real, but the tested interface can't *see* it. Before writing a
+checkpoint, answer — what value, error, or side effect changes at the public
+surface this checkpoint's test calls? Not "the script sets status X internally,"
+but "the wrapper returns `ErrAlreadyLocked`." If no such signal can be named,
+the checkpoint is unfalsifiable by construction, and no reordering fixes it.
+
+Two ways out, both decided while writing the plan rather than discovered
+mid-execution:
+
+1. **The distinction doesn't matter to callers** → merge the checkpoint into a
+   neighbor that does have an observable delta.
+2. **The distinction does matter** → make "extend the interface to surface this
+   case" its own earlier checkpoint, then checkpoint the behavior against it.
+
+This is the failure mode of any layer whose lower level has more states than its
+wrapper exposes — a wrapper over a script, a client over a protocol, an ORM over
+a stored procedure. (Observed in Phase 2, 2026-08-24: `lock_round.lua`'s
+`ALREADY_LOCKED` case was black-box indistinguishable from its unconditional-OK
+predecessor at the Go wrapper's return type. Cost a full unwind — revert the
+script, re-run the test to prove it still passed, then recombine three planned
+checkpoints into one commit.)
 
 ## Plan Document Header
 
@@ -83,6 +107,12 @@ satisfied.)
 # [Feature Name] Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use the `executing-plans` skill to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Delegation (optional):** [Omit this line entirely for a fully inline
+plan — that is still the default and needs no extra step. Only add it if
+Self-Review's delegation check below found qualifying tasks: name them,
+e.g. "Tasks 1–5 are delegated, one subagent per task, via the
+`delegating-plan-tasks` skill. Task N is executed inline — [one line why]."]
 
 **Goal:** [One sentence describing what this builds]
 
@@ -139,7 +169,7 @@ this isn't a universal improvement.
 
 **Checkpoint 1: [specific behavior or case this checkpoint covers]**
 
-- [ ] **Step 1: Write a failing test for this exact behavior**
+- [ ] **Step 1: Write the failing test, then run it**
 
 Spec: [exact input(s) → exact expected output or error, stated precisely
 enough that two different implementers would write the same test — e.g.
@@ -148,41 +178,43 @@ case." Show a code block only if a subtle assertion detail needs pinning
 down (a specific float tolerance, an exact error message string) — not by
 default.]
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: [exact command]
+Run: [exact scoped command — see Test Commands below]
 Expected: FAIL with [exact expected failure reason]
 
-- [ ] **Step 3: Implement to satisfy the test**
+- [ ] **Step 2: Implement, then verify-and-commit in one command**
 
 Contract: [the behavior in 1-2 lines, using the exact signature from
 Interfaces above. Not a function body — the executor writes that against
 this contract and the test from Step 1.]
 
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: [exact command]
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
 ```bash
-git add [exact paths]
-git commit -m "[exact type: description]"
+[exact scoped test command] && \
+  git add [exact paths] && \
+  git commit -m "[exact type: description]"
 ```
+
+Expected: PASS, then one commit.
 
 **Checkpoint 2: [next behavior or case, if this task has one]**
 
-- [ ] Step 1: Write a failing test for: [exact spec, as above]
-- [ ] Step 2: Run — expect FAIL
-- [ ] Step 3: Implement to satisfy: [exact contract, as above]
-- [ ] Step 4: Run — expect PASS
-- [ ] Step 5: Commit
-
-[Repeat Checkpoint N for each further distinct behavior. Omit Checkpoint 2+
-entirely when the task genuinely has only one behavior — a single checkpoint
-is a complete, valid task, not a truncated one.]
+[Same two steps. Omit Checkpoint 2+ entirely when the task genuinely has only
+one behavior — a single checkpoint is a complete, valid task, not a truncated
+one.]
 ````
+
+Chain the commit with `&&`, never `;` and never separate lines — the commit
+must be unreachable when the test fails. `git add` names exact paths; never
+`git add -A` or `git add .`.
+
+## Test Commands
+
+- **Inside a checkpoint:** scope to the package or module under test, and to
+  the single test when that package is slow.
+- **At a task boundary:** the full suite once, chained into one call.
+- **Never** put the full-suite command inside a checkpoint.
+
+Include the flag that defeats cached results (`-count=1` in Go, equivalent
+elsewhere) — a cached PASS from the previous checkpoint masks a genuine RED.
 
 ## No Placeholders
 
@@ -212,6 +244,17 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 **2. Placeholder scan:** Search your plan for red flags — any of the patterns from the "No Placeholders" section above. Fix them.
 
 **3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in Task 3 but `clearFullLayers()` in Task 7 is a bug.
+
+**4. Delegation eligibility (optional):** For each task, apply
+`delegating-plan-tasks`' "What to Delegate, and What Not To" rule —
+mechanical against a clear, already-known contract (a repository over a
+known schema, a config surface, a decode/validate layer, a binary wiring
+existing pieces together) vs. the phase's flagship correctness work (the
+test that is *evidence* for a claim the project makes — keep that inline,
+cross-task continuity pays there and it's the wrong place to absorb a
+process experiment). Tag qualifying tasks in the header's `**Delegation:**`
+line. **Skip this check entirely for a plan you want to keep fully
+inline** — it's the only optional item in this list.
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
@@ -252,6 +295,27 @@ carries its own Global Constraints and any amendments it makes to a parent plan
 or spec. See `docs/dev-workflow-guide.md` for this project's two-model loop.
 
 (Upstream also offers a subagent-driven mode — a fresh subagent per task with
-two-stage review. That skill isn't installed in this project; inline execution
-is the deliberate default. Install `subagent-driven-development` from the
-superpowers checkout if that changes.)
+two-stage review. `subagent-driven-development` is still declined here — the
+objection was always its ceremony, not delegation itself
+(`docs/dev-workflow-guide.md` §9). Delegation without the ceremony exists as
+the project-local `delegating-plan-tasks` skill, invoked from `executing-plans`
+Step 2 for whichever tasks this plan's header opts in via Self-Review's
+delegation check above. **Inline execution remains the default** — a plan
+that skips that check, or writes no `**Delegation:**` line, runs entirely
+inline exactly as before.)
+
+## Relationship to the portable copy
+
+This file is the CallIt-adapted copy. A generalized version lives in the
+skills library at `~/projects/claude-skills/writing-plans/` — same rules, with
+the project-specific parts (plan location, `docs/dev-workflow-guide.md` links,
+`dev` branch, CallIt examples) stripped, and the spec-driven-vs-code-driven
+choice stated as a fork rather than a decision already made.
+
+**When a rule here changes, decide which copy it belongs to.** The test: did you
+invent a rule, or set a value? Rules go to the library too; values stay here.
+See `docs/dev-workflow-guide.md` §9 for the full split and why the library isn't
+live-loaded from `~/.claude/skills/`.
+
+Upstream is `obra/superpowers`, cloned read-only at `~/projects/superpowers` —
+don't edit that checkout.

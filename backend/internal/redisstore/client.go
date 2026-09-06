@@ -30,6 +30,15 @@ func New(addr string, db int) (*Store, error) {
 		return nil, fmt.Errorf("redisstore: connect to %s db %d: %w", addr, db, err)
 	}
 
+	// Preloaded so a freshly constructed Store's first pipelined EVALSHA
+	// (WagerPreflight) never depends on some other call site having
+	// warmed the script cache first — fails fast, matching the Ping
+	// check just above.
+	if err := rateLimitScript.Load(context.Background(), client).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("redisstore: load rate_limit.lua on %s db %d: %w", addr, db, err)
+	}
+
 	return &Store{
 		client:       client,
 		outboxStream: OutboxStream,

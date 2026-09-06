@@ -45,7 +45,7 @@ func TestNewMux_HealthzRouting(t *testing.T) {
 		{"unknown path 404s", http.MethodGet, "/does-not-exist", http.StatusNotFound},
 	}
 
-	mux := NewMux()
+	mux := NewMux(Deps{})
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

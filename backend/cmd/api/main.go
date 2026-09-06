@@ -12,8 +12,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zorojuro12/call_it/backend/internal/account"
+	"github.com/zorojuro12/call_it/backend/internal/auth"
 	"github.com/zorojuro12/call_it/backend/internal/config"
 	"github.com/zorojuro12/call_it/backend/internal/httpapi"
+	"github.com/zorojuro12/call_it/backend/internal/metrics"
+	"github.com/zorojuro12/call_it/backend/internal/redisstore"
+	"github.com/zorojuro12/call_it/backend/internal/room"
+	"github.com/zorojuro12/call_it/backend/internal/round"
+	"github.com/zorojuro12/call_it/backend/internal/wager"
+	"github.com/zorojuro12/call_it/backend/internal/ws"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -34,13 +42,55 @@ func run() error {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 
-	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: httpapi.NewMux(),
+	store, err := redisstore.New(cfg.RedisAddr, cfg.RedisDB)
+	if err != nil {
+		return fmt.Errorf("connecting to redis: %w", err)
 	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			logger.Error("closing redis store", "error", err)
+		}
+	}()
+
+	issuer, err := auth.NewIssuer([]byte(cfg.JWTSecret), cfg.JWTTTL)
+	if err != nil {
+		return fmt.Errorf("constructing token issuer: %w", err)
+	}
+
+	reg := metrics.NewRegistry()
+	accounts := account.NewService(store, issuer)
+	rooms := room.NewService(store, issuer)
+	hub := ws.NewHub(reg.Histogram(metrics.NameWSSync), reg.Counter(metrics.NameWSSendDropped))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// roundsCtx is the base context every round's server-side timer
+	// runs against — not the shutdown-signal ctx above, so a round's
+	// clock isn't cancelled by the same signal that starts graceful
+	// shutdown; roundsCancel below stops every in-flight timer
+	// explicitly, after the server has stopped accepting new work but
+	// before the hub disconnects every client.
+	roundsCtx, roundsCancel := context.WithCancel(context.Background())
+	defer roundsCancel()
+	rounds := round.NewService(roundsCtx, store, hub)
+	wagers := wager.NewService(store, hub, reg.Histogram(metrics.NameWagerPlaceOK), reg.Histogram(metrics.NameWagerPlaceErr))
+
+	mux := httpapi.NewMux(httpapi.Deps{
+		Accounts:       accounts,
+		Rooms:          rooms,
+		Rounds:         rounds,
+		Wagers:         wagers,
+		Store:          store,
+		Issuer:         issuer,
+		Hub:            hub,
+		AllowedOrigins: cfg.AllowedOrigins,
+	})
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", cfg.Port),
+		Handler: httpapi.CORS(cfg.AllowedOrigins)(mux),
+	}
 
 	serverErr := make(chan error, 1)
 	go func() {
@@ -51,6 +101,24 @@ func run() error {
 		}
 		serverErr <- nil
 	}()
+
+	// The metrics listener is a separate http.Server on its own,
+	// default-disabled address — never wrapped in httpapi.CORS, never
+	// registered on mux. CLAUDE.md: metrics are process-aggregate only,
+	// and the browser origin allowlist has exactly one definition.
+	var metricsServer *http.Server
+	if cfg.MetricsAddr != "" {
+		metricsServer = &http.Server{
+			Addr:    cfg.MetricsAddr,
+			Handler: metrics.Handler(reg),
+		}
+		go func() {
+			logger.Info("metrics listener starting", "addr", cfg.MetricsAddr)
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serverErr <- err
+			}
+		}()
+	}
 
 	select {
 	case err := <-serverErr:
@@ -65,6 +133,13 @@ func run() error {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("metrics listener graceful shutdown: %w", err)
+		}
+	}
+	roundsCancel()
+	hub.Shutdown()
 
 	logger.Info("server stopped cleanly")
 	return nil

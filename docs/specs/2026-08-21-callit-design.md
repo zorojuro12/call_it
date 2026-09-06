@@ -1,7 +1,11 @@
 # CallIt — Design Spec
 
 **Date:** 2026-08-21
-**Status:** Approved for planning
+**Status:** Implemented through Phase 7c (see `docs/plans/2026-08-21-implementation-plan.md`
+§9 for phase-by-phase status). This remains the living design doc — amendments
+discovered during implementation are folded in here rather than left to drift;
+see `docs/project-history.md` for the phase-by-phase record of what changed
+and why.
 
 ## 1. Purpose
 
@@ -42,9 +46,10 @@ token gestures at each technology.
   link** generated at room creation.
 - **Guests**: no account. Provide only a display name. Get a session-scoped
   balance equal to the room's buy-in; wiped when the session ends.
-- **Account holders**: persistent identity (login mechanism — email or
-  OAuth — to be finalized during implementation planning). Persistent token
-  balance that carries across sessions.
+- **Account holders**: persistent identity. The login mechanism was left
+  open here and settled during planning as **email + password (argon2id,
+  JWT HS256)** — plan §2, implemented Phase 3. OAuth was not adopted.
+  Persistent token balance that carries across sessions.
 - **Room buy-in is host-configurable** at room creation time (not a fixed
   platform constant).
 - Account holders may stake **up to 3x the room's buy-in**, bounded by
@@ -55,13 +60,34 @@ token gestures at each technology.
 - At session end, an account holder's **net profit/loss** for that session
   (not their final balance) is added to their persistent account total.
   Persistent balance floors at 0 — a session can never cost more than what
-  was staked into it.
+  was staked into it. Joining a room does **not** debit the persistent
+  balance up front — only the net delta at session end does, which is
+  what makes the 3x-cap-vs-actual-balance check at join time (this
+  section, above) and the floor-at-0 rule both apply to the same number
+  exactly once, not twice.
+- Persistent accounts (email + password, argon2id, JWT HS256) live in
+  **Redis** for now, not PostgreSQL — implemented Phase 3
+  (`docs/plans/2026-08-25-phase-3-auth-rest.md` Amendment B1). Phase 3's
+  dependency graph only reaches Phases 0 and 2, not 5, so storing
+  credentials in PostgreSQL would have pulled most of Phase 5's ledger
+  schema forward. Whether accounts migrate to PostgreSQL alongside the
+  ledger was left open here and **resolved at Phase 5's planning pass:
+  they stay in Redis, and PostgreSQL holds monetary history only** (plan
+  §9, "Phase 5 note"). Credentials are not monetary history, and the
+  ledger references `user_id` as an opaque identifier it never joins on.
+  Revisit at Phase 7 — the real argument for migrating is foreign-key
+  integrity between ledger accounts and users, which is a hardening
+  concern.
 
 ### Refills
 
-- If an account holder's persistent balance drops below a low threshold
-  (exact value TBD in planning — e.g. 20% of the platform refill target),
-  they may **manually claim a refill**.
+- An account holder whose persistent balance is **below the platform
+  refill target** may **manually claim a refill**. The separate, lower
+  eligibility threshold this bullet originally proposed was **removed at
+  Phase 1's planning pass** (plan §8, `docs/plans/2026-08-23-phase-1-domain-core.md`
+  §A1–A3): it created a dead zone between the threshold and the target, and
+  the 3-per-week quota was always the real limiter. Eligibility is exactly
+  `balance < RefillTarget` — `domain.CanRefill`, `internal/domain/refill.go`.
 - A refill tops the account balance up to a **fixed platform-wide amount**
   (independent of any specific room's buy-in, since refills happen before
   a room is chosen).
@@ -71,6 +97,17 @@ token gestures at each technology.
 
 ## 4. Gameplay & Round Lifecycle
 
+- **Round control travels over the WebSocket, not REST** (Phase 4b
+  Amendment D1). Room creation and joining stay on REST — they happen
+  before any socket exists — but opening a round, wagering, and
+  resolving are all socket messages (`create_round`, `place_wager`,
+  `resolve_round`), for three reasons: the wager path's <15 ms p99
+  target (§7) works against a fresh HTTP request per wager; the host's
+  identity is already verified on the socket via the room-scoped JWT,
+  so a REST route would re-verify the same claim to reach the same
+  room; and every one of these actions produces a broadcast, so
+  handling them where the room's connected clients already live avoids
+  a REST handler reaching into the WebSocket hub to publish.
 - The host manually types each round's question and defines **2-4 custom
   outcome options** (not fixed to binary Yes/No) — there is no external
   data feed to consult, since these are live, in-the-moment events on
@@ -123,6 +160,22 @@ token gestures at each technology.
   of the board before resolving — not that no individual stake can ever
   be guessed.
 
+- **Reconnect resumes a session within a 30-second grace window (closed
+  Phase 7c).** A socket disconnect no longer folds a session
+  immediately: it schedules the fold after `round.SessionGrace`, and a
+  reconnect within that window cancels the pending fold, leaving the
+  session's Redis state — wallet and opening stake — untouched. A
+  session that does expire is folded exactly once: the fold atomically
+  claims the session (`Store.ClearSession`) before crediting anything,
+  so a rapid reconnect racing the fold's own timer can never double-fold
+  the same result. A session that is genuinely gone starts a fresh one
+  at the room's buy-in on rejoin, same as always. The client does not
+  auto-reconnect on a dropped socket — a plain page reload is what
+  exercises this today, and it now also carries the reconnecting
+  client's own current balance, so the reload displays it rather than a
+  cached value from the original join. A reconnect timer with backoff
+  remains a Phase 8 candidate.
+
 ## 5. Write Path / Data Flow
 
 1. Client sends a wager over an authenticated WebSocket connection
@@ -161,6 +214,12 @@ token gestures at each technology.
   participant's identity and room id.
 - The client presents this JWT when opening the WebSocket connection.
   Verified server-side without a per-message database hit.
+- The token carries the participant's display name as a claim (Amendment
+  B5, `docs/plans/2026-08-25-phase-3-auth-rest.md`), so no Redis key
+  holds it and no per-message lookup is needed for identity — Phase 4's
+  WebSocket handler reads it straight from the verified claims at
+  connection time. Guests, who have no `user:{id}` hash at all, are
+  covered by the same mechanism.
 
 ## 7. Performance & Scale Targets (unchanged from original brief)
 
@@ -193,7 +252,11 @@ that plan is the authoritative reference for each:
 
 - Account login mechanism → email + password, argon2id, JWT HS256
   (plan §2).
-- Refill threshold and platform-wide refill target → plan §8.
+- Refill eligibility and platform-wide refill target → plan §8. The
+  proposed separate threshold was removed rather than given a value; see
+  §3's Refills bullet above.
+- Whether persistent accounts migrate to PostgreSQL alongside the ledger →
+  **no**, they stay in Redis (plan §9, "Phase 5 note"). Revisit at Phase 7.
 - Redis key schema and Lua script contracts → plan §4 and §5.
 - Go WebSocket hub internals → plan §9, phase 4 (per-room owner goroutine,
   bounded send buffers, ping/pong heartbeat).

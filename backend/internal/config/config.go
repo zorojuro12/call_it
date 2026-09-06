@@ -5,18 +5,38 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"strconv"
+	"strings"
+	"time"
 )
 
-// Config holds Phase 0's configuration surface. Fields for services this
-// binary doesn't talk to yet (Redis, Postgres, Kafka, JWT) are added in
-// the phase that introduces that integration, not speculatively here.
+// minJWTSecretLen is the floor on the HMAC signing key. HS256's key
+// should be at least as long as the hash output it produces, or the
+// signature's effective strength drops below the algorithm's.
+const minJWTSecretLen = 32
+
+const (
+	defaultJWTTTL = 2 * time.Hour
+	minJWTTTL     = time.Minute
+	maxJWTTTL     = 24 * time.Hour
+)
+
+// Config holds cmd/api's configuration surface. Postgres and Kafka never
+// appear here — cmd/api never talks to either directly (CLAUDE.md: the
+// WebSocket server never writes PostgreSQL directly); those surfaces
+// belong to MigrateConfig and RelayConfig, the binaries that do.
 type Config struct {
-	Port      int
-	Env       string
-	LogLevel  string
-	RedisAddr string
-	RedisDB   int
+	Port           int
+	Env            string
+	LogLevel       string
+	RedisAddr      string
+	RedisDB        int
+	JWTSecret      string        // REQUIRED — no default, min 32 bytes
+	JWTTTL         time.Duration // default 2h, valid 1m..24h
+	AllowedOrigins []string      // REQUIRED when Env == "production"; defaults to localhost:3000 otherwise
+	MetricsAddr    string        // optional host:port; empty means the metrics listener is disabled
 }
 
 var validEnvs = map[string]bool{
@@ -45,6 +65,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		LogLevel:  "info",
 		RedisAddr: "localhost:6379",
 		RedisDB:   0,
+		JWTTTL:    defaultJWTTTL,
 	}
 
 	if v, ok := lookup("PORT"); ok {
@@ -88,6 +109,284 @@ func Load(lookup LookupFunc) (Config, error) {
 			return Config{}, fmt.Errorf("config: REDIS_DB %d out of valid range 0-15", db)
 		}
 		cfg.RedisDB = db
+	}
+
+	if err := loadAllowedOrigins(&cfg, lookup); err != nil {
+		return Config{}, err
+	}
+
+	v, ok := lookup("JWT_SECRET")
+	if !ok || v == "" {
+		return Config{}, fmt.Errorf("config: JWT_SECRET is required")
+	}
+	if len(v) < minJWTSecretLen {
+		return Config{}, fmt.Errorf("config: JWT_SECRET must be at least %d bytes, got %d", minJWTSecretLen, len(v))
+	}
+	cfg.JWTSecret = v
+
+	if v, ok := lookup("JWT_TTL"); ok {
+		ttl, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: JWT_TTL %q is not a valid duration: %w", v, err)
+		}
+		if ttl < minJWTTTL || ttl > maxJWTTTL {
+			return Config{}, fmt.Errorf("config: JWT_TTL %s out of valid range 1m-24h", ttl)
+		}
+		cfg.JWTTTL = ttl
+	}
+
+	if err := loadMetricsAddr(&cfg, lookup); err != nil {
+		return Config{}, err
+	}
+
+	return cfg, nil
+}
+
+// loadMetricsAddr parses METRICS_ADDR into cfg.MetricsAddr. Unset or
+// empty leaves it at "", which disables the metrics listener — an
+// unauthenticated latency-metrics endpoint must be opt-in, never
+// on-by-default. Set, it must be a valid host:port with a port in
+// 1-65535; under ENV=production the host must additionally be loopback
+// (see loadMetricsAddrProductionLoopback).
+func loadMetricsAddr(cfg *Config, lookup LookupFunc) error {
+	raw, ok := lookup("METRICS_ADDR")
+	if !ok || raw == "" {
+		return nil
+	}
+
+	host, portStr, err := net.SplitHostPort(raw)
+	if err != nil {
+		return fmt.Errorf("config: METRICS_ADDR %q is not a valid host:port: %w", raw, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("config: METRICS_ADDR %q has a non-numeric port", raw)
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("config: METRICS_ADDR %q port out of valid range 1-65535", raw)
+	}
+
+	if cfg.Env == "production" {
+		if err := requireLoopbackHost(host); err != nil {
+			return fmt.Errorf("config: METRICS_ADDR %q must be loopback in production: %w", raw, err)
+		}
+	}
+
+	cfg.MetricsAddr = raw
+	return nil
+}
+
+// requireLoopbackHost accepts "localhost" literally and otherwise
+// requires host to parse as a loopback IP.
+func requireLoopbackHost(host string) error {
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("host %q is not loopback", host)
+	}
+	return nil
+}
+
+// loadAllowedOrigins parses CORS_ALLOWED_ORIGINS into cfg.AllowedOrigins.
+// Unset or empty is an error when cfg.Env is "production" — a production
+// deployment that forgets the variable must fail fast, exactly as
+// JWT_SECRET already does, rather than silently trust a dev origin.
+// Outside production it defaults to http://localhost:3000. A wildcard
+// entry is rejected outright, in every env, and every entry must parse as
+// an absolute URL with both a scheme and a host.
+func loadAllowedOrigins(cfg *Config, lookup LookupFunc) error {
+	raw, ok := lookup("CORS_ALLOWED_ORIGINS")
+	if !ok || strings.TrimSpace(raw) == "" {
+		if cfg.Env == "production" {
+			return fmt.Errorf("config: CORS_ALLOWED_ORIGINS is required when ENV=production")
+		}
+		cfg.AllowedOrigins = []string{"http://localhost:3000"}
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if p == "*" {
+			return fmt.Errorf("config: CORS_ALLOWED_ORIGINS must not contain a wildcard")
+		}
+		u, err := url.Parse(p)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return fmt.Errorf("config: CORS_ALLOWED_ORIGINS entry %q is not a valid absolute URL", p)
+		}
+		origins = append(origins, p)
+	}
+	cfg.AllowedOrigins = origins
+	return nil
+}
+
+// MigrateConfig holds the configuration surface for cmd/migrate. A
+// migration runner has no business demanding a JWT signing key, so it
+// does not embed or require Config.
+type MigrateConfig struct {
+	PostgresDSN string
+	LogLevel    string
+}
+
+// LoadMigrate reads the migration runner's configuration via lookup. It
+// does not require JWT_SECRET.
+func LoadMigrate(lookup LookupFunc) (MigrateConfig, error) {
+	cfg := MigrateConfig{
+		LogLevel: "info",
+	}
+
+	dsn, ok := lookup("POSTGRES_DSN")
+	if !ok || dsn == "" {
+		return MigrateConfig{}, fmt.Errorf("config: POSTGRES_DSN is required")
+	}
+	cfg.PostgresDSN = dsn
+
+	if v, ok := lookup("LOG_LEVEL"); ok {
+		if !validLogLevels[v] {
+			return MigrateConfig{}, fmt.Errorf("config: LOG_LEVEL %q is not one of debug|info|warn|error", v)
+		}
+		cfg.LogLevel = v
+	}
+
+	return cfg, nil
+}
+
+// RelayConfig holds cmd/relay's configuration surface. Like
+// MigrateConfig, it does not require JWT_SECRET — the relay never
+// issues or verifies a token, and requiring one would hand a non-auth
+// binary a credential it has no use for.
+type RelayConfig struct {
+	RedisAddr    string
+	RedisDB      int
+	KafkaBrokers []string
+	LogLevel     string
+	Env          string
+}
+
+// LoadRelay reads the relay's configuration via lookup, reusing Load's
+// validation helpers for the fields the two binaries share.
+func LoadRelay(lookup LookupFunc) (RelayConfig, error) {
+	cfg := RelayConfig{
+		RedisAddr:    "localhost:6379",
+		RedisDB:      0,
+		KafkaBrokers: []string{"localhost:9092"},
+		LogLevel:     "info",
+		Env:          "development",
+	}
+
+	if v, ok := lookup("REDIS_ADDR"); ok {
+		if v == "" {
+			return RelayConfig{}, fmt.Errorf("config: REDIS_ADDR must not be empty")
+		}
+		cfg.RedisAddr = v
+	}
+
+	if v, ok := lookup("REDIS_DB"); ok {
+		db, err := strconv.Atoi(v)
+		if err != nil {
+			return RelayConfig{}, fmt.Errorf("config: REDIS_DB %q is not a valid integer: %w", v, err)
+		}
+		if db < 0 || db > 15 {
+			return RelayConfig{}, fmt.Errorf("config: REDIS_DB %d out of valid range 0-15", db)
+		}
+		cfg.RedisDB = db
+	}
+
+	if v, ok := lookup("KAFKA_BROKERS"); ok {
+		if v == "" {
+			return RelayConfig{}, fmt.Errorf("config: KAFKA_BROKERS must not be empty")
+		}
+		brokers := strings.Split(v, ",")
+		for _, b := range brokers {
+			if b == "" {
+				return RelayConfig{}, fmt.Errorf("config: KAFKA_BROKERS %q contains an empty element", v)
+			}
+		}
+		cfg.KafkaBrokers = brokers
+	}
+
+	if v, ok := lookup("LOG_LEVEL"); ok {
+		if !validLogLevels[v] {
+			return RelayConfig{}, fmt.Errorf("config: LOG_LEVEL %q is not one of debug|info|warn|error", v)
+		}
+		cfg.LogLevel = v
+	}
+
+	if v, ok := lookup("ENV"); ok {
+		if !validEnvs[v] {
+			return RelayConfig{}, fmt.Errorf("config: ENV %q is not one of development|production|test", v)
+		}
+		cfg.Env = v
+	}
+
+	return cfg, nil
+}
+
+// LedgerConfig holds cmd/ledger-worker's configuration surface. Like
+// MigrateConfig and RelayConfig, it does not require JWT_SECRET — the
+// ledger worker neither issues nor verifies a token, and requiring one
+// would hand a non-auth binary a credential it has no use for.
+type LedgerConfig struct {
+	PostgresDSN   string
+	KafkaBrokers  []string
+	ConsumerGroup string
+	LogLevel      string
+	Env           string
+}
+
+// LoadLedger reads the ledger worker's configuration via lookup.
+func LoadLedger(lookup LookupFunc) (LedgerConfig, error) {
+	cfg := LedgerConfig{
+		KafkaBrokers:  []string{"localhost:9092"},
+		ConsumerGroup: "ledger-writer",
+		LogLevel:      "info",
+		Env:           "development",
+	}
+
+	dsn, ok := lookup("POSTGRES_DSN")
+	if !ok || dsn == "" {
+		return LedgerConfig{}, fmt.Errorf("config: POSTGRES_DSN is required")
+	}
+	cfg.PostgresDSN = dsn
+
+	if v, ok := lookup("KAFKA_BROKERS"); ok {
+		if v == "" {
+			return LedgerConfig{}, fmt.Errorf("config: KAFKA_BROKERS must not be empty")
+		}
+		brokers := strings.Split(v, ",")
+		for _, b := range brokers {
+			if b == "" {
+				return LedgerConfig{}, fmt.Errorf("config: KAFKA_BROKERS %q contains an empty element", v)
+			}
+		}
+		cfg.KafkaBrokers = brokers
+	}
+
+	if v, ok := lookup("LEDGER_GROUP"); ok {
+		if v == "" {
+			return LedgerConfig{}, fmt.Errorf("config: LEDGER_GROUP must not be empty")
+		}
+		cfg.ConsumerGroup = v
+	}
+
+	if v, ok := lookup("LOG_LEVEL"); ok {
+		if !validLogLevels[v] {
+			return LedgerConfig{}, fmt.Errorf("config: LOG_LEVEL %q is not one of debug|info|warn|error", v)
+		}
+		cfg.LogLevel = v
+	}
+
+	if v, ok := lookup("ENV"); ok {
+		if !validEnvs[v] {
+			return LedgerConfig{}, fmt.Errorf("config: ENV %q is not one of development|production|test", v)
+		}
+		cfg.Env = v
 	}
 
 	return cfg, nil

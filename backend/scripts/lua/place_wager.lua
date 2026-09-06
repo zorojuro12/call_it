@@ -37,6 +37,10 @@ if cached then
   return cjson.decode(cached)
 end
 
+if amount == nil or amount <= 0 then
+  return {'INVALID_STAKE'}
+end
+
 local status = redis.call('HGET', roundKey, 'status')
 if status ~= 'open' then
   return {'POOL_LOCKED'}

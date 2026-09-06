@@ -7,7 +7,11 @@
 -- ARGV[1] terminalStatus ('resolved' | 'refunded')
 -- ARGV[2] resolvedOutcome  ('' when refunded — never nil, see Lua conventions)
 -- ARGV[3] dust             ARGV[4] idempotencyKey   ARGV[5] roundID
--- ARGV[6..] alternating userID, amount
+-- ARGV[6] roomID           ARGV[7] total            ARGV[8] payoutsJSON
+--   (payoutsJSON is authored by Go from the same settlement.Payouts slice
+--   that produces the ARGV[9..] tail below — Amendment E1. This script
+--   never parses or builds it, only echoes it into the outbox event.)
+-- ARGV[9..] alternating userID, amount
 --
 -- reply: {'OK', creditedCount} | {'NOT_LOCKED', status} | {'ALREADY_RESOLVED', status}
 
@@ -20,6 +24,9 @@ local resolvedOutcome = ARGV[2]
 local dust = ARGV[3]
 local idempotencyKey = ARGV[4]
 local roundID = ARGV[5]
+local roomID = ARGV[6]
+local total = ARGV[7]
+local payoutsJSON = ARGV[8]
 
 local currentStatus = redis.call('HGET', roundKey, 'status')
 if currentStatus == 'resolved' or currentStatus == 'refunded' then
@@ -30,7 +37,7 @@ if currentStatus ~= 'locked' then
 end
 
 local creditedCount = 0
-local i = 6
+local i = 9
 while ARGV[i] ~= nil do
   local userID = ARGV[i]
   local amount = tonumber(ARGV[i + 1])
@@ -52,8 +59,11 @@ end
 redis.call('XADD', outboxKey, '*',
   'type', eventType,
   'round_id', roundID,
+  'room_id', roomID,
+  'total', total,
   'dust', dust,
   'winning_outcome', resolvedOutcome,
+  'payouts', payoutsJSON,
   'idempotency_key', idempotencyKey)
 
 return {'OK', tostring(creditedCount)}

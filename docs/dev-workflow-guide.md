@@ -215,11 +215,36 @@ observed), and the per-task review gate.
 **Revisit when:** a phase's implementation genuinely exhausts context before
 completing — Phase 5 (Kafka + ledger + migrations + reconciliation) or Phase 6
 (Next.js frontend; JS/TS is far more verbose than Go) are the plausible
-candidates. Adopt with evidence about *which* phase forced it, not
+candidates. **Both have since been split** — 5 into 5a/5b, 6 into 6a/6b — which
+is the cheaper answer to the same pressure and was reached first in each case;
+weigh that before reading a large phase as evidence for SDD. Adopt with evidence about *which* phase forced it, not
 preemptively.
 
 **Portable?** The reasoning generalizes; the verdict does not. A verbose
 stack, larger tasks, or work you intend to run unattended flips this quickly.
+
+**Update 2026-08-27 — the revisit trigger fired, and SDD was still not
+adopted.** Phase 5b was the first phase sized to make delegation worth
+trying. Rather than installing SDD itself, the response was the thin
+project-local `.claude/skills/delegating-plan-tasks/SKILL.md`: one dispatch
+per task (not implementer+reviewer), no git-ignored ledger, escalation
+instead of autonomous "rulings," and a return contract capped at ~300 words
+across four fixed sections. The objection above was always SDD's ceremony,
+never delegation itself — this is delegation without the ceremony, wired
+into `executing-plans` Step 2, invoked only for tasks a plan's header opts
+in (inline stays the default).
+
+Run once, on Phase 5b's Tasks 1–5: **3.0× token saving, 9× fewer turns**
+per checkpoint against the Phase 5a inline control, both pre-registered
+bars cleared (`journal/2026-08-27_1548_ansh_phase-5b-delegation-prediction.md`,
+`journal/2026-08-27_1725_ansh_phase-5b-ledger-execution.md`). The one
+process gap the run surfaced — a subagent bundled four checkpoints into one
+commit and its own return report claimed no folds had happened, caught only
+because the parent checked `git log` directly rather than trusting the
+report — was patched the same day: the return contract's `COMMITS` field
+now tags every commit with the checkpoint(s) it covers, so a fold has to
+appear as a fact in a structured field rather than rely on an honest summary
+sentence.
 
 ### Continuous learning v2 / instincts — declined 2026-08-23
 
@@ -276,6 +301,47 @@ many client repos, the calculus genuinely flips — cross-project detection and
 export/import are solving real problems there that don't exist for one solo
 project.
 
+### Carrying adapted skills to other projects — decided 2026-08-25
+
+Of the 22 skills in `.claude/skills/`, **18 are byte-identical to their
+sources** (14 from the ECC marketplace, 4 from the `obra/superpowers` clone at
+`~/projects/superpowers`). Only four diverge, and only one of those is worth
+carrying anywhere:
+
+| Skill | Divergence | Portable? |
+|---|---|---|
+| `writing-plans` | +130 lines | **Yes** — real methodology (see below) |
+| `executing-plans` | +18 lines | No — pure config: `dev` branch, no-PR, `--no-ff`, skill path prefixes |
+| `brainstorming` | +2 lines | No — spec directory path only |
+| `journal` | written from scratch | Already generalized to `~/.claude/skills/journal-global/` |
+
+The test applied: **did we invent a rule, or set a value?** Rules travel; values
+don't. `executing-plans`' additions all encode *this* repo's branch names and
+merge policy — a new project needs different values, not these ones.
+
+`writing-plans`' additions are rules: multi-checkpoint task granularity, the
+RED→GREEN reality test for a checkpoint (Phase 1), the observable-signal rule
+(Phase 2's `lock_round.lua` `ALREADY_LOCKED` case), "a plan stops at green,
+never merges", the two-implementers specificity bar, and committing the plan
+before handoff. None of them mention wagering, Redis, or Go.
+
+**Where the portable copy lives:** `~/projects/claude-skills/` — a git repo you
+install *from*, not a live-loaded directory. It is deliberately **not** in
+`~/.claude/skills/`, for two reasons: a live-loaded global copy would need an
+awkward `-global` suffix to stay distinguishable from the project copy in a flat
+skill listing, and an auto-loaded adapted skill can carry this project's
+assumptions into an unrelated repo with no explicit step where you'd notice.
+Copy-and-adapt is the same model ECC and superpowers already use — one mental
+model, not two.
+
+**One thing that stays project-specific and must be re-decided per project:**
+the spec-driven-vs-code-driven plan format. It's contingent on execution mode
+(inline here; subagent-driven wants pre-written code), so the library version
+states it as a fork to choose, not a default to inherit.
+
+**Don't edit `~/projects/superpowers/`** — it's a clean clone of upstream, not a
+fork. Edits get clobbered by `git pull` and can't be pushed.
+
 ### Other tradeoffs decided here
 
 | Decision | Verdict | Revisit when |
@@ -285,15 +351,27 @@ project.
 | `writing-plans` vs `orch-*` (§4) | `writing-plans` default; `orch-fix-defect`/`orch-refine-code` for their narrow shapes | Never really — they coexist; just don't use both for the same job |
 | Skills vs rules import timing (§3) | Skills eagerly (cheap, listing-only until invoked); rule dirs staggered per-phase (always-loaded full text) | If a rule pack turns out small enough that staggering costs more attention than it saves |
 | `journal` local vs `journal-global` | Project-local copy wins here (ADRs at `docs/decisions/`, not the global `docs/adr/`) | Starting a new project — use `journal-global` unless it needs project-specific tailoring |
+| Portable skills: global live-load vs install-from library | Library at `~/projects/claude-skills/`, copied in per project | A skill turns out to need zero per-project adaptation — then live-loading it globally costs nothing |
 | `CLAUDE.md` timing (§3) | After Phase 0, not from the spec | Never — writing it before real code exists means documenting guesses |
 
 ---
 
 ## Suggested order for CallIt specifically, right now
 
+Historical note: this section originally sequenced the project's very first
+steps (below), written before Phase 0 existed. Left as-is rather than
+rewritten, since it's the record of how the workflow bootstrapped — not
+because it's still the active to-do list. **Current state:** Phases 0–7c are
+all complete; `CLAUDE.md` has existed since right after Phase 0 and is kept
+current every phase. Only Phase 8 remains, explicitly parked ("Decide when
+unblocked" — LLM question suggestions, Terraform, Prometheus/Grafana). The
+per-phase loop that steps 5–6 describe (branch → `writing-plans` →
+`executing-plans` → merge → `journal` entry → fresh session) is exactly what
+every phase since has followed, including Phase 7c.
+
 1. ~~`/impl-plan`~~ ✅ done — `docs/plans/2026-08-21-implementation-plan.md`.
 2. ~~Import Phase 0 tooling~~ ✅ done — `golang-*` rules/skills, `docker-patterns`.
 3. ~~Phase 0~~ ✅ done — commit `d60bd8d`.
-4. **Write `CLAUDE.md`** — Phase 0 exists now, so the gate is met. Run `/project-init` for a command-verified scaffold, then layer in the "why" content (invariants, rejected alternatives, gotchas) from the spec, plan, and journal. This is also where the commit-granularity convention belongs, since `CLAUDE.md` is always loaded.
-5. **Phase 1** — `git checkout -b phase-1-domain-core dev` → `writing-plans` (break the phase into committable tasks) → `executing-plans` (execute inline, commit per task) → merge to `dev`.
-6. `journal` entry, then a fresh session for Phase 2 (which is also the context reset that makes SDD unnecessary — see §9).
+4. ~~**Write `CLAUDE.md`**~~ ✅ done — right after Phase 0, per this same reasoning; kept current every phase since.
+5. ~~**Phase 1**~~ ✅ done, and so is every phase through **7c** — the loop below repeated verbatim each time: `git checkout -b phase-N-<slug> dev` → `writing-plans` (break the phase into committable tasks) → `executing-plans` (execute inline, commit per task) → merge to `dev`.
+6. ~~`journal` entry, then a fresh session for Phase 2~~ — done every phase since; see `journal/` for the full run.

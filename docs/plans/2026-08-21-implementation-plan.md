@@ -1,7 +1,9 @@
 # CallIt — Implementation Plan
 
 **Date:** 2026-08-21
-**Status:** Approved — cleared to begin Phase 0
+**Status:** Phases 0–7c complete (see §9's table for the phase-by-phase
+checklist). Only Phase 8 remains, and it is explicitly parked — "Decide when
+unblocked" — so this plan has no active next phase right now.
 **Source spec:** [`docs/specs/2026-08-21-callit-design.md`](../specs/2026-08-21-callit-design.md)
 
 Resolves the seven open items left for planning in spec §9, then sequences
@@ -62,7 +64,8 @@ call_it/
 │   ├── internal/
 │   │   ├── config/             # env load + fail-fast validation at startup
 │   │   ├── domain/             # PURE: odds, payout+dust, round FSM, wallet rules
-│   │   ├── auth/               # argon2id hashing, JWT issue/verify
+│   │   ├── auth/               # argon2id hashing, JWT issue/verify — pure, no I/O (Phase 3)
+│   │   ├── account/            # account lifecycle: register, login, refill claims (Phase 3)
 │   │   ├── room/               # room lifecycle, short-code generation
 │   │   ├── round/              # round orchestration + server-side timers
 │   │   ├── wager/              # wager service (validate → Lua → broadcast)
@@ -101,13 +104,29 @@ schema change, not a wrapper change.
 | `code:{roomCode}` | STRING | → `roomID` (join lookup) |
 | `room:{roomID}` | HASH | `host_id`, `buy_in`, `status`, `created_at` |
 | `room:{roomID}:wallets` | HASH | `userID` → session balance |
-| `round:{roundID}` | HASH | `room_id`, `status`, `lock_at_ms`, `outcome_count`, `resolved_outcome` |
+| `room:{roomID}:round` | STRING | → current `roundID`, set when a round opens and deleted at a terminal state (Phase 4b Amendment D2) |
+| `room:{roomID}:opening` | HASH | `userID` → the effective balance granted at join, fixed for the session (Phase 4b Amendment D3) |
+| `round:{roundID}` | HASH | `room_id`, `question`, `outcomes` (JSON array), `status`, `lock_at_ms`, `outcome_count`, `resolved_outcome` — `question`/`outcomes` added Phase 4b (Amendment D4) |
 | `round:{roundID}:pools` | HASH | `0..n` → pool amount, `total` → sum |
 | `round:{roundID}:wagers` | HASH | `{userID}:{outcomeIdx}` → amount |
 | `round:{roundID}:bettors` | SET | distinct user IDs that have wagered |
 | `idem:{key}` | STRING | cached result, TTL 24h |
-| `ratelimit:{scope}:{id}` | ZSET | sliding window — wager throttle *and* refill quota |
+| `ratelimit:{scope}:{id}` | ZSET | sliding window — score is the hit's ms timestamp, member a per-attempt UUID |
 | `wager-outbox` | STREAM | outbox events awaiting relay to Kafka |
+| `user:{userID}` | HASH | `email`, `display_name`, `password_hash`, `balance`, `created_at` |
+| `email:{normalizedEmail}` | STRING | → `userID` (unique index, claimed via `claim_unique.lua`) |
+
+`user:{userID}`/`email:{normalizedEmail}` and `ratelimit:{scope}:{id}`'s
+actual implementation both landed in Phase 3 (Amendments B1, B6/B7,
+`docs/plans/2026-08-25-phase-3-auth-rest.md`). `ratelimit` scopes in use:
+`auth` (client IP, 10/1min, the register/login throttle), `api` (user ID,
+60/1min, the authenticated-route throttle), `refill` (user ID,
+`domain.RefillQuota`/7 days). Persistent accounts live in Redis rather
+than PostgreSQL (B1) — Phase 3's dependency table only lists 0 and 2, not
+5, so storing credentials in Postgres would have pulled most of Phase 5
+forward. Phase 5's planning pass **resolved this in favour of keeping
+them in Redis permanently**, with PostgreSQL holding monetary history
+only; see §9's Phase 5 note for the reasoning and the Phase 7 revisit.
 
 `round:{roundID}:bettors` was added in Phase 2 (Amendment A2,
 `docs/plans/2026-08-24-phase-2-redis-layer.md`): the "N/M players have
@@ -123,6 +142,15 @@ server. This gives the system a single clock, immune to skew across
 multiple API instances, and makes R3's "no client-latency exploit"
 guarantee structural rather than merely intended. Redis 7 replicates
 scripts by effects, so calling `TIME` inside a script is safe.
+
+**`wager-outbox`'s consumer group.** Added Phase 5a: `cmd/relay` reads the
+stream through a single named consumer group, `redisstore.OutboxGroup`
+(`"relay"`), created via `XGROUPCREATE ... MKSTREAM` starting from stream
+id `0` rather than `$` — `$` would skip every entry already written by a
+running API process before the relay's first start, silently losing money
+movements. Not a Redis key by `keys.go`'s own rule (a consumer group name
+is metadata on the stream, not a separate key), but recorded here since it
+governs how the stream is read.
 
 ---
 
@@ -187,12 +215,66 @@ them, not the script:
   credits still balance exactly. Without this the double-entry invariant
   would fail on nearly every round.
 
+**Amendment E1 (Phase 5a) — the outbox event carries per-user payout
+detail.** This section originally specified "one outbox event" without
+fixing its payload; as built in Phase 2 it carried only
+`type, round_id, dust, winning_outcome, idempotency_key`. That's fatal to
+Phase 5b: a double-entry settlement transaction needs one credit line per
+winner, and the Redis wagers hash — the only other source for that
+detail — is exactly the state being settled and may be gone by the time a
+consumer processes the event. The event now also carries `room_id` (the
+Kafka partition key, §7) and `total`, plus a `payouts` field holding a
+JSON array of `{"user_id": string, "amount": int}`. Go authors this JSON
+from the same `settlement.Payouts` slice that drives the script's
+alternating-ARGV credit tail — the two cannot drift, since both come from
+one function call — and the script only ever echoes the JSON into the
+`XADD`, never parses or builds it. See
+`docs/plans/2026-08-26-phase-5a-outbox-kafka.md`'s Amendment E1 for the
+full reasoning.
+
 ### `refund_round.lua`
 
-The host-disconnect and 60-second-timeout path. Also idempotent. Unlike
-settlement there is nothing to compute — refunding is the identity function
-on stakes — so this script reads the wagers hash inside its own atomic unit
-rather than taking amounts from Go.
+The host-disconnect and 60-second-timeout path. Also idempotent.
+
+**Amendment E2 (Phase 5a) — amounts now come from Go, symmetric with
+settlement.** Originally this script read the wagers hash itself via
+`HGETALL` and derived amounts in Lua, since refunding is the identity
+function on stakes and there was nothing for Go to compute. E1's
+per-user payout requirement supersedes that: emitting the payout JSON
+would otherwise require building it inside a script, which E1 explicitly
+rejects. `Store.RefundRound` now reads and aggregates stakes in Go (one
+payout per user, summing stakes across outcomes) before calling the
+script, which becomes apply-only like `settle_round.lua` — crediting from
+ARGV, CASing status, and emitting the enriched event. This is safe from
+the same read-then-write race settlement already tolerates: `RefundRound`
+checks `round.Status == locked` **before** reading stakes, and
+`place_wager.lua` already rejects wagers on a locked round, so the hash
+cannot grow between the check and the read. See
+`docs/plans/2026-08-26-phase-5a-outbox-kafka.md`'s Amendment E2 for the
+full reasoning and the safety argument.
+
+### Phase 3 additions (Amendment B6)
+
+Three more scripts, none on the wager path:
+
+- **`claim_unique.lua`** — `SETNX KEYS[1] ARGV[1]`; on success `HSET
+  KEYS[2]` with the remaining `ARGV` pairs and return `{'OK'}`; on
+  collision return `{'TAKEN', existingID}` without mutating anything.
+  One script serves both call sites — claiming an email at registration
+  and claiming a room code at creation are the same operation (claim a
+  unique secondary index and create the entity it points at,
+  atomically), so a second copy would be duplication, not clarity.
+- **`rate_limit.lua`** — the sliding-window limiter behind `Store.Allow`.
+  Evicts aged-out members (`ZREMRANGEBYSCORE`), then either `ZADD`s the
+  new attempt and returns `{'ALLOWED', remaining, member, resetAtMs}` or
+  returns `{'DENIED', '0', '', retryAfterMs, resetAtMs}` without
+  recording anything — a limiter that counted denied attempts would
+  extend its own window under sustained load.
+- **`top_up_balance.lua`** — sets a user's balance to a target only if it
+  is currently below the target, returning the credited delta. Setting
+  to the target rather than incrementing by a Go-computed delta is what
+  makes a concurrent double-claim safe: the second call reads the
+  already-topped balance and credits nothing.
 
 ---
 
@@ -218,6 +300,43 @@ summing their `ledger_entries`, and that total tokens across the system are
 conserved. This test is the evidence behind the 0.00% double-spend claim
 and should be built deliberately rather than assumed.
 
+**Amendment F2 (Phase 5b) — migration `0002` adds identity and lookup
+indexes, one of them a correctness-at-scale requirement, not a nicety.**
+`accounts` had no unique constraint on its natural keys at all, so account
+provisioning (deterministic UUIDv5 IDs, `ON CONFLICT (id) DO NOTHING`) had
+no enforcing constraint behind it — `0002` adds three partial unique
+indexes (`accounts_user_wallet_key`, `accounts_round_pool_key`,
+`accounts_system_singleton_key`) that make a drifted account ID rejected
+rather than merely unlikely. The other two indexes
+(`ledger_entries_transaction_id_idx`, `ledger_entries_account_id_idx`)
+exist because `assert_transaction_balanced()` does a per-row
+`WHERE transaction_id = ...` lookup on every entry insert — without an
+index that's a sequential scan of the whole `ledger_entries` table per
+insert, quadratic over the load the flagship reconciliation test itself
+generates (Task 3 CP1).
+
+**Amendment F3 (Phase 5b) — the reconciliation identity carries the
+opening-stake term, and the k6 run is an in-process load generator.**
+`Store.JoinRoom` is a Go pipeline (`redisstore/room.go:114`), not a Lua
+script, so a session's opening stake never reaches the outbox — the ledger
+records outbox movements only. The identity this section's flagship test
+actually proves is therefore
+
+```
+redis_wallet(user, room) − opening_stake(user, room) == ledger_balance(user, room)
+```
+
+not the literal `redis_wallet == ledger_balance` above, which is false by
+the opening stake (D2, `docs/plans/2026-08-27-phase-5b-ledger.md`). The
+alternative — an atomic `system_mint → user_wallet` grant on join — was
+rejected as out of scope: it would mean rewriting a Phase 4 write path
+(`JoinRoom`) into Lua to improve a Phase 5b assertion. Recorded as a Phase 7
+candidate, not built here. Separately, "after a k6 run" is satisfied by an
+in-process concurrent Go load generator (8 goroutines, 40 wagers) rather
+than k6 itself, since k6 arrives in Phase 7 — the reconciliation test
+(`internal/ledger/reconcile_test.go`) is the same shape the eventual k6-driven
+version will assert against.
+
 ---
 
 ## 7. Kafka topology
@@ -231,6 +350,44 @@ Keying by `room_id` yields per-room ordering with cross-room parallelism.
 Ordering matters concretely here: a settlement must never be processed
 before the wagers it settles. Kafka runs single-node in **KRaft mode** (no
 Zookeeper) to keep local resource use manageable.
+
+**Amendment F1 (Phase 5b) — the wire format is pinned by explicit JSON
+tags, and one field name diverges from the Redis outbox.**
+`events.KafkaProducer.Produce` marshals with `json.Marshal(ev)`, and before
+this phase neither `WagerPlaced` nor `RoundSettled` carried JSON tags — the
+wire format was Go field spelling (`"RoomID"`, `"IdempotencyKey"`), decided
+implicitly and breakable by any field rename. `WagerPlaced` and
+`RoundSettled` now carry explicit `snake_case` tags, asserted byte-for-byte
+by `internal/events/message_test.go`, and `DecodeMessage` rejects unknown
+fields (`DisallowUnknownFields`) so a producer that renamed a field fails
+loudly instead of decoding to a zero value. One intentional divergence: the
+Redis outbox field for the wagering user is `user`
+(`scripts/lua/place_wager.lua`), but the Kafka field is `user_id`, matching
+`Payout`'s existing tag. The Kafka format is internally consistent; the
+Redis stream format is unchanged.
+
+**Ordering caveat (Phase 5b discovery) — cross-topic ordering is not
+guaranteed and does not need to be.** This table's "ordering matters
+concretely" statement is true for the *transient sign* of a room's
+`round_pool` ledger account, not for any final balance: `wagers-placed` and
+`rounds-settled` are separate topics with no mutual ordering guarantee, so
+a settlement can be consumed before the wagers it settles. Every
+transaction is internally balanced regardless of arrival order — a
+settlement written first drives `round_pool` transiently negative, and the
+wagers that follow bring it back to zero. `internal/ledger`'s worker
+therefore needs no cross-topic sequencing (D4,
+`docs/plans/2026-08-27-phase-5b-ledger.md`).
+
+**Amendment E3 (Phase 5a) — topics are created explicitly, not
+auto-created.** `docker-compose.yml` sets
+`KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"`, which would create both topics
+above on first produce with the broker default of **one** partition —
+and partition count cannot be raised to 6 afterward without a
+repartition (which reshuffles keys and breaks the per-room ordering this
+table exists to buy). `cmd/relay` therefore calls
+`events.KafkaProducer.EnsureTopics` at startup, which idempotently
+creates both topics with `Partitions = 6` via `Conn.CreateTopics` before
+any message is produced.
 
 ---
 
@@ -262,15 +419,203 @@ MVP and contain the demo; 5 onward are separate milestones.
 
 | # | Phase | Deliverable | Depends on | Tooling to import (see `ecc-survey.md`) |
 |---|---|---|---|---|
-| 0 | **Foundations** | Monorepo skeleton, `docker-compose.yml` (Redis/PostgreSQL/Kafka-KRaft), Makefile, GitHub Actions CI, config loader with fail-fast validation, structured logging, `/healthz` | — | `golang-*` (patterns/testing/tdd/verification) rules + skills; `docker-patterns` skill — import *before* starting this phase, not after |
-| 1 | **Domain core (pure Go)** | Odds math, payout and dust distribution, round state machine, wallet rules (buy-in, 3× cap, partial buy-in, refill quota). No I/O; near-total unit coverage | 0 | None new — covered by Phase 0's Go tooling |
-| 2 | **Redis layer** | Key schema, four Lua scripts (`place_wager`, `lock_round`, `settle_round`, `refund_round`), Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 | `redis-patterns` skill |
-| 3 | **Auth + REST** | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 | `api-design` skill |
-| 4 | **WebSocket hub + round lifecycle** | Per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, server-side lock timer and 60-second auto-refund fallback. Playable end to end from a CLI client | 3 | None new |
-| 5 | **Kafka + ledger** | Outbox relay, `wagers-placed` and `rounds-settled` producers, ledger-worker consumer, migrations, deferred constraint trigger, Redis↔PostgreSQL reconciliation test | 2, 4 | `postgres-patterns`, `database-migrations` skills |
-| 6 | **Frontend** | Next.js host console and participant view, live odds, countdown, Web Audio feedback | 4 | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
-| 7 | **Load test + hardening** | k6 scripts, server-side p99 histograms, tuning against the SLAs, README with architecture diagram | 5, 6 | None new — spec already names k6 directly |
-| 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7 | Decide when unblocked |
+| 0 | **Foundations** ✅ | Monorepo skeleton, `docker-compose.yml` (Redis/PostgreSQL/Kafka-KRaft), Makefile, GitHub Actions CI, config loader with fail-fast validation, structured logging, `/healthz` | — | `golang-*` (patterns/testing/tdd/verification) rules + skills; `docker-patterns` skill — import *before* starting this phase, not after |
+| 1 | **Domain core (pure Go)** ✅ | Odds math, payout and dust distribution, round state machine, wallet rules (buy-in, 3× cap, partial buy-in, refill quota). No I/O; near-total unit coverage | 0 | None new — covered by Phase 0's Go tooling |
+| 2 | **Redis layer** ✅ | Key schema, four Lua scripts (`place_wager`, `lock_round`, `settle_round`, `refund_round`), Go wrappers, integration tests, and a concurrency suite: N goroutines racing a single wallet, asserting zero double-spend and exact token conservation | 1 | `redis-patterns` skill |
+| 3 | **Auth + REST** ✅ | Register/login, room creation, join-by-code, JWT issuance, rate-limit middleware | 0, 2 | `api-design` skill |
+| 4a | **WebSocket transport** ✅ | Authenticated room socket (JWT verified at handshake, no per-message lookup), per-room owner goroutine (state owned by one goroutine receiving commands over a channel, no mutexes), client read/write pumps, ping/pong heartbeat, slow-client eviction, join/leave presence broadcast | 3 | None new |
+| 4b | **Round lifecycle** ✅ | Rounds, wagers, live odds, server-side lock timer and 60-second auto-refund fallback, host-resolve settlement reveal, session-end persistence, playable end to end from a CLI client | 4a | None new |
+| 5a | **Outbox → Kafka + ledger schema** ✅ | Outbox relay binary (`cmd/relay`), `wagers-placed`/`rounds-settled` producers, `internal/events` schemas, PostgreSQL migrations, ledger schema, deferred constraint trigger | 2, 4b | `postgres-patterns`, `database-migrations` skills |
+| 5b | **Double-entry ledger** ✅ | `cmd/ledger-worker` consumer, `internal/ledger` repository, idempotent replay on the `idempotency_key` unique constraint, Redis↔PostgreSQL reconciliation test | 5a | None new |
+| 6a | **Frontend shell** ✅ | Next.js/TypeScript scaffold, typed REST + WebSocket clients, register/login, room creation and join-by-code, live presence roster — in a room and connected, no gameplay yet. Also the backend's browser-origin admission (CORS + WS `CheckOrigin`), without which no browser can reach the API at all | 4b | `react-patterns`, `nextjs-turbopack`, `accessibility` skills |
+| 6b | **Gameplay UI** ✅ | Host console (open/resolve round), participant wager pad, live odds, lockout countdown, aggregate bettors counter, settlement reveal, Web Audio feedback | 6a | None new |
+| 7a | **Instrumentation + load harness** ✅ | Go toolchain raise off EOL 1.22.10, `internal/metrics` server-side latency histograms on the wager and broadcast paths, real k6 scripts behind `make loadtest`, and a recorded baseline of measured p99 and throughput against spec §7's SLAs | 5b, 6b | None new — spec already names k6 directly |
+| 7b | **Tuning + reconciliation under load** ✅ | Acts on 7a's two MISSED targets: profile and tune the wager-placement path (five sequential Redis round trips today) against the p99 < 15 ms target, re-baseline throughput on an optimized `go build` binary and either close the 5,000 rps gap or record this environment's ceiling with evidence, and re-run the Redis↔PostgreSQL reconciliation after a real k6 load run (closes §12's last unchecked money-correctness box) | 7a | None new |
+| 7c | **Security debt + docs** ✅ | The three security items open by design (login timing, reconnect grace window, `RoundSettled.Payouts` length cap), and the README with an architecture diagram | 7b | None new |
+| 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7c | Decide when unblocked |
+
+**Phase 5 split into 5a/5b (added at Phase 5's planning pass).** Done
+*before* writing the detailed task breakdown, which is what the
+Phase-sizing note below prescribes and what Phase 3 failed to do. The
+original Phase 5 row bundled four separable deliverables — a relay, Kafka
+producers, a schema with migrations, and a ledger consumer with a
+reconciliation test — the same shape that made Phase 3 the most expensive
+phase measured. Split at the **durability boundary**: 5a ends when events
+reach Kafka durably and an empty-but-correct ledger schema rejects an
+unbalanced transaction; 5b ends when those events have become ledger rows
+that reconcile against Redis.
+
+The boundary is drawn there rather than at "all Postgres work in one
+phase" for two reasons. It puts the migrations and the deferred
+constraint trigger next to the two skills that serve them
+(`database-migrations`, `postgres-patterns`) instead of stranding them a
+phase away from their tooling. And it isolates the flagship correctness
+work — the ledger writer and the reconciliation test §6 calls "the
+evidence behind the 0.00% double-spend claim" — into 5b alone, so 5a is
+plumbing that can be verified structurally while 5b keeps the
+cross-cutting attention that kind of proof needs.
+
+**✅ marks a phase whose branch is merged into `dev` and whose tests were
+green at merge.** Phases 0–6b are done — 6a's `phase-6a-frontend-shell`
+and 6b's `phase-6b-gameplay-ui` both merged with `--no-ff`, full backend
++ frontend + E2E suites re-verified green on the merged result before
+merging (`docs/plans/2026-08-30-phase-6a-frontend-shell.md`,
+`docs/plans/2026-08-30-phase-6b-gameplay-ui.md`).
+
+**Amendment discovered by 6a's own E2E acceptance test.** The WS join
+handler (`internal/ws/handler.go`, built in Phase 4a) only ever broadcast
+*future* `player_joined`/`player_left` events — a client connecting second
+never learned who connected first. Invisible until 6a's two-browser test
+put a real second client in a room with an existing occupant; every
+earlier backend test connected clients into an already-instrumented
+sequence that never exercised this gap. Fixed in the same phase (`fix:
+tell a newcomer about players already in the room`): the newcomer is now
+sent one `player_joined` per pre-existing member, reusing the existing
+message type — no protocol version bump.
+
+**Phase 6 split into 6a/6b (added at Phase 6's planning pass).** Done
+*before* writing the detailed task breakdown, same as Phase 5's split and
+for the same reason. The original Phase 6 row bundled a scaffold, an auth
+surface, room creation/joining, a socket client, the host console, the
+participant view, live odds, a countdown, and Web Audio — nine separable
+deliverables, more than Phase 3 carried when it became the most expensive
+phase measured.
+
+Split at **the same transport seam the backend already uses**, so each
+frontend half consumes exactly one backend half: 6a is everything up to
+and including an authenticated socket showing a live presence roster
+(the client-side counterpart of Phase 4a's pure transport, which carries
+zero game knowledge), and 6b is rounds, wagers, odds, and settlement over
+that socket (Phase 4b's counterpart). The seam is concrete on the client
+too, not just thematic: 6a builds `lib/socket.ts` with a typed
+`on(type, handler)` dispatch, and 6b registers gameplay handlers on it
+without reopening the transport.
+
+**6a also carries one backend task, deliberately.** The API has no CORS
+middleware and constructs a bare `websocket.Upgrader{}`, whose default
+`CheckOrigin` rejects any cross-origin browser upgrade — so a Next.js dev
+server on `:3000` can reach neither the REST API nor the socket on
+`:8080` today. That fix is a prerequisite of the frontend deliverable and
+is unverifiable without a browser client to prove it against, so it lands
+as 6a's Task 1 rather than a separate micro-phase. It is a network
+surface, so `security-reviewer` runs before 6a closes (`CLAUDE.md`).
+
+**6b, likewise, carries three backend amendments as its Task 1** —
+the same reasoning as 6a's CORS task, applied a phase later: none of the
+three is verifiable without a browser client, so none could be caught
+before 6a put a real socket client in front of the server. `auth.Claims`
+and `ws.ConnectedEvent` gain a `Host bool` claim/field (advisory-for-
+rendering only — `round.Service` still re-checks `rm.HostID` against
+Redis for every host-gated action) so the room page can tell a host from
+a player instead of rendering identically for both; `wager.Accepted`
+gains `RoundID`, and the router now sends a private `wager_accepted`
+reply carrying the placer's own new balance, closing the gap where
+`internal/ws/router.go` computed that balance and threw it away; and
+`round.ErrInvalidSpec` is mapped to the `invalid_spec` error code instead
+of falling through to a generic `internal_error`. Delivered scope:
+`lib/roundState.ts` (a pure reducer, the client-side counterpart of
+`internal/domain`), `lib/countdown.ts`, `lib/audio.ts`, the four gameplay
+components (`OddsBoard`, `WagerPad`, `HostConsole`, `SettlementReveal`),
+and the room page wired to a full round — proven by
+`e2e/round.spec.ts`, two browsers playing a round to settlement.
+
+**Frontend stack fixed here (resolving `CLAUDE.md`'s open question).**
+TypeScript with `strict: true`, the Next.js **App Router**, and Tailwind
+— confirming the assumption under which `.claude/rules/ecc/typescript/`
+was installed in `1a2c2f2`. TypeScript earns its place on this project
+specifically: the socket protocol has eight message types carrying
+integer token amounts, and `lib/protocol.ts` mirrors Go structs that no
+compiler otherwise checks it against.
+
+**Phase 7 split into 7a/7b (added at Phase 7's planning pass).** Done
+*before* writing the detailed task breakdown, same as Phase 5's and Phase
+6's splits and for the same reason. The original Phase 7 row named four
+deliverables, but the work actually queued against it had grown to ten,
+spread across three documents: the row's own four (k6 scripts, p99
+histograms, tuning, README/diagram), the three security items
+`docs/project-history.md` records as open by design, the Go 1.22.10
+toolchain raise `CLAUDE.md` has since promoted from theoretical to "a
+real Phase 7 candidate now", §12's still-unchecked "reconciliation test
+passes after a load run", and §6's optional `JoinRoom`→Lua rewrite. That
+is more than Phase 3 carried when it became the most expensive phase
+measured.
+
+Split at the **evidence boundary**: 7a ends when spec §7's SLAs have real
+measured numbers behind them — instrumentation reporting server-side p99,
+a k6 harness driving real load, and a recorded baseline stating which
+targets are met and which are not. 7b is everything that acts on those
+numbers.
+
+The seam is drawn there rather than at "all hardening in one phase" for
+the same reason 5a/5b was drawn at the durability boundary. Tuning
+without measurement is guesswork, so the tuning half is worthless before
+the measuring half exists. And all three deferred security items change
+the very paths under measurement — the login-timing fix adds an argon2id
+verify to the auth miss path, and the reconnect grace window changes
+session lifecycle on the socket — so landing them before a baseline
+exists means measuring twice and comparing two figures taken under two
+different systems. 7a is also independently shippable in the way this
+table asks a phase to be: a repeatable load harness plus honest p99
+numbers is a deliverable even if nothing is tuned afterward.
+
+**The toolchain raise is 7a's Task 1, deliberately** — the same reasoning
+6a used for its CORS task, applied to a different kind of prerequisite. A
+p99 baseline measured on Go 1.22.10 and then re-taken on a newer runtime
+was never a baseline, so the raise cannot follow the measurement; and the
+five dependencies `CLAUDE.md` pins are pinned *only* because they declare
+a `go` directive above 1.22.10, so one raise unblocks all five at once.
+Retiring a toolchain past upstream EOL is itself hardening, which is what
+this phase is for. It is a task inside 7a rather than a micro-phase of
+its own because nothing it produces is verifiable except by the suites
+7a already runs.
+
+**Phase 7b split into 7b/7c (added at Phase 7b's planning pass).** Done
+*before* writing the detailed task breakdown, same as the 5a/5b, 6a/6b, and
+7a/7b splits before it. The 7b row named five deliverables across two
+unrelated kinds of work — tuning driven by measurement, and security debt
+deferred from four earlier phases — which is more than Phase 3 carried when
+it became the most expensive phase measured.
+
+Split at the **same evidence boundary the 7a/7b seam was drawn on, applied
+once more.** 7a's own split rationale already argues that the deferred
+security items "change the very paths under measurement," and that landing
+them next to a measurement means comparing two figures taken under two
+different systems. That argument does not stop being true once 7a ships: the
+reconnect grace window changes socket session lifecycle, and the
+login-timing fix adds an argon2id verify to the auth miss path — both sit on
+routes 7b is trying to get a clean before/after number for. So 7b holds the
+system still and changes only what the profile says is slow; 7c changes
+behavior afterward, with 7b's re-baseline as its reference point.
+
+The §12 reconciliation re-run goes to **7b, not 7c**, because it is the same
+kind of work as the rest of 7b: it needs a real k6 load run to have happened,
+which is exactly what 7b's re-baseline produces. Pairing it with the tuning
+pass means one load run serves both, rather than 7c standing the whole stack
+up again to drive traffic it has no other use for.
+
+7b is independently shippable in the way this table asks: a tuned wager path
+with a revised, honest baseline and a proven post-load reconciliation is a
+deliverable even if no security item is closed afterward.
+
+**§6's `JoinRoom`→Lua rewrite is adopted into neither half.** It was
+recorded as a Phase 7 *candidate*, not a commitment: it rewrites a
+working Phase 4 write path so that a reconciliation assertion can read as
+the literal `redis_wallet == ledger_balance` instead of subtracting the
+opening stake. The identity it would simplify is already proven as-is by
+`internal/ledger/reconcile_test.go`. It stays a candidate.
+
+**Phase 4 split into 4a/4b (added at Phase 4a close-out).** Scoping Phase 4
+as written above produced ~13 tasks / ~38 checkpoints — the shape this
+table's own **Phase-sizing note** (added at Phase 3 close-out, see below)
+warns against, after Phase 3 landed at 2,904 lines and exhausted a full
+token window. Split at the layer boundary — 4a is pure transport with zero
+game knowledge (`docs/plans/2026-08-26-phase-4a-ws-transport.md`), 4b is
+rounds, wagers, and money over that transport
+(`docs/plans/2026-08-26-phase-4b-round-lifecycle.md`) — via the seam
+`ws.MessageHandler` plus `ws.Room.Broadcast`. 4a is also the first phase
+planned under `writing-plans-tuned`, an experimental token-budget-tuned
+variant of `writing-plans`; see that plan's own "Measured" section for the
+experiment's outcome.
 
 **Phase 3 note (added at Phase 2 close-out, Amendment A4/A5).** Phase 2
 already wrote the real room and round writers — `CreateRoom`, `JoinRoom`,
@@ -285,7 +630,72 @@ in Phase 2 calls it, so it landed next to its first caller (the refill
 endpoint and wager-placement middleware) instead of sitting unused for a
 full phase.
 
+**Phase 4 note (added at Phase 3 close-out).** `internal/room`'s
+`Service.Create`/`Service.Join`, `internal/account`'s `Service`, the
+shared rate limiter, and `internal/auth`'s token `Issuer` all already
+exist and are tested — Phase 4 wraps and calls them from the WebSocket
+handshake and round lifecycle, it does not reimplement any of them. In
+particular, the wager-placement throttle's call site (keyed how the
+WS handshake determines identity) is Phase 4's to wire; `rate_limit.lua`
+and `Store.Allow`/`Revoke` are already built and proven.
+
+**Phase 5 note (added at Phase 3 close-out, Amendment B1) — RESOLVED at
+Phase 5's planning pass.** Persistent accounts (`user:{userID}`,
+`email:{normalizedEmail}`) **stay in Redis.** PostgreSQL holds monetary
+history only. Credentials are not monetary history, and nothing in the
+double-entry design needs the user row co-located: the ledger references
+`user_id` as an opaque identifier, never joining to it. Migrating would
+have pulled `internal/account`, `claim_unique.lua`'s email path,
+`top_up_balance.lua`, and a live-data migration into the phase already
+carrying the most risk, for no benefit the ledger can actually use. The
+one thing that might have forced the issue is not a conflict: §6's
+`accounts` table holds **ledger** accounts (`user_wallet`, `room_escrow`,
+`system_dust`), a different and non-colliding sense of the word.
+
+Revisit at Phase 7, not before. The real long-term argument for migrating
+is foreign-key integrity between ledger accounts and users, which is a
+hardening concern — it buys nothing while the ledger is being built and
+would obscure the reconciliation test's result if introduced alongside it.
+
 **Import rule:** skills (Bucket 2/3) are cheap — one line in the availability listing until invoked — so pull each phase's skills in *before* that phase starts, no need to batch them all up front. Language-specific **rule dirs** (`.claude/rules/ecc/<language>/`) are different: they're always-loaded full text into every turn once installed, per `.claude/rules/ecc/common/agents.md`'s description of rules as passive/always-on. Install a rule dir only right before the phase that needs it, so irrelevant stack rules don't sit in every turn's context for phases that don't touch that stack yet.
+
+**Phase-sizing note (added at Phase 3 close-out).** Read this before
+scoping any future phase's task/checkpoint breakdown. Phase 3's plan
+landed at 2,904 lines / 38 checkpoints — close to Phase 1's old
+code-heavy-format length (2,999 lines) and nearly double Phase 2's
+(1,599 lines), despite using the same spec-driven contract format Phase
+2 introduced. Normalized per checkpoint the format held up reasonably
+(Phase 2: ~64 lines/checkpoint; Phase 3: ~76, a ~19% increase, not the
+~80% the raw totals suggest) — so this was **not** a regression in
+`writing-plans` itself. The actual cause: Phase 3 bundled four
+separable deliverables into one phase (credentials, tokens, the shared
+rate limiter, and the full REST surface over rooms/refills), which is
+also why it produced the most checkpoints of any phase so far (38, vs.
+Phase 2's 25). The plan's own self-review flagged this at write
+time — "Tasks 1–10 are a coherent stopping point" — meaning the phase
+boundary itself was drawn too wide, not that any one task was
+over-specified.
+
+**Recommendation:** when a phase's own draft self-review names a
+mid-phase stopping point like that, treat it as a signal to split the
+phase in the parent plan (here, §9's phase table) *before* writing the
+detailed task/checkpoint plan — not as an interesting note to leave in
+place. A phase should be one deliverable people would actually want to
+ship independently, not several bundled because they're thematically
+related. Check this before writing Phase 5's plan in particular — it
+touches Kafka, the ledger, and a reconciliation test, which risks the
+same bundling Phase 3 hit.
+
+**Checked, and it did.** Phase 5 was split into 5a/5b at its planning
+pass, before the task breakdown was written — see the split note above.
+That was the first time the recommendation was applied as intended rather
+than noted after the fact; Phases 6 and 7 were both split the same way at
+their own planning passes, so it is now standing practice rather than a
+one-off. Phase 7's split is the first to draw on sources outside this
+table — the deferred items in `docs/project-history.md` and the toolchain
+note in `CLAUDE.md` — which is worth repeating: a late phase's real size
+is not what its §9 row says, it is that row plus everything earlier
+phases deferred into it.
 
 Two sequencing choices are deliberate. **Phase 1 precedes all
 infrastructure** because the money math is where correctness bugs hide, and
@@ -322,8 +732,8 @@ reliably take longer than they appear.
 
 ## 12. Acceptance
 
-- [ ] Phases 0–4 complete, producing an end-to-end playable round
-- [ ] Concurrency suite proves zero double-spend under contention
-- [ ] Redis↔PostgreSQL reconciliation test passes after a load run
-- [ ] Test coverage meets the project's 80% minimum
-- [ ] Security review run against the auth and wager-placement paths
+- [x] Phases 0–4 complete, producing an end-to-end playable round — `internal/ws.TestEndToEndRound` (Phase 4b Task 10 CP1) is the evidence: a host and two players register/join over REST, open a round, wager, lock, and resolve over the real socket transport, with token conservation (`wallets + dust == combined opening stakes`) asserted at the end.
+- [x] Concurrency suite proves zero double-spend under contention — `internal/redisstore.TestConcurrent_NoDoubleSpend` (`concurrency_test.go`) races N goroutines against a single wallet and asserts exact token conservation with zero over-debit
+- [x] Redis↔PostgreSQL reconciliation test passes after a load run — `TestReconcileAfterLoad` (`backend/internal/ledger/reconcile_after_load_test.go`), proven over 5,983 wagers a real k6 run produced; see `docs/reports/2026-08-31-phase-7b-baseline.md`
+- [x] Test coverage meets the project's 80% minimum — `go test ./... -coverpkg=./... -p 1`, merged profile via `go tool cover -func`: 88.8% excluding `cmd/*` (accepted at 0%, `CLAUDE.md`/project-history's standing exception); `internal/domain` still reads 100%
+- [x] Security review run against the auth and wager-placement paths — Phase 7c's `security-reviewer` run against `dev...HEAD`, scoped to `internal/auth`, `internal/account`, `internal/round`, `internal/redisstore`, `internal/events`; no CRITICAL/HIGH/MEDIUM/LOW findings (`docs/project-history.md`'s Phase 7c section)

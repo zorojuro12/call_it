@@ -209,6 +209,41 @@ func TestValidateStake_InsufficientFunds(t *testing.T) {
 	}
 }
 
+func TestValidateStakeAmount(t *testing.T) {
+	tests := []struct {
+		name    string
+		amount  Tokens
+		wantErr bool
+	}{
+		{name: "the smallest positive stake is accepted", amount: 1},
+		{name: "a large stake is accepted", amount: 1_000_000},
+		{name: "a zero stake is not a wager", amount: 0, wantErr: true},
+		{name: "a negative stake would mint tokens", amount: -1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateStakeAmount(tt.amount)
+
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidStake) {
+					t.Fatalf("ValidateStakeAmount(%d) = %v, want ErrInvalidStake", tt.amount, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("ValidateStakeAmount(%d): unexpected error: %v", tt.amount, err)
+			}
+		})
+	}
+}
+
+func TestValidateStake_DelegatesSignRule(t *testing.T) {
+	if err := ValidateStake(-5, 1000); !errors.Is(err, ErrInvalidStake) {
+		t.Fatalf("ValidateStake(-5, 1000) = %v, want ErrInvalidStake", err)
+	}
+}
+
 func TestApplySessionResult(t *testing.T) {
 	tests := []struct {
 		name           string

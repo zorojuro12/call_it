@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/zorojuro12/call_it/backend/internal/domain"
 )
@@ -81,6 +82,43 @@ func TestCreateRoom(t *testing.T) {
 	}
 }
 
+func TestCreateRoom_CodeCollision(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	code := testID(t, "code")
+	roomA := testID(t, "room")
+	roomB := testID(t, "room")
+
+	if err := store.CreateRoom(ctx, roomA, code, "hostA", 500); err != nil {
+		t.Fatalf("CreateRoom(A) = %v, want nil", err)
+	}
+
+	err := store.CreateRoom(ctx, roomB, code, "hostB", 900)
+	if !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("CreateRoom(B) err = %v, want ErrAlreadyExists", err)
+	}
+
+	gotID, err := store.RoomByCode(ctx, code)
+	if err != nil {
+		t.Fatalf("RoomByCode() = %v, want nil", err)
+	}
+	if gotID != roomA {
+		t.Errorf("RoomByCode() = %q, want %q (room A)", gotID, roomA)
+	}
+
+	roomAFields, err := store.Room(ctx, roomA)
+	if err != nil {
+		t.Fatalf("Room(A) = %v, want nil", err)
+	}
+	if roomAFields.HostID != "hostA" || roomAFields.BuyIn != domain.Tokens(500) {
+		t.Errorf("Room(A) = %+v, want HostID=hostA BuyIn=500 (untouched)", roomAFields)
+	}
+
+	if _, err := store.Room(ctx, roomB); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Room(B) err = %v, want ErrNotFound — B must never have been written", err)
+	}
+}
+
 func TestRoom_MalformedFields(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -128,8 +166,12 @@ func TestJoinRoom(t *testing.T) {
 		t.Fatalf("CreateRoom() = %v, want nil", err)
 	}
 
-	if err := store.JoinRoom(ctx, roomID, "u1", 500); err != nil {
+	eff, err := store.JoinRoom(ctx, roomID, "u1", 500)
+	if err != nil {
 		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+	if eff != 500 {
+		t.Errorf("JoinRoom() effective = %d, want 500", eff)
 	}
 	balField, err := store.client.HGet(ctx, RoomWalletsKey(roomID), "u1").Result()
 	if err != nil {
@@ -150,7 +192,7 @@ func TestJoinRoom(t *testing.T) {
 		t.Errorf("Balance() for user who never joined error = %v, want ErrNotFound", err)
 	}
 
-	err = store.JoinRoom(ctx, roomID, "u-zero", 0)
+	_, err = store.JoinRoom(ctx, roomID, "u-zero", 0)
 	if !errors.Is(err, domain.ErrInvalidStake) {
 		t.Fatalf("JoinRoom() with balance 0 error = %v, want ErrInvalidStake", err)
 	}
@@ -162,12 +204,12 @@ func TestJoinRoom(t *testing.T) {
 		t.Errorf("HEXISTS wallets u-zero = true, want false — invalid balance must write nothing")
 	}
 
-	if err := store.JoinRoom(ctx, roomID, "u2", 500); err != nil {
+	if _, err := store.JoinRoom(ctx, roomID, "u2", 500); err != nil {
 		t.Fatalf("JoinRoom(u2) = %v, want nil", err)
 	}
 	// The host also holds a wallet field for room bookkeeping, but must
 	// not count toward the player denominator (spec §4).
-	if err := store.JoinRoom(ctx, roomID, "host1", 500); err != nil {
+	if _, err := store.JoinRoom(ctx, roomID, "host1", 500); err != nil {
 		t.Fatalf("JoinRoom(host1) = %v, want nil", err)
 	}
 	count, err := store.PlayerCount(ctx, roomID)
@@ -176,5 +218,171 @@ func TestJoinRoom(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("PlayerCount() = %d, want 2 (host excluded)", count)
+	}
+}
+
+func TestOpeningStake(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+
+	eff, err := store.JoinRoom(ctx, roomID, "u1", 600)
+	if err != nil {
+		t.Fatalf("JoinRoom() = %v, want nil", err)
+	}
+	if eff != 600 {
+		t.Errorf("JoinRoom() effective = %d, want 600", eff)
+	}
+
+	opening, err := store.OpeningStake(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("OpeningStake() = %v, want nil", err)
+	}
+	if opening != 600 {
+		t.Errorf("OpeningStake() = %d, want 600", opening)
+	}
+	balance, err := store.Balance(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("Balance() = %v, want nil", err)
+	}
+	if balance != 600 {
+		t.Errorf("Balance() = %d, want 600", balance)
+	}
+
+	// Mutate the wallet with a wager — OpeningStake must not move.
+	roundID := testID(t, "round")
+	if err := store.CreateRound(ctx, roundID, roomID, "Question?", testOutcomes(2), time.Now().Add(30*time.Second)); err != nil {
+		t.Fatalf("CreateRound() = %v, want nil", err)
+	}
+	if _, err := store.PlaceWager(ctx, WagerRequest{
+		RoomID: roomID, RoundID: roundID, UserID: "u1",
+		Outcome: 0, Amount: 100, IdempotencyKey: testID(t, "idem"),
+	}); err != nil {
+		t.Fatalf("PlaceWager() = %v, want nil", err)
+	}
+
+	balance, err = store.Balance(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("Balance() after wager = %v, want nil", err)
+	}
+	if balance != 500 {
+		t.Errorf("Balance() after wager = %d, want 500", balance)
+	}
+	opening, err = store.OpeningStake(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("OpeningStake() after wager = %v, want nil", err)
+	}
+	if opening != 600 {
+		t.Errorf("OpeningStake() after wager = %d, want 600 (unchanged)", opening)
+	}
+
+	if _, err := store.OpeningStake(ctx, roomID, "never-joined"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("OpeningStake() for user who never joined error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestJoinRoom_Rejoin proves Amendment B4's second half: rejoining an
+// existing wallet preserves whatever balance it currently holds instead
+// of resetting it to the buy-in. The old unconditional HSET let any
+// losing participant refresh the page and have their wallet topped back
+// to the full buy-in — unlimited tokens, no tooling required.
+func TestJoinRoom_Rejoin(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 500); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+
+	eff1, err := store.JoinRoom(ctx, roomID, "u1", 500)
+	if err != nil || eff1 != 500 {
+		t.Fatalf("JoinRoom(u1) first join = (%d, %v), want (500, nil)", eff1, err)
+	}
+
+	// Simulate play driving the balance down.
+	if err := store.client.HSet(ctx, RoomWalletsKey(roomID), "u1", "120").Err(); err != nil {
+		t.Fatalf("HSET wallets u1 120: %v", err)
+	}
+
+	eff2, err := store.JoinRoom(ctx, roomID, "u1", 500)
+	if err != nil || eff2 != 120 {
+		t.Fatalf("JoinRoom(u1) rejoin = (%d, %v), want (120, nil) — the surviving balance, not a reset", eff2, err)
+	}
+	balance, err := store.Balance(ctx, roomID, "u1")
+	if err != nil || balance != 120 {
+		t.Fatalf("Balance(u1) after rejoin = (%d, %v), want (120, nil) — must not be reset to 500", balance, err)
+	}
+
+	effNew, err := store.JoinRoom(ctx, roomID, "u2", 500)
+	if err != nil || effNew != 500 {
+		t.Fatalf("JoinRoom(u2) genuinely new joiner = (%d, %v), want (500, nil)", effNew, err)
+	}
+
+	if _, err := store.JoinRoom(ctx, roomID, "u3", 0); !errors.Is(err, domain.ErrInvalidStake) {
+		t.Fatalf("JoinRoom(u3, 0) err = %v, want ErrInvalidStake — unchanged from Phase 2", err)
+	}
+}
+
+func TestClearSession(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	roomID := testID(t, "room")
+
+	if err := store.CreateRoom(ctx, roomID, testID(t, "code"), "host1", 1000); err != nil {
+		t.Fatalf("CreateRoom() = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, "u1", 1000); err != nil {
+		t.Fatalf("JoinRoom(u1) = %v, want nil", err)
+	}
+	if _, err := store.JoinRoom(ctx, roomID, "u2", 1000); err != nil {
+		t.Fatalf("JoinRoom(u2) = %v, want nil", err)
+	}
+
+	// A live session is claimed and cleared.
+	claimed, err := store.ClearSession(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("ClearSession(u1) = %v, want nil", err)
+	}
+	if !claimed {
+		t.Errorf("ClearSession(u1) claimed = false, want true")
+	}
+	if _, err := store.Balance(ctx, roomID, "u1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Balance(u1) after ClearSession = %v, want ErrNotFound", err)
+	}
+	if _, err := store.OpeningStake(ctx, roomID, "u1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("OpeningStake(u1) after ClearSession = %v, want ErrNotFound", err)
+	}
+
+	// A second call claims nothing.
+	claimedAgain, err := store.ClearSession(ctx, roomID, "u1")
+	if err != nil {
+		t.Fatalf("second ClearSession(u1) = %v, want nil", err)
+	}
+	if claimedAgain {
+		t.Errorf("second ClearSession(u1) claimed = true, want false")
+	}
+
+	// Another member's session is untouched.
+	balance, err := store.Balance(ctx, roomID, "u2")
+	if err != nil || balance != 1000 {
+		t.Errorf("Balance(u2) after clearing u1 = (%d, %v), want (1000, nil)", balance, err)
+	}
+	opening, err := store.OpeningStake(ctx, roomID, "u2")
+	if err != nil || opening != 1000 {
+		t.Errorf("OpeningStake(u2) after clearing u1 = (%d, %v), want (1000, nil)", opening, err)
+	}
+
+	// A user who never joined claims nothing.
+	claimedNever, err := store.ClearSession(ctx, roomID, "never-joined")
+	if err != nil {
+		t.Fatalf("ClearSession(never-joined) = %v, want nil", err)
+	}
+	if claimedNever {
+		t.Errorf("ClearSession(never-joined) claimed = true, want false")
 	}
 }

@@ -14,6 +14,12 @@ import (
 // balance-mutating script XADDs into, atomically with its mutation.
 const OutboxStream = "wager-outbox"
 
+// OutboxGroup is cmd/relay's consumer group name on OutboxStream. A
+// single named group (rather than one per relay instance) lets multiple
+// relay processes share the stream's backlog via XREADGROUP without
+// double-delivering an entry.
+const OutboxGroup = "relay"
+
 // PoolTotalField is the field in a round's pools hash holding the sum of
 // every outcome's pool.
 const PoolTotalField = "total"
@@ -34,6 +40,20 @@ func RoundKey(roundID string) string {
 	return "round:" + roundID
 }
 
+// RoomRoundKey indexes a room's current (non-terminal) round, so finding
+// it never requires scanning every round key (Amendment D2).
+func RoomRoundKey(roomID string) string {
+	return "room:" + roomID + ":round"
+}
+
+// RoomOpeningKey holds each player's opening session stake — the
+// effective balance granted at join, which never moves after (Amendment
+// D3). Needed to compute a session's net delta at EndSession, since the
+// wallet itself moves on every wager.
+func RoomOpeningKey(roomID string) string {
+	return "room:" + roomID + ":opening"
+}
+
 func RoundPoolsKey(roundID string) string {
 	return "round:" + roundID + ":pools"
 }
@@ -48,6 +68,18 @@ func RoundBettorsKey(roundID string) string {
 
 func IdemKey(key string) string {
 	return "idem:" + key
+}
+
+func UserKey(userID string) string {
+	return "user:" + userID
+}
+
+func EmailKey(normalizedEmail string) string {
+	return "email:" + normalizedEmail
+}
+
+func RateLimitKey(scope, id string) string {
+	return "ratelimit:" + scope + ":" + id
 }
 
 // WagerField builds a field name for the round:{roundID}:wagers hash.
