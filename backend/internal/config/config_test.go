@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
@@ -360,6 +361,75 @@ func TestLoadMetricsAddrProductionLoopback(t *testing.T) {
 			}
 			if !tt.wantErr && err != nil {
 				t.Fatalf("Load() with env %v: unexpected error: %v", tt.env, err)
+			}
+		})
+	}
+}
+
+func TestLoadTrustedProxies(t *testing.T) {
+	tests := []struct {
+		name          string
+		env           map[string]string
+		want          []netip.Prefix
+		wantErrSubstr string
+	}{
+		{
+			name: "unset trusts no proxy",
+			env:  map[string]string{},
+			want: nil,
+		},
+		{
+			name: "single prefix",
+			env:  map[string]string{"TRUSTED_PROXIES": "172.30.0.10/32"},
+			want: []netip.Prefix{netip.MustParsePrefix("172.30.0.10/32")},
+		},
+		{
+			name: "list is trimmed and keeps order",
+			env:  map[string]string{"TRUSTED_PROXIES": "172.30.0.10/32, 10.0.0.0/8"},
+			want: []netip.Prefix{netip.MustParsePrefix("172.30.0.10/32"), netip.MustParsePrefix("10.0.0.0/8")},
+		},
+		{
+			name: "trailing comma is skipped",
+			env:  map[string]string{"TRUSTED_PROXIES": "172.30.0.10/32,"},
+			want: []netip.Prefix{netip.MustParsePrefix("172.30.0.10/32")},
+		},
+		{
+			name: "host bits are masked off",
+			env:  map[string]string{"TRUSTED_PROXIES": "10.1.2.3/8"},
+			want: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+		},
+		{
+			name:          "bare address without a mask is rejected",
+			env:           map[string]string{"TRUSTED_PROXIES": "172.30.0.10"},
+			wantErrSubstr: `TRUSTED_PROXIES entry "172.30.0.10" is not a CIDR prefix`,
+		},
+		{
+			name:          "IPv4 catch-all is rejected",
+			env:           map[string]string{"TRUSTED_PROXIES": "0.0.0.0/0"},
+			wantErrSubstr: "TRUSTED_PROXIES must not trust every address",
+		},
+		{
+			name:          "IPv6 catch-all is rejected",
+			env:           map[string]string{"TRUSTED_PROXIES": "172.30.0.10/32,::/0"},
+			wantErrSubstr: "TRUSTED_PROXIES must not trust every address",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Load(lookupFrom(tt.env, nil))
+
+			if tt.wantErrSubstr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErrSubstr) {
+					t.Fatalf("Load() with env %v: err = %v, want containing %q", tt.env, err, tt.wantErrSubstr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() with env %v: unexpected error: %v", tt.env, err)
+			}
+			if !reflect.DeepEqual(got.TrustedProxies, tt.want) {
+				t.Errorf("Load().TrustedProxies = %v, want %v", got.TrustedProxies, tt.want)
 			}
 		})
 	}
