@@ -432,7 +432,11 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 7a | **Instrumentation + load harness** ✅ | Go toolchain raise off EOL 1.22.10, `internal/metrics` server-side latency histograms on the wager and broadcast paths, real k6 scripts behind `make loadtest`, and a recorded baseline of measured p99 and throughput against spec §7's SLAs | 5b, 6b | None new — spec already names k6 directly |
 | 7b | **Tuning + reconciliation under load** ✅ | Acts on 7a's two MISSED targets: profile and tune the wager-placement path (five sequential Redis round trips today) against the p99 < 15 ms target, re-baseline throughput on an optimized `go build` binary and either close the 5,000 rps gap or record this environment's ceiling with evidence, and re-run the Redis↔PostgreSQL reconciliation after a real k6 load run (closes §12's last unchecked money-correctness box) | 7a | None new |
 | 7c | **Security debt + docs** ✅ | The three security items open by design (login timing, reconnect grace window, `RoundSettled.Payouts` length cap), and the README with an architecture diagram | 7b | None new |
-| 8 | **Deferred** | LLM question suggestions, Terraform live deployment, Prometheus/Grafana | 7c | Decide when unblocked |
+| 8a | **Backend deployment** | The backend live on one public VM (Oracle Cloud Always Free, arm64) behind Caddy TLS at a DuckDNS hostname: one container image for all four Go binaries, a production Compose file whose networks structurally isolate Redis/PostgreSQL/Kafka, trusted-proxy client-IP resolution (without which every caller shares one auth rate-limit bucket behind the proxy), secrets generated on the server, backup/restore, tag-based deploy and rollback | 7c | `docker-patterns` (already installed) |
+| 8b | **Web frontend deployment** | `frontend/` served at the same hostname as 8a's API, so the browser origin and the API share one origin | 8a | None new |
+| 8c | **Expo mobile app** | React Native client in `mobile/`, sharing the framework-free `frontend/lib/` modules | 8a | Decide at 8c's planning pass |
+| 8d | **App Store readiness** | Account deletion (App Store guideline 5.1.1(v)), privacy policy, TestFlight, submission | 8c | Decide at 8d's planning pass |
+| 9 | **Deferred** | LLM question suggestions, Prometheus/Grafana | 8a | Decide when unblocked |
 
 **Phase 5 split into 5a/5b (added at Phase 5's planning pass).** Done
 *before* writing the detailed task breakdown, which is what the
@@ -603,6 +607,25 @@ working Phase 4 write path so that a reconciliation assertion can read as
 the literal `redis_wallet == ledger_balance` instead of subtracting the
 opening stake. The identity it would simplify is already proven as-is by
 `internal/ledger/reconcile_test.go`. It stays a candidate.
+
+**Phase 8 split into 8a–8d, and Terraform dropped (added at Phase 8a's
+planning pass, 2026-10-17).** The old row 8 was a bucket of deferred work
+rather than a phase. Live deployment came out of it when the project's goal
+moved from a local demo to a public release that ends on the iOS App Store
+(spec §8 deferred live deployment; that deferral is now lifted). It is split
+at the **reachability boundary**: 8a ends when the backend answers on a
+public `https://`/`wss://` hostname. That is the one thing 8b's web deploy,
+8c's mobile app, and 8d's store submission all need, and none of them can
+be tested for real without it. 8a is independently shippable: a public API
+with a working CLI client (`cmd/callit-cli`) is a deliverable even if no
+other client ever ships.
+
+**Terraform is dropped rather than deferred.** Spec §2 called for it
+"written for real but not necessarily applied". For one free-tier VM it
+would be a second definition of a machine whose only state is "Docker
+installed, ports 80/443 open". `deploy/README.md`'s runbook is that
+definition, and it is the one that gets used. Revisit if the deployment ever
+grows past one host.
 
 **Phase 4 split into 4a/4b (added at Phase 4a close-out).** Scoping Phase 4
 as written above produced ~13 tasks / ~38 checkpoints — the shape this
