@@ -51,13 +51,17 @@ done
 [ "$(q '.networks.edge.internal // false')" = false ] || fail "3. edge must not be internal (Caddy needs ACME egress)"
 ok "3. state, events, ledger are internal"
 
-# 4. Images are pinned; the Go services build from ../backend.
+# 4. Images are pinned; api builds the backend image from ../backend and
+#    the other Go services run that same image without ever pulling it.
 untagged=$(q '[.services | to_entries[] | select(.value.image != null) | select((.value.image | test(":") | not) or (.value.image | test(":latest$"))) | .key] | join(",")')
 [ -z "$untagged" ] || fail "4. unpinned image on: $untagged"
-for s in api relay ledger-worker migrate; do
-  [ "$(q ".services.\"$s\".build.context | endswith(\"/backend\")")" = true ] || fail "4. $s does not build from backend/"
+[ "$(q '.services.api.build.context | endswith("/backend")')" = true ] || fail "4. api does not build from backend/"
+backend_image=$(q '.services.api.image')
+for s in relay ledger-worker migrate; do
+  [ "$(q ".services.\"$s\".image")" = "$backend_image" ] || fail "4. $s does not run api's image $backend_image"
+  [ "$(q ".services.\"$s\".pull_policy")" = never ] || fail "4. $s may try to pull the local-only backend image"
 done
-ok "4. images pinned, Go services build from backend/"
+ok "4. images pinned; one backend image, built by api, never pulled"
 
 # 5. api environment.
 env_of() { q ".services.\"$1\".environment.\"$2\" // \"<unset>\""; }

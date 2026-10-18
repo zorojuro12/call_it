@@ -14,10 +14,13 @@
 
 name: callit-prod
 
+# All four Go services run the one backend image. Only api builds it:
+# four services building the same tag in parallel collide on export. The
+# other three reuse that tag and must never try to pull it (there is no
+# registry, Decision 4).
 x-backend: &backend
-  build:
-    context: ../backend
   image: callit-backend:local
+  pull_policy: never
   restart: unless-stopped
 
 services:
@@ -29,7 +32,6 @@ services:
       - "443:443"
     environment:
       CALLIT_HOSTNAME: ${CALLIT_HOSTNAME:?CALLIT_HOSTNAME is required — run deploy/gen-env.sh}
-      ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -42,6 +44,9 @@ services:
 
   api:
     <<: *backend
+    build:
+      context: ../backend
+    pull_policy: build
     command: ["/app/api"]
     environment:
       ENV: production
