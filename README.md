@@ -127,6 +127,22 @@ never two).
   the same way it does without `JWT_SECRET`.
 - Never accepts `*`, in any environment.
 
+### `TRUSTED_PROXIES`
+
+A comma-separated list of CIDR prefixes (e.g. `172.30.0.10/32`) naming the
+reverse proxies in front of the API. The IP-keyed rate limits (the `auth`
+scope and the socket's unauthenticated fallback) believe `X-Forwarded-For`
+only from these peers, and then only its rightmost entry that isn't itself
+a trusted proxy. That entry is the one the proxy appended; everything to
+its left came from the client.
+
+- Unset: no peer is trusted, and the header is ignored entirely.
+- Set it whenever a proxy sits in front of the API. Otherwise every caller
+  shares the proxy's address, and with it a single rate-limit bucket.
+- Entries must be CIDR prefixes; a bare address is rejected.
+- Never accepts `0.0.0.0/0` or `::/0`. Trusting every peer means trusting
+  every client's header.
+
 ### `METRICS_ADDR`
 
 Optional `host:port` for a second, plain-text metrics listener
@@ -177,6 +193,21 @@ optimized `cmd/api` binary for exactly this purpose — never `go run
 ./cmd/api`, whose disabled inlining confounds a latency measurement. See
 `loadtest/README.md` and the Phase 7a/7b baseline reports under
 `docs/reports/`.
+
+The opt-in game-logic e2e check (`frontend/e2e/logic-check.spec.ts`)
+plays two rounds with a host and two guests through to the PostgreSQL
+ledger. It needs the relay and ledger worker running; see the file's
+header, and run it with `CALLIT_LEDGER_E2E=1`.
+
+## Deployment
+
+The backend deploys to one Linux VM with Docker Compose: Caddy terminates
+TLS with an automatic Let's Encrypt certificate, and Redis, PostgreSQL and
+Kafka sit on internal networks that only the processes needing them can
+reach. The API can't even connect to PostgreSQL or Kafka. Everything (VM
+setup, DuckDNS, secrets, deploy and rollback by git tag, backups, restore)
+is in [`deploy/README.md`](deploy/README.md). The same stack rehearses
+locally with `CALLIT_HOSTNAME=localhost`.
 
 ## Security posture
 

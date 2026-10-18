@@ -5,6 +5,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -107,13 +108,15 @@ func RateLimit(store *redisstore.Store, p LimitPolicy) func(http.Handler) http.H
 }
 
 // authThrottle limits unauthenticated auth endpoints (register, login)
-// by client IP — there is no user identity yet to key on.
-func authThrottle(store *redisstore.Store) func(http.Handler) http.Handler {
+// by client IP — there is no user identity yet to key on. clientIP is
+// NewClientIP's resolver, so behind a trusted proxy each client keeps
+// its own bucket instead of sharing the proxy's.
+func authThrottle(store *redisstore.Store, clientIP func(*http.Request) string) func(http.Handler) http.Handler {
 	return RateLimit(store, LimitPolicy{
 		Scope:  "auth",
 		Limit:  10,
 		Window: time.Minute,
-		KeyFn:  ClientIP,
+		KeyFn:  clientIP,
 	})
 }
 
@@ -132,18 +135,57 @@ func apiThrottle(store *redisstore.Store) func(http.Handler) http.Handler {
 	})
 }
 
-// ClientIP reads the caller's address from r.RemoteAddr only.
-// X-Forwarded-For is deliberately not consulted: it is caller-supplied,
-// so trusting it here would let any client mint unlimited fresh
-// rate-limit buckets by varying a header. When a real proxy sits in
-// front of this service, the trusted-proxy configuration to parse it
-// correctly gets designed then.
-func ClientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+// NewClientIP returns the function every IP-keyed rate limit uses to
+// name its caller. Without a trusted proxy it reads r.RemoteAddr only:
+// X-Forwarded-For is caller-supplied, so believing it from an arbitrary
+// peer would let any client mint unlimited fresh rate-limit buckets by
+// varying a header.
+//
+// When the TCP peer falls inside one of trusted (the reverse proxy in
+// front of this service), the header is consulted — but only its
+// rightmost entry that is not itself a trusted proxy. Proxies append
+// the address they saw, so that entry was written by our own proxy;
+// everything to its left came from the client and may be forged. An
+// entry that fails to parse, or a header holding only trusted
+// addresses, falls back to the peer, failing closed to the one address
+// nobody upstream could have chosen.
+func NewClientIP(trusted []netip.Prefix) func(*http.Request) string {
+	isTrusted := func(a netip.Addr) bool {
+		for _, p := range trusted {
+			if p.Contains(a) {
+				return true
+			}
+		}
+		return false
 	}
-	return host
+
+	return func(r *http.Request) string {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			return r.RemoteAddr
+		}
+		peer, err := netip.ParseAddr(host)
+		if err != nil || !isTrusted(peer.Unmap()) {
+			return host
+		}
+
+		entries := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+		for i := len(entries) - 1; i >= 0; i-- {
+			entry := strings.TrimSpace(entries[i])
+			if entry == "" {
+				continue
+			}
+			addr, err := netip.ParseAddr(entry)
+			if err != nil {
+				return host
+			}
+			addr = addr.Unmap()
+			if !isTrusted(addr) {
+				return addr.String()
+			}
+		}
+		return host
+	}
 }
 
 // OptionalAuth proceeds without claims when no Authorization header is

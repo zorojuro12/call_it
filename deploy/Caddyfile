@@ -1,0 +1,35 @@
+# TLS front for the API (plan 8a). The site address is the one hostname
+# value, CALLIT_HOSTNAME from deploy/.env: a DuckDNS name in production
+# gets a Let's Encrypt certificate over HTTP-01 (Decision 6); "localhost"
+# in a local rehearsal gets one from Caddy's local CA.
+#
+# No trusted_proxies here: Caddy is the first hop, so no upstream's
+# forwarded headers deserve trust. The API trusts Caddy instead, by its
+# static edge address (TRUSTED_PROXIES in compose.prod.yml).
+#
+# No ACME account email: Let's Encrypt doesn't require one, and Caddy
+# rejects an empty `email` option, so an optional one would need a second
+# Caddyfile variant to stay valid when unset.
+{$CALLIT_HOSTNAME} {
+	log
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+
+	handle /api/* {
+		reverse_proxy api:8080 {
+			# Caddy force-closes WebSockets on every config reload by
+			# default; this keeps live rooms connected across one
+			# (Decision 7).
+			stream_close_delay 5m
+		}
+	}
+
+	handle /healthz {
+		reverse_proxy api:8080
+	}
+
+	# The web frontend arrives here in Phase 8b.
+	handle {
+		respond 404
+	}
+}
