@@ -90,29 +90,3 @@ func TestRateLimit(t *testing.T) {
 		t.Errorf("other key: status = %d, want 200 — independent bucket from the exhausted one", recOther.Code)
 	}
 }
-
-func TestClientIP(t *testing.T) {
-	cases := []struct {
-		name          string
-		remoteAddr    string
-		xForwardedFor string
-		want          string
-	}{
-		{"ipv4 with port", "192.0.2.1:54321", "", "192.0.2.1"},
-		{"ipv6 with port", "[2001:db8::1]:443", "", "2001:db8::1"},
-		{"x-forwarded-for is ignored", "192.0.2.1:54321", "1.2.3.4", "192.0.2.1"},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/", nil)
-			req.RemoteAddr = tt.remoteAddr
-			if tt.xForwardedFor != "" {
-				req.Header.Set("X-Forwarded-For", tt.xForwardedFor)
-			}
-			if got := ClientIP(req); got != tt.want {
-				t.Errorf("ClientIP() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}

@@ -73,6 +73,6 @@ func wsThrottleKey(issuer *auth.Issuer) func(*http.Request) string {
 				return "user:" + claims.UserID
 			}
 		}
-		return "ip:" + ClientIP(r)
+		return "ip:" + NewClientIP(nil)(r)
 	}
 }
