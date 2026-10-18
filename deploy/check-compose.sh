@@ -114,3 +114,13 @@ for key in JWT_SECRET POSTGRES_PASSWORD CALLIT_HOSTNAME; do
   fi
 done
 ok "10. missing JWT_SECRET, POSTGRES_PASSWORD or CALLIT_HOSTNAME fails the render"
+
+# 11. The Go services run with no privilege escalation, no capabilities,
+#     and a read-only root filesystem (none of them writes to disk).
+for s in api relay ledger-worker migrate; do
+  [ "$(q ".services.\"$s\".read_only")" = true ] || fail "11. $s root filesystem is not read-only"
+  [ "$(q ".services.\"$s\".cap_drop | index(\"ALL\") != null")" = true ] || fail "11. $s does not drop all capabilities"
+  [ "$(q "[.services.\"$s\".security_opt[]? | select(startswith(\"no-new-privileges\"))] | length")" -ge 1 ] \
+    || fail "11. $s allows privilege escalation (no-new-privileges unset)"
+done
+ok "11. Go services: read-only, no capabilities, no-new-privileges"

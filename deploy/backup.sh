@@ -18,6 +18,8 @@ fail() { echo "backup: $*" >&2; exit 1; }
 
 umask 077
 mkdir -p "$dest"
+# umask only covers a directory this run creates; tighten an existing one.
+chmod 700 "$dest"
 staging="$(mktemp -d)"
 trap 'rm -rf "$staging"' EXIT
 

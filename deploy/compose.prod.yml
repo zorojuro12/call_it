@@ -22,6 +22,12 @@ x-backend: &backend
   image: callit-backend:local
   pull_policy: never
   restart: unless-stopped
+  # Already non-root and distroless; additionally no capabilities, no
+  # privilege escalation, and a read-only root filesystem, since none of
+  # the four writes to disk.
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
 
 services:
   caddy:
