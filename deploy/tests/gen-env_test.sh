@@ -62,6 +62,27 @@ set -e
 [ ! -e "$c/.env" ] || fail "no-argument run created .env"
 ok "missing hostname exits 2 without writing"
 
+# Hostnames and tokens are validated before anything is written: .env is
+# read by other scripts, so a value carrying shell syntax must never land
+# in it.
+for bad in 'evil;id' 'x$(id).duckdns.org' 'UPPER.duckdns.org' '-lead.duckdns.org' 'a b'; do
+  d="$(fresh_copy)"
+  set +e
+  bash "$d/gen-env.sh" "$bad" >/dev/null 2>&1
+  code=$?
+  set -e
+  [ "$code" = 2 ] || fail "hostname '$bad' exited $code, want 2"
+  [ ! -e "$d/.env" ] || fail "hostname '$bad' created .env"
+done
+d="$(fresh_copy)"
+set +e
+bash "$d/gen-env.sh" callit.duckdns.org 'tok;id' >/dev/null 2>&1
+code=$?
+set -e
+[ "$code" = 2 ] || fail "token 'tok;id' exited $code, want 2"
+[ ! -e "$d/.env" ] || fail "invalid token created .env"
+ok "invalid hostnames and tokens are rejected without writing"
+
 # The generated file renders the production compose file.
 docker compose -f "$a/compose.prod.yml" --env-file "$a/.env" config -q || fail "generated .env does not render compose.prod.yml"
 ok "generated .env renders compose.prod.yml"

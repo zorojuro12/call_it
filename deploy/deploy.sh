@@ -30,8 +30,9 @@ dc() { docker compose -f "$here/compose.prod.yml" --env-file "$here/.env" "$@"; 
 dc build
 dc up -d --wait
 
-# shellcheck disable=SC1091
-hostname="$(. "$here/.env" && echo "$CALLIT_HOSTNAME")"
+# Read, never source: sourcing .env would execute anything in it.
+hostname="$(grep -m1 '^CALLIT_HOSTNAME=' "$here/.env" | cut -d= -f2-)"
+[ -n "$hostname" ] || fail "CALLIT_HOSTNAME missing from deploy/.env"
 if ! bash "$here/smoke.sh" "$hostname"; then
   echo "deploy: smoke test FAILED for $ref" >&2
   if [ "$previous" != none ]; then

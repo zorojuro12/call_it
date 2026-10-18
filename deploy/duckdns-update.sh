@@ -5,8 +5,11 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck disable=SC1091
-. "$here/.env"
+# Read values out of .env, never source it: sourcing would execute
+# anything in the file.
+env_get() { grep -m1 "^$1=" "$here/.env" | cut -d= -f2-; }
+CALLIT_HOSTNAME="$(env_get CALLIT_HOSTNAME)"
+DUCKDNS_TOKEN="$(env_get DUCKDNS_TOKEN)"
 : "${CALLIT_HOSTNAME:?missing from deploy/.env}"
 : "${DUCKDNS_TOKEN:?missing from deploy/.env — rerun setup with a token}"
 

@@ -17,6 +17,17 @@ fi
 hostname="$1"
 token="${2:-}"
 
+# Validated before anything is written: other scripts read these values
+# back out of .env, so nothing resembling shell syntax may reach the file.
+if ! [[ "$hostname" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+  echo "gen-env: '$hostname' is not a lowercase DNS hostname" >&2
+  exit 2
+fi
+if [ -n "$token" ] && ! [[ "$token" =~ ^[A-Za-z0-9-]+$ ]]; then
+  echo "gen-env: the DuckDNS token may contain only letters, digits and '-'" >&2
+  exit 2
+fi
+
 refuse() { echo "deploy/.env already exists; refusing to overwrite" >&2; exit 1; }
 [ -e "$env_file" ] && refuse
 
