@@ -6,7 +6,7 @@ test("two browsers in one room see each other", async ({ browser }) => {
   const hostPage = await hostContext.newPage();
   const guestPage = await guestContext.newPage();
 
-  const email = `host-${Date.now()}@e2e.test`;
+  const email = `host-${crypto.randomUUID()}@e2e.test`;
 
   await hostPage.goto("/register");
   await hostPage.getByLabel(/email/i).fill(email);
