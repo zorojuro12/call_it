@@ -106,11 +106,16 @@ a backup loses every account. Do both of these:
 ```bash
 sudo mkdir -p /var/backups/callit && sudo chown "$USER" /var/backups/callit
 crontab -e
-# 0 3 * * * cd ~/call_it && bash deploy/backup.sh
+# 0 3 * * * cd ~/call_it && bash deploy/backup.sh >> /var/backups/callit/backup.log 2>&1
 ```
 
 and, in the Oracle console, attach a **backup policy** to the boot volume
-(Block Storage → Boot Volumes). Always Free includes five volume backups.
+(Block Storage → Boot Volumes). Always Free includes five volume backups,
+so don't use the built-in Bronze policy, which keeps 12 monthly ones.
+Create a custom policy under Block Storage → Backup Policies instead:
+weekly, incremental, **27 days** of retention. That's 27 rather than 28,
+so the oldest backup has expired before the next one starts, and the
+policy never holds more than 4.
 Off-VM copies matter here: Oracle can reclaim an idle Always Free instance
 (7 days with CPU p95, network and memory all under 20%).
 
