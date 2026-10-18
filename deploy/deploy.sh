@@ -21,8 +21,12 @@ fail() { echo "deploy: $*" >&2; exit 1; }
 previous="$(cat "$state" 2>/dev/null || echo none)"
 
 git -C "$repo" fetch --tags --quiet origin
-git -C "$repo" checkout --quiet --detach "$ref"
-echo "deploy: checked out $ref ($(git -C "$repo" rev-parse --short HEAD)); previous: $previous"
+# Resolve to a commit first, with option parsing ended, so a ref can never
+# be read as a checkout option (e.g. "--orphan=x"); then check out the SHA.
+sha="$(git -C "$repo" rev-parse --verify --quiet --end-of-options "$ref^{commit}")" \
+  || fail "'$ref' is not a commit in this repository"
+git -C "$repo" checkout --quiet --detach "$sha"
+echo "deploy: checked out $ref (${sha:0:7}); previous: $previous"
 
 bash "$here/check-compose.sh" >/dev/null || fail "check-compose.sh failed for $ref"
 
