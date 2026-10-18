@@ -42,3 +42,7 @@ expect_config_error api "JWT_SECRET is required"
 expect_config_error migrate "POSTGRES_DSN is required"
 expect_config_error ledger-worker "POSTGRES_DSN is required"
 expect_config_error relay "is not one of development|production|test" -e ENV=bogus
+
+out=$(docker run --rm --network none "$image" /app/callit-cli 2>&1 || true)
+grep -qF "specify exactly one of --host or --join" <<<"$out" || fail "/app/callit-cli did not start: $out"
+ok "/app/callit-cli starts"

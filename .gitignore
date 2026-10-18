@@ -14,6 +14,12 @@ frontend/playwright-report/
 .env
 .env.local
 
+# Deployment state (Phase 8a): the last deployed ref on a server, and
+# Caddy's local CA root copied out for a localhost rehearsal
+deploy/.deployed-ref
+.caddy-root.crt
+.backup-drill/
+
 # Editor / OS
 .DS_Store
 
