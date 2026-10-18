@@ -108,13 +108,15 @@ func RateLimit(store *redisstore.Store, p LimitPolicy) func(http.Handler) http.H
 }
 
 // authThrottle limits unauthenticated auth endpoints (register, login)
-// by client IP — there is no user identity yet to key on.
-func authThrottle(store *redisstore.Store) func(http.Handler) http.Handler {
+// by client IP — there is no user identity yet to key on. clientIP is
+// NewClientIP's resolver, so behind a trusted proxy each client keeps
+// its own bucket instead of sharing the proxy's.
+func authThrottle(store *redisstore.Store, clientIP func(*http.Request) string) func(http.Handler) http.Handler {
 	return RateLimit(store, LimitPolicy{
 		Scope:  "auth",
 		Limit:  10,
 		Window: time.Minute,
-		KeyFn:  NewClientIP(nil),
+		KeyFn:  clientIP,
 	})
 }
 

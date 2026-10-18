@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/netip"
 
 	"github.com/zorojuro12/call_it/backend/internal/account"
 	"github.com/zorojuro12/call_it/backend/internal/auth"
@@ -38,6 +39,9 @@ type Deps struct {
 	Issuer         *auth.Issuer
 	Hub            *ws.Hub
 	AllowedOrigins []string
+	// TrustedProxies names the reverse proxies whose X-Forwarded-For the
+	// IP-keyed throttles believe (see NewClientIP). nil trusts none.
+	TrustedProxies []netip.Prefix
 }
 
 // NewMux assembles the process's HTTP routes.

@@ -39,7 +39,7 @@ func registerWSRoutes(mux *http.ServeMux, d Deps) {
 		opts = append(opts, ws.WithAllowedOrigins(d.AllowedOrigins))
 	}
 
-	mux.Handle("GET /api/v1/socket", wsThrottle(d.Store, d.Issuer)(ws.Handler(d.Hub, d.Issuer, ws.DefaultClientConfig(), router.Handle, sessions, opts...)))
+	mux.Handle("GET /api/v1/socket", wsThrottle(d.Store, d.Issuer, NewClientIP(d.TrustedProxies))(ws.Handler(d.Hub, d.Issuer, ws.DefaultClientConfig(), router.Handle, sessions, opts...)))
 }
 
 // wsThrottle limits WebSocket connection attempts through the shared
@@ -48,12 +48,12 @@ func registerWSRoutes(mux *http.ServeMux, d Deps) {
 // letting a single valid token open unbounded connections, each
 // holding two goroutines and a send buffer for the life of the
 // process.
-func wsThrottle(store *redisstore.Store, issuer *auth.Issuer) func(http.Handler) http.Handler {
+func wsThrottle(store *redisstore.Store, issuer *auth.Issuer, clientIP func(*http.Request) string) func(http.Handler) http.Handler {
 	return RateLimit(store, LimitPolicy{
 		Scope:  "ws_connect",
 		Limit:  wsConnectLimit,
 		Window: wsConnectWindow,
-		KeyFn:  wsThrottleKey(issuer),
+		KeyFn:  wsThrottleKey(issuer, clientIP),
 	})
 }
 
@@ -66,13 +66,13 @@ func wsThrottle(store *redisstore.Store, issuer *auth.Issuer) func(http.Handler)
 // ?token= query parameter too (browsers cannot set headers on a
 // WebSocket handshake), so this keys off the same extraction
 // ws.Handler itself uses.
-func wsThrottleKey(issuer *auth.Issuer) func(*http.Request) string {
+func wsThrottleKey(issuer *auth.Issuer, clientIP func(*http.Request) string) func(*http.Request) string {
 	return func(r *http.Request) string {
 		if token := ws.ExtractToken(r); token != "" {
 			if claims, err := issuer.Verify(token); err == nil && claims.UserID != "" {
 				return "user:" + claims.UserID
 			}
 		}
-		return "ip:" + NewClientIP(nil)(r)
+		return "ip:" + clientIP(r)
 	}
 }

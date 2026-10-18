@@ -127,6 +127,22 @@ never two).
   the same way it does without `JWT_SECRET`.
 - Never accepts `*`, in any environment.
 
+### `TRUSTED_PROXIES`
+
+A comma-separated list of CIDR prefixes (e.g. `172.30.0.10/32`) naming the
+reverse proxies in front of the API. The IP-keyed rate limits (the `auth`
+scope and the socket's unauthenticated fallback) believe `X-Forwarded-For`
+only from these peers, and then only its rightmost entry that isn't itself
+a trusted proxy. That entry is the one the proxy appended; everything to
+its left came from the client.
+
+- Unset: no peer is trusted, and the header is ignored entirely.
+- Set it whenever a proxy sits in front of the API. Otherwise every caller
+  shares the proxy's address, and with it a single rate-limit bucket.
+- Entries must be CIDR prefixes; a bare address is rejected.
+- Never accepts `0.0.0.0/0` or `::/0`. Trusting every peer means trusting
+  every client's header.
+
 ### `METRICS_ADDR`
 
 Optional `host:port` for a second, plain-text metrics listener

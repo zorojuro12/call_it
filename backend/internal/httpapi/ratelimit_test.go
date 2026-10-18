@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -89,4 +91,59 @@ func TestRateLimit(t *testing.T) {
 	if recOther.Code != 200 {
 		t.Errorf("other key: status = %d, want 200 — independent bucket from the exhausted one", recOther.Code)
 	}
+}
+
+// TestThrottleTrustedProxy pins the deployment case: every request
+// reaches the API from the same reverse proxy, so the auth and socket
+// throttles must bucket by the proxy-reported client, or the whole site
+// shares one bucket.
+func TestThrottleTrustedProxy(t *testing.T) {
+	// Arrange
+	d := testDeps(t)
+	d.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}
+	mux := NewMux(d)
+
+	viaProxy := func(method, path, body, client string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:5555"
+		req.Header.Set("X-Forwarded-For", client)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	badLogin := `{"email":"nobody@example.invalid","password":"wrong-password-123"}`
+
+	t.Run("auth scope buckets by forwarded client", func(t *testing.T) {
+		// Act: exhaust client A's bucket
+		for i := 1; i <= 10; i++ {
+			if code := viaProxy("POST", "/api/v1/auth/login", badLogin, "203.0.113.1"); code != 401 {
+				t.Fatalf("client A attempt %d: status = %d, want 401", i, code)
+			}
+		}
+
+		// Assert
+		if code := viaProxy("POST", "/api/v1/auth/login", badLogin, "203.0.113.1"); code != 429 {
+			t.Fatalf("client A attempt 11: status = %d, want 429", code)
+		}
+		if code := viaProxy("POST", "/api/v1/auth/login", badLogin, "203.0.113.2"); code != 401 {
+			t.Errorf("client B behind the same proxy: status = %d, want 401 — its own bucket, not A's", code)
+		}
+	})
+
+	t.Run("socket scope buckets unauthenticated attempts by forwarded client", func(t *testing.T) {
+		// Act: exhaust client C's bucket
+		for i := 1; i <= wsConnectLimit; i++ {
+			if code := viaProxy("GET", "/api/v1/socket", "", "203.0.113.3"); code == 429 {
+				t.Fatalf("client C attempt %d: status = 429 before the limit of %d", i, wsConnectLimit)
+			}
+		}
+
+		// Assert
+		if code := viaProxy("GET", "/api/v1/socket", "", "203.0.113.3"); code != 429 {
+			t.Fatalf("client C attempt %d: status = %d, want 429", wsConnectLimit+1, code)
+		}
+		if code := viaProxy("GET", "/api/v1/socket", "", "203.0.113.4"); code == 429 {
+			t.Errorf("client D behind the same proxy: status = 429, want its own bucket")
+		}
+	})
 }

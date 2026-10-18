@@ -85,6 +85,7 @@ func run() error {
 		Issuer:         issuer,
 		Hub:            hub,
 		AllowedOrigins: cfg.AllowedOrigins,
+		TrustedProxies: cfg.TrustedProxies,
 	})
 
 	server := &http.Server{
