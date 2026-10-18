@@ -1,8 +1,8 @@
 // Command callit-cli is a demo client that plays a full round against a
 // live CallIt server — not a product surface, a Phase 4b acceptance
 // vehicle (parent plan's "playable end to end from a CLI client").
-// Carries no unit tests, consistent with cmd/api's documented 0%
-// coverage: thin wiring, no branching logic worth testing in isolation.
+// Thin wiring, consistent with cmd/api's documented 0% coverage; the one
+// unit-tested piece is endpoints, the scheme choice -secure controls.
 package main
 
 import (
@@ -24,6 +24,7 @@ func main() {
 	addr := flag.String("addr", "localhost:8080", "server address (host:port)")
 	host := flag.Bool("host", false, "register, create a room, and host it")
 	join := flag.String("join", "", "join an existing room by its code, as a guest")
+	secure := flag.Bool("secure", false, "use https/wss, for a server behind a TLS proxy")
 	flag.Parse()
 
 	if *host == (*join != "") {
@@ -32,7 +33,7 @@ func main() {
 	}
 
 	stdin := bufio.NewReader(os.Stdin)
-	base := "http://" + *addr
+	base, wsBase := endpoints(*addr, *secure)
 
 	var token, roomID string
 	isHost := *host
@@ -75,7 +76,7 @@ func main() {
 
 	fmt.Printf("Connected to room %s\n", roomID)
 
-	wsURL := "ws://" + *addr + "/api/v1/socket?token=" + token
+	wsURL := wsBase + "/api/v1/socket?token=" + token
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	must(err)
 	defer conn.Close()
@@ -220,6 +221,16 @@ func postJSON(url, token string, body, out any) {
 		os.Exit(1)
 	}
 	must(json.Unmarshal(env.Data, out))
+}
+
+// endpoints returns the REST and WebSocket base URLs for addr. There is
+// deliberately no option to skip certificate verification: a rehearsal
+// against a local CA trusts it through SSL_CERT_FILE instead.
+func endpoints(addr string, secure bool) (httpBase, wsBase string) {
+	if secure {
+		return "https://" + addr, "wss://" + addr
+	}
+	return "http://" + addr, "ws://" + addr
 }
 
 func prompt(r *bufio.Reader, label string) string {
