@@ -27,7 +27,7 @@ base image · Bash + `jq` for the deploy checks · Oracle Cloud Always Free
 docs) · DuckDNS. No new Go module dependencies.
 
 **Spec:** [`docs/specs/2026-08-21-callit-design.md`](../specs/2026-08-21-callit-design.md) §8 (live deployment, lifted by this phase)
-**Parent plan:** [`docs/plans/2026-08-21-implementation-plan.md`](2026-08-21-implementation-plan.md) §9, rows 8a–8d and the "Phase 8 split" note
+**Parent plan:** [`docs/plans/2026-08-21-implementation-plan.md`](2026-08-21-implementation-plan.md) §9, rows 8a–8d (renumbered 8a–8e on 2026-10-18) and the "Phase 8 split" note
 
 ---
 
