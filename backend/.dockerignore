@@ -1,0 +1,4 @@
+bin/
+coverage*
+*.out
+*_test.go
