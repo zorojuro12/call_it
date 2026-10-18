@@ -60,10 +60,14 @@ Every task's requirements implicitly include this section.
 - **Test commands need the Go PATH export:** `export
   PATH=$PATH:$HOME/.local/go/bin:$HOME/go/bin` (`CLAUDE.md`, Known
   Environment Gotchas). Every Go command below carries it.
-- **Docker must be reachable from the WSL distro before Task 3** (`CLAUDE.md`
+- **Docker must be reachable from the WSL distro before Task 1** (`CLAUDE.md`
   gotcha: Docker Desktop → Settings → Resources → WSL Integration, then a new
-  shell). Tasks 1–2 are pure Go and do not need it. At planning time
-  (2026-10-17) `docker` was **not** reachable from this distro.
+  shell). *Amended during execution:* this originally said "before Task 3",
+  but `internal/httpapi`'s `TestMain` requires Redis for the whole package,
+  so even Task 1's pure-function `TestNewClientIP` can't run without it.
+  Only Task 2 (`cmd/callit-cli`) is Docker-free. At planning time
+  (2026-10-17), Docker Desktop was not running and `docker` was not
+  reachable from this distro.
 - **`security-reviewer` runs before the phase closes.** This phase changes
   how the auth rate limiter identifies callers and opens the first public
   network surface, both `CLAUDE.md` triggers.
