@@ -1,0 +1,182 @@
+# Production topology (plan 8a). Run from the repo root:
+#   docker compose -f deploy/compose.prod.yml --env-file deploy/.env up -d --build
+# deploy/.env is created on the server by deploy/gen-env.sh and never
+# committed. deploy/check-compose.sh asserts this file's invariants in CI.
+#
+# Networks, one per trust relationship (Decision 2):
+#   edge   — caddy, api              (not internal: Caddy needs ACME egress)
+#   state  — api, relay, redis       (internal)
+#   events — relay, ledger-worker, kafka   (internal)
+#   ledger — migrate, ledger-worker, postgres  (internal)
+# So the API process cannot open a connection to PostgreSQL or Kafka at all:
+# "the WebSocket server never writes PostgreSQL" and "only cmd/relay
+# produces to Kafka" hold by topology, not just by convention.
+
+name: callit-prod
+
+# All four Go services run the one backend image. Only api builds it:
+# four services building the same tag in parallel collide on export. The
+# other three reuse that tag and must never try to pull it (there is no
+# registry, Decision 4).
+x-backend: &backend
+  image: callit-backend:local
+  pull_policy: never
+  restart: unless-stopped
+  # Already non-root and distroless; additionally no capabilities, no
+  # privilege escalation, and a read-only root filesystem, since none of
+  # the four writes to disk.
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CALLIT_HOSTNAME: ${CALLIT_HOSTNAME:?CALLIT_HOSTNAME is required — run deploy/gen-env.sh}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      edge:
+        ipv4_address: 172.30.0.10
+    depends_on:
+      - api
+
+  api:
+    <<: *backend
+    build:
+      context: ../backend
+    pull_policy: build
+    command: ["/app/api"]
+    environment:
+      ENV: production
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — run deploy/gen-env.sh}
+      CORS_ALLOWED_ORIGINS: https://${CALLIT_HOSTNAME:?CALLIT_HOSTNAME is required — run deploy/gen-env.sh}
+      # Caddy's static edge address; the API believes X-Forwarded-For only
+      # from it (Decision 1).
+      TRUSTED_PROXIES: 172.30.0.10/32
+    networks: [edge, state]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  relay:
+    <<: *backend
+    command: ["/app/relay"]
+    environment:
+      ENV: production
+      REDIS_ADDR: redis:6379
+      KAFKA_BROKERS: kafka:9092
+    networks: [state, events]
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  migrate:
+    <<: *backend
+    command: ["/app/migrate"]
+    restart: "no"
+    environment:
+      POSTGRES_DSN: postgres://callit:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — run deploy/gen-env.sh}@postgres:5432/callit?sslmode=disable
+    networks: [ledger]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ledger-worker:
+    <<: *backend
+    command: ["/app/ledger-worker"]
+    environment:
+      ENV: production
+      KAFKA_BROKERS: kafka:9092
+      POSTGRES_DSN: postgres://callit:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — run deploy/gen-env.sh}@postgres:5432/callit?sslmode=disable
+    networks: [events, ledger]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+
+  redis:
+    image: redis:7.2-alpine
+    restart: unless-stopped
+    # Accounts and balances live permanently in Redis (parent plan §4,
+    # Amendment B1), so persistence is not optional here.
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis-data:/data
+    networks: [state]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: callit
+      POSTGRES_DB: callit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — run deploy/gen-env.sh}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U callit"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [ledger]
+
+  kafka:
+    image: apache/kafka:3.7.0
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms1g -Xmx1g
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks: [events]
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  state:
+    internal: true
+  events:
+    internal: true
+  ledger:
+    internal: true
+
+volumes:
+  redis-data:
+  postgres-data:
+  kafka-data:
+  caddy-data:
+  caddy-config:

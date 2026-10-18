@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -33,10 +34,11 @@ type Config struct {
 	LogLevel       string
 	RedisAddr      string
 	RedisDB        int
-	JWTSecret      string        // REQUIRED — no default, min 32 bytes
-	JWTTTL         time.Duration // default 2h, valid 1m..24h
-	AllowedOrigins []string      // REQUIRED when Env == "production"; defaults to localhost:3000 otherwise
-	MetricsAddr    string        // optional host:port; empty means the metrics listener is disabled
+	JWTSecret      string         // REQUIRED — no default, min 32 bytes
+	JWTTTL         time.Duration  // default 2h, valid 1m..24h
+	AllowedOrigins []string       // REQUIRED when Env == "production"; defaults to localhost:3000 otherwise
+	MetricsAddr    string         // optional host:port; empty means the metrics listener is disabled
+	TrustedProxies []netip.Prefix // optional; peers whose X-Forwarded-For is honored. nil trusts no proxy
 }
 
 var validEnvs = map[string]bool{
@@ -112,6 +114,10 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	if err := loadAllowedOrigins(&cfg, lookup); err != nil {
+		return Config{}, err
+	}
+
+	if err := loadTrustedProxies(&cfg, lookup); err != nil {
 		return Config{}, err
 	}
 
@@ -223,6 +229,40 @@ func loadAllowedOrigins(cfg *Config, lookup LookupFunc) error {
 		origins = append(origins, p)
 	}
 	cfg.AllowedOrigins = origins
+	return nil
+}
+
+// loadTrustedProxies parses TRUSTED_PROXIES into cfg.TrustedProxies: a
+// comma-separated list of CIDR prefixes naming the reverse proxies whose
+// X-Forwarded-For header the API may believe. Unset or empty leaves it
+// nil, which trusts no peer — the header is then ignored entirely, as it
+// was before a proxy existed. A bare address is rejected rather than
+// read as a /32, so a typo can't silently widen or narrow trust, and a
+// zero-length prefix is rejected in every env: trusting every peer is
+// the same as trusting every client's header, which hands any caller
+// unlimited fresh rate-limit buckets.
+func loadTrustedProxies(cfg *Config, lookup LookupFunc) error {
+	raw, ok := lookup("TRUSTED_PROXIES")
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	var prefixes []netip.Prefix
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(p)
+		if err != nil {
+			return fmt.Errorf("config: TRUSTED_PROXIES entry %q is not a CIDR prefix: %w", p, err)
+		}
+		if prefix.Bits() == 0 {
+			return fmt.Errorf("config: TRUSTED_PROXIES must not trust every address, got %q", p)
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	cfg.TrustedProxies = prefixes
 	return nil
 }
 

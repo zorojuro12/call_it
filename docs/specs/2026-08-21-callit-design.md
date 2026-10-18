@@ -233,9 +233,13 @@ token gestures at each technology.
 - LLM-generated flash questions / live commentary (Groq / Claude 3.5
   Haiku) — architecturally bolted on later via an async worker off the
   critical path; not needed to validate the core wager/settlement loop.
-- Live public cloud deployment — build and demo locally via Docker Compose
+- ~~Live public cloud deployment — build and demo locally via Docker Compose
   first; Terraform scripts are written for real but not necessarily
-  applied to a running cloud environment in this phase.
+  applied to a running cloud environment in this phase.~~ **Lifted by
+  Phase 8a (2026-10):** the backend deploys to one public VM via
+  `deploy/` (runbook: `deploy/README.md`). Terraform was dropped rather
+  than deferred, because for one VM it would duplicate the runbook (parent
+  plan §9, "Phase 8 split" note).
 - N-outcome UI polish beyond functional correctness (visual design of
   multi-outcome selection) — functional first, polish later.
 - Observability stack (Prometheus/Grafana) — structured logging is

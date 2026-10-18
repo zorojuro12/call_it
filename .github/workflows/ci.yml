@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, dev]
 
+# No job writes to the repository; the token gets read access only.
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -139,3 +143,31 @@ jobs:
         run: npx playwright test
         env:
           REDIS_ADDR: localhost:6379
+
+  # Phase 8a: the production topology's safety checks, and proof the
+  # backend image still builds for the arm64 VM it deploys to. Nothing is
+  # pushed — the server builds its own image from a git tag.
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check production compose topology
+        run: bash deploy/check-compose.sh
+
+      - name: Prove the topology checks reject a broken layout
+        run: bash deploy/tests/check-compose_test.sh
+
+      - name: Test secret generation
+        run: bash deploy/tests/gen-env_test.sh
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image for linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/arm64
+          push: false

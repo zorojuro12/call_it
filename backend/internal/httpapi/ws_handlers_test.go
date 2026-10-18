@@ -139,7 +139,7 @@ func TestWSThrottleKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue error: %v", err)
 	}
-	keyFn := wsThrottleKey(issuer)
+	keyFn := wsThrottleKey(issuer, NewClientIP(nil))
 
 	t.Run("valid token keys by user ID", func(t *testing.T) {
 		// Act
@@ -187,7 +187,7 @@ func TestWSThrottleExhaustion(t *testing.T) {
 		Scope:  "ws_connect_test",
 		Limit:  2,
 		Window: time.Minute,
-		KeyFn:  wsThrottleKey(issuer),
+		KeyFn:  wsThrottleKey(issuer, NewClientIP(nil)),
 	})(probeHandler(&ran))
 
 	req := func() *http.Request { return httptest.NewRequest("GET", "/api/v1/socket?token="+token, nil) }
