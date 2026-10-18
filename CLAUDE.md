@@ -90,7 +90,10 @@ binaries and removes the race. Don't drop it to "speed up" `go test
 default — the process fails fast without it) and, optionally,
 `JWT_TTL` (default `2h`, valid `1m`–`24h`) and `METRICS_ADDR` (optional
 `host:port` for the separate metrics listener added in Phase 7a; unset
-disables it; must be loopback under `ENV=production` — see README.md).
+disables it; must be loopback under `ENV=production` — see README.md),
+and `TRUSTED_PROXIES` (Phase 8a; CIDR prefixes of the reverse proxies
+whose `X-Forwarded-For` the IP-keyed rate limits believe; unset trusts
+none, `0.0.0.0/0` / `::/0` are rejected).
 Example: `JWT_SECRET=$(openssl rand -hex 32) go run ./cmd/api`.
 
 `make loadtest` runs `SCENARIO ?= rest_throughput` (`loadtest/rest_throughput.js`,
@@ -111,6 +114,16 @@ CI (`.github/workflows/ci.yml`) runs `go vet`, `gofmt -l` (fails on any
 unformatted file), `go build`, and `go test -race -cover -p 1`, in that
 order, on push/PR to `main` and `dev`. Nothing merges with any of those
 red.
+
+**Deployment (Phase 8a):** `deploy/` holds the production Compose file,
+the Caddyfile, and the scripts that run it. The runbook is
+`deploy/README.md`. CI's `deploy` job runs `deploy/check-compose.sh` (the
+topology invariants), `deploy/tests/check-compose_test.sh` (proof those
+checks reject a broken layout), and `deploy/tests/gen-env_test.sh`, and
+builds the backend image for `linux/arm64`. `deploy/check-image.sh` and
+`deploy/smoke.sh` need a local Docker stack and run by hand. Never run
+`deploy/deploy.sh` in a development clone: it checks out a detached tag
+over the working branch.
 
 **Frontend (Phase 6a+):**
 
@@ -286,9 +299,18 @@ Gotchas).
   Restricting who can produce to these topics is a network/broker-config
   concern, not application code, and must hold for that reason: local dev
   runs Kafka PLAINTEXT with no ACLs (a recorded decision, `docs/project-history.md`),
-  so this invariant is currently enforced by topology alone (only
-  `cmd/relay` produces) rather than by the broker. Revisit before any
-  shared or production deployment.
+  so this invariant is enforced by topology rather than by the broker. In
+  production (Phase 8a) that topology is explicit: Kafka sits on the
+  internal `events` network, which only `relay` and `ledger-worker` join
+  (`deploy/compose.prod.yml`). Revisit if the broker ever leaves that
+  single host.
+- **Production network membership is an enforced invariant (Phase 8a).**
+  `api` is never on the `ledger` or `events` network, so the API process
+  cannot open a connection to PostgreSQL or Kafka at all. No data store
+  publishes a port, and only Caddy is reachable from outside.
+  `deploy/check-compose.sh` asserts the exact membership and fails CI
+  otherwise. Don't "temporarily" publish a data store's port to debug; use
+  `docker compose exec` instead.
 - **The browser origin allowlist has exactly one definition** (Phase 6a):
   `config.Config.AllowedOrigins`, parsed once from `CORS_ALLOWED_ORIGINS`
   and read by both `httpapi.CORS` (REST) and the WebSocket upgrader's
@@ -360,6 +382,12 @@ components/
 ├── WagerPad.tsx                # outcome selection and stake entry
 ├── HostConsole.tsx             # open-round form and resolve picker
 └── SettlementReveal.tsx        # the terminal-state reveal
+```
+
+Phase 8a adds, at the repo root:
+```
+deploy/                      # production Compose, Caddyfile, deploy/backup/restore/smoke scripts — runbook: deploy/README.md
+backend/Dockerfile           # one distroless image carrying every cmd/ binary
 ```
 
 **`relay` and `ledger-worker` are separate binaries under `cmd/` deliberately** —

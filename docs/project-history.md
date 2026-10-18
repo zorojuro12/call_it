@@ -556,6 +556,102 @@ landing enough to make `TestEndToEndRound` intermittently miss a broadcast
 standing exception below) — comfortably above the 80% floor.
 `internal/domain` still reads 100%.
 
+
+### Phase 8a — backend deployment (Caddy TLS, network-isolated Compose, trusted-proxy client IP)
+
+Plan: `docs/plans/2026-10-17-phase-8a-backend-deploy.md`. Session narrative:
+`journal/2026-10-17_1915_ansh_phase-8a-deploy-plan-and-start.md`.
+
+**Security review: no CRITICAL or HIGH findings; approved.** Run against
+`dev...phase-8a-backend-deploy`, covering `NewClientIP`/`TRUSTED_PROXIES`,
+`deploy/compose.prod.yml`, the Caddyfile, every `deploy/` script, the
+Dockerfile, and the new CI job. The reviewer confirmed:
+- XFF spoofing can't mint fresh rate-limit buckets behind Caddy.
+- Nothing else reads `RemoteAddr` or `X-Forwarded-For` directly.
+- The `api` service can't reach PostgreSQL or Kafka.
+- Decision 3 (Redis without AUTH, Kafka PLAINTEXT with no ACLs, isolated
+  instead by internal networks) is acceptable.
+
+**Fixed in this phase:**
+- **MEDIUM:** `gen-env.sh` wrote its hostname and token unvalidated, and
+  `deploy.sh`/`duckdns-update.sh` *sourced* `.env`, so shell syntax in a
+  hostname would execute at the next deploy. Inputs are now validated (test
+  cases in `gen-env_test.sh`), and `.env` is read by line, never executed
+  (`0c1ee70`).
+- **LOW:** a deploy ref beginning with `-` was parsed as a `git checkout`
+  option (shown live with `--orphan=pwned`). Refs now resolve to a commit
+  with `--end-of-options` first (`7362e33`).
+- **LOW:**
+  - The Go containers now run `read_only`, `cap_drop: [ALL]`, and
+    `no-new-privileges` (enforced by `check-compose.sh` check 11).
+  - The CI token is `contents: read`.
+  - `backup.sh` tightens an existing destination directory to 0700.
+
+  All in `6d2cacb`.
+
+**Accepted, with reasons:**
+- **MEDIUM: Docker could present every client to Caddy as the bridge
+  gateway** (IPv6 publishing, Docker Desktop's userland proxy), collapsing
+  all callers into one `auth` bucket. This can't be detected from the smoke
+  test: from the server, its own requests come through the gateway anyway,
+  and from a laptop it can't read Caddy's log. It's the explicit manual
+  go-live check in `deploy/README.md` §5 (Caddy's access-log `remote_ip`
+  must be the real public IP). Locally on Docker Desktop/WSL this rewrite
+  is expected; the Oracle VM runs Docker Engine's iptables NAT path.
+- **MEDIUM: release tags aren't signature-verified before deploy.** With
+  one developer, a compromised GitHub account already means compromised
+  code, and signing would protect the same key holder from themselves.
+  Revisit, together with `git verify-tag` against a pinned key, if a
+  collaborator joins.
+- **LOW, deferred:**
+  - a minimum prefix length for `TRUSTED_PROXIES` (only `/0` is rejected
+    today)
+  - the DuckDNS token appearing in `ps` during setup and during the
+    5-minute updater's `curl`
+  - images pinned by tag rather than digest
+  - CI actions pinned by major tag rather than commit SHA
+  - `callit-cli` shipping in the production image (it's there so the smoke
+    test can run on a Go-less server)
+  - pre-existing: `cmd/api`'s `http.Server` has no `ReadHeaderTimeout`
+    (Caddy fronts it)
+- **One reviewer finding was already handled:** "restore.sh does no
+  integrity check before deleting Redis data". The archive is fully
+  extracted before any service stops, so a truncated archive fails
+  `tar -xzf` under `set -e` and the restore aborts with nothing touched.
+
+**Verification evidence (local rehearsal, `CALLIT_HOSTNAME=localhost`,
+Caddy's local CA via `SSL_CERT_FILE`):**
+- **`smoke.sh` passes all four steps.** Healthz over TLS; a host and a guest
+  play a full round over `wss://`; the round reaches the ledger; 11 logins
+  with distinct spoofed `X-Forwarded-For` hit 429 by attempt 10.
+- **The restore drill passes.** Register, back up, `down -v`, login 401 and
+  ledger empty, restore, login 200 with `schema_migrations` back at
+  version 2.
+- **`check-compose_test.sh` shows the topology guard bites.** A published
+  Redis port fails check 1, and `api` on the `ledger` network fails
+  check 2.
+- **The arm64 image builds under emulation** (5m34s) and its `api` binary
+  starts.
+- **`actionlint` is clean.**
+
+**Deviations from the plan, found during execution:**
+- Docker is needed from Task 1, not Task 3 (`internal/httpapi`'s `TestMain`
+  requires Redis).
+- Only `api` builds the backend image, because four services building one
+  tag in parallel collide on export.
+- Caddy rejects an empty `email` option, so the optional ACME email was
+  dropped.
+- The image also carries `callit-cli`, because `deploy.sh` runs `smoke.sh`
+  on a server with no Go toolchain.
+
+**Coverage:** `go test ./... -coverpkg=./... -p 1`, merged profile:
+**89.0%** excluding `cmd/*` (up from 7c's 88.8%). `internal/domain` is still
+100%, and `NewClientIP` and `loadTrustedProxies` are both 100%.
+
+**Go-live is not part of this record.** It happens after merge, per the
+plan's "After merge" section, and its result (including the real-client-IP
+check above) gets appended here.
+
 ---
 
 ## Coverage notes

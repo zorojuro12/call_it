@@ -194,6 +194,21 @@ optimized `cmd/api` binary for exactly this purpose — never `go run
 `loadtest/README.md` and the Phase 7a/7b baseline reports under
 `docs/reports/`.
 
+The opt-in game-logic e2e check (`frontend/e2e/logic-check.spec.ts`)
+plays two rounds with a host and two guests through to the PostgreSQL
+ledger. It needs the relay and ledger worker running; see the file's
+header, and run it with `CALLIT_LEDGER_E2E=1`.
+
+## Deployment
+
+The backend deploys to one Linux VM with Docker Compose: Caddy terminates
+TLS with an automatic Let's Encrypt certificate, and Redis, PostgreSQL and
+Kafka sit on internal networks that only the processes needing them can
+reach. The API can't even connect to PostgreSQL or Kafka. Everything (VM
+setup, DuckDNS, secrets, deploy and rollback by git tag, backups, restore)
+is in [`deploy/README.md`](deploy/README.md). The same stack rehearses
+locally with `CALLIT_HOSTNAME=localhost`.
+
 ## Security posture
 
 - Passwords are hashed with argon2id; a login for an unknown email pays the
