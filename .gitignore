@@ -19,6 +19,7 @@ frontend/playwright-report/
 deploy/.deployed-ref
 .caddy-root.crt
 .backup-drill/
+deploy/.compose-mutant-*.yml
 
 # Editor / OS
 .DS_Store

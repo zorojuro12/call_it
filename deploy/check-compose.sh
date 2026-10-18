@@ -8,7 +8,9 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-compose_file="deploy/compose.prod.yml"
+# COMPOSE_FILE_OVERRIDE renders a different file; tests/check-compose_test.sh
+# uses it to prove each check rejects a deliberately broken topology.
+compose_file="${COMPOSE_FILE_OVERRIDE:-deploy/compose.prod.yml}"
 fixture="deploy/tests/fixture.env"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
