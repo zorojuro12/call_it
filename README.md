@@ -107,8 +107,12 @@ make up                                  # Redis + PostgreSQL (Kafka: make up-fu
 JWT_SECRET=$(openssl rand -hex 32) go run ./backend/cmd/api
 ```
 
-`JWT_SECRET` (32+ bytes) is required, no default. Other variables, all
-optional with the defaults shown:
+`JWT_SECRET` (32+ bytes) is required, no default. Any secret can instead
+be given as a file: `JWT_SECRET_FILE` (or `POSTGRES_DSN_FILE` for `migrate`
+and `ledger-worker`) names a file holding the value, minus one trailing
+newline. Setting both forms is a startup error. Production uses only the
+file form (see Deployment). Other variables, all optional with the defaults
+shown:
 
 - `JWT_TTL` — token lifetime, default `2h`, valid `1m`–`24h`.
 - `REDIS_ADDR` — default `localhost:6379`.
@@ -204,10 +208,20 @@ header, and run it with `CALLIT_LEDGER_E2E=1`.
 The backend deploys to one Linux VM with Docker Compose: Caddy terminates
 TLS with an automatic Let's Encrypt certificate, and Redis, PostgreSQL and
 Kafka sit on internal networks that only the processes needing them can
-reach. The API can't even connect to PostgreSQL or Kafka. Everything (VM
-setup, DuckDNS, secrets, deploy and rollback by git tag, backups, restore)
-is in [`deploy/README.md`](deploy/README.md). The same stack rehearses
-locally with `CALLIT_HOSTNAME=localhost`.
+reach. The API can't even connect to PostgreSQL or Kafka.
+
+Secrets live in a 1Password vault, not on the server's disk. At boot and
+before every deploy, a systemd unit fetches them with a read-only, single-vault
+Service Account into a RAM-backed directory, and Compose mounts each one as a
+file into only the containers that need it. No secret is ever a container
+environment variable, so none ends up in Docker's on-disk config or in
+`docker inspect`. CI fails if one ever does. The one credential left on disk
+is that scoped, revocable Service Account token.
+
+Everything (VM setup, DuckDNS, 1Password, deploy and rollback by git tag,
+backups, restore, rotating secrets, and what's still on disk) is in
+[`deploy/README.md`](deploy/README.md). The same stack rehearses locally
+with `CALLIT_HOSTNAME=localhost`.
 
 ## Security posture
 
@@ -216,6 +230,11 @@ locally with `CALLIT_HOSTNAME=localhost`.
   *and* its timing are identical for both.
 - JWT verification pins `HS256` and rejects everything else, including
   `alg: none`.
+- Production secrets come from 1Password and reach containers only as
+  files on tmpfs, each granted to exactly the services that need it
+  (`deploy/check-compose.sh` check 12). The fetch is all-or-nothing, never
+  prints a value, and never passes the token in argv. The trade-offs that
+  remain are written down in `deploy/README.md`, "What's still on disk".
 - One sliding-window rate limiter (`internal/redisstore`'s `rate_limit.lua`)
   backs every throttle in the system — the refill quota, login/register (by
   client IP), authenticated REST routes (by user ID), and the WebSocket

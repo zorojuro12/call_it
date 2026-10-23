@@ -676,6 +676,85 @@ following `deploy/README.md` §1–6 end to end.
   at most 4. The first scheduled run is 2026-10-19; no manual boot-volume
   backup was taken, so that run is the first proof it works.
 
+### Phase 8a.1 — production secrets from 1Password (tmpfs file secrets, `*_FILE` config)
+
+Plan: `docs/plans/2026-10-22-phase-8a1-op-secrets.md`. Session narrative:
+`journal/2026-10-22_2045_ansh_phase-8a1-op-secrets.md`.
+
+**Design choice, settled by a spike:** file secrets bind-mounted from tmpfs,
+not `op run` environment injection. A canary secret passed as an env var
+appeared in `docker inspect`. Passed as a file secret, it appeared 0× in
+`docker inspect` and 0× in the VM's `config.v2.json`. A competing `op run`
+plan from another session (`cd69502`) was deleted unexecuted.
+
+**Security review: no CRITICAL or HIGH findings.** Run against
+`dev...phase-8a1-op-secrets`.
+
+**Fixed in this phase:**
+- **MEDIUM (M1):** under `umask 077`, `secrets.sh` created `/run/callit` as
+  root `0700`, so the deploy user and the DuckDNS cron job couldn't reach
+  the secrets. On first boot, preflight would have failed every deploy
+  (`6eae6d8`).
+- **MEDIUM (M3):** files were written and renamed one at a time, so a failed
+  write could leave a mixed set plus a temp file holding a secret. Now all
+  four are staged, then renamed, and a trap removes staged files
+  (`29031e8`). Preflight also refuses a DSN out of step with the password
+  (`fbee0f9`).
+- **MEDIUM (M2):** `deploy.sh` trusted `.env`'s `CALLIT_SECRETS_DIR`, so a
+  rehearsal dir would pass preflight. It's pinned to `/run/callit/secrets`
+  (`6fc3601`).
+- **Test hygiene:** three deploy tests appended to their cleanup lists
+  inside `$(...)`, so the dirs leaked, two of them into `deploy/`
+  (`fa3ff8f`).
+
+**Accepted or deferred (LOW):**
+- the DuckDNS token in `curl`'s argv (pre-existing; see 8a's LOWs);
+- `op-bootstrap.sh --generate <token>` taking the token in argv on the
+  laptop;
+- `op item get` treating any error as "item absent", so a network error
+  could create a duplicate title, which then fails closed on the server's
+  `op read`;
+- no systemd hardening directives on the root unit, and no owner/mode check
+  on the token file;
+- gaps in "What's still on disk": swap, the migration's
+  `/root/env.pre-8a1`, old container configs, and import transcripts.
+
+**Verification evidence:**
+- Every checkpoint went RED, then GREEN. The deploy tests cover
+  all-or-nothing writes, no value in output, the token never in argv,
+  never overwriting a vault item, byte-exact import, and never sourcing the
+  input.
+- `check-compose.sh` check 12, with 3 mutants: a secret in env, an extra
+  grant, a secret file outside the secrets dir.
+- `check-image.sh`: all three binaries read `*_FILE`.
+- **Local rehearsal (Docker Desktop):** all 8 containers healthy; `migrate`
+  applied the schema from the DSN file; `smoke.sh` steps 1, 2 and 4 passed;
+  the ledger went 0 → 2 transactions; each secret value appeared 0× in
+  `docker inspect`.
+
+**Found during the live run, fixed after `v0.3.0`:**
+- `/usr/local/libexec` doesn't exist on stock Ubuntu, so
+  `install-secrets.sh` failed before changing anything (`c30f575`).
+- The runbook's hidden token prompt used `sh`, which is `dash` and whose
+  `read` lacks `-s` (`e002ded`).
+- The move-over steps told an old-tag checkout to run its own `gen-env.sh`,
+  which would have written fresh secrets (`472a2c8`).
+
+**Go-live (2026-10-22): `v0.3.0` on the live VM.**
+- **The live values were imported, not regenerated.** The vault's
+  `postgres-password` and the VM's old `.env` hash to the same `sha256`.
+- **The Service Account works.** Read-only on `callit-prod` only; the token
+  is root-only at `/etc/callit/op-service-account-token`;
+  `callit-secrets.service` fetched the set, and preflight passed on the VM.
+- **`deploy.sh v0.3.0` passed `smoke.sh` 4/4 on the server**, with the
+  ledger at 2 → 3 transactions.
+- **No secret is in the running containers' config:**
+  `docker inspect … | grep -ciE 'JWT_SECRET=|POSTGRES_PASSWORD=|POSTGRES_DSN='`
+  prints `0`, and only the `*_FILE` pointers are present.
+- **Pending:** the reboot test (the site comes back with no manual step),
+  then a backup check and shredding `/root/env.pre-8a1`. Append the results
+  here.
+
 ---
 
 ## Coverage notes
