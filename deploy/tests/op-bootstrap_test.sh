@@ -71,3 +71,43 @@ grep -qF "op-bootstrap: item postgres-password already exists in callit-prod; re
   || fail "refusal message was: $(cat "$w/out")"
 assert_none_created "$w" "an existing item"
 ok "an existing item is refused before anything is created"
+
+live_jwt="$(printf 'c%.0s' {1..64})"
+live_pg="$(printf 'd%.0s' {1..48})"
+
+# --import copies the live server's values exactly. This is the cutover:
+# the database volume only opens with the password it was created with.
+w="$(setup)"
+printf 'CALLIT_HOSTNAME=h\nJWT_SECRET=%s\nPOSTGRES_PASSWORD=%s\nDUCKDNS_TOKEN=tok-9\n' "$live_jwt" "$live_pg" \
+  | run_bootstrap "$w" --import || fail "--import exited non-zero: $(cat "$w/out")"
+for i in "${items[@]}"; do assert_item "$w" "$i"; done
+[ "$(created "$w" jwt-secret)" = "$live_jwt" ] || fail "jwt-secret was not imported exactly"
+[ "$(created "$w" postgres-password)" = "$live_pg" ] || fail "postgres-password was not imported exactly"
+[ "$(created "$w" duckdns-token)" = tok-9 ] || fail "duckdns-token was not imported exactly"
+[ ! -e "$w/vault/created-CALLIT_HOSTNAME.json" ] || fail "CALLIT_HOSTNAME was imported"
+ok "--import copies the live values byte-for-byte"
+
+# Input missing a secret creates nothing.
+w="$(setup)"
+if printf 'JWT_SECRET=%s\nDUCKDNS_TOKEN=tok-9\n' "$live_jwt" | run_bootstrap "$w" --import; then
+  fail "--import without POSTGRES_PASSWORD exited 0"
+fi
+grep -qF "op-bootstrap: POSTGRES_PASSWORD missing from input" "$w/out" || fail "missing-key message was: $(cat "$w/out")"
+assert_none_created "$w" "missing POSTGRES_PASSWORD"
+ok "input missing a secret creates nothing"
+
+# A value the server would refuse creates nothing, and input is never
+# executed: it is parsed, not sourced.
+w="$(setup)"
+if printf 'JWT_SECRET=short\nPOSTGRES_PASSWORD=%s\nDUCKDNS_TOKEN=tok-9\n' "$live_pg" | run_bootstrap "$w" --import; then
+  fail "--import with a short JWT_SECRET exited 0"
+fi
+assert_none_created "$w" "a short JWT_SECRET"
+w="$(setup)"
+if printf 'JWT_SECRET=$(touch %s/pwned)\nPOSTGRES_PASSWORD=%s\nDUCKDNS_TOKEN=tok-9\n' "$w/vault" "$live_pg" \
+    | run_bootstrap "$w" --import; then
+  fail "--import with shell syntax exited 0"
+fi
+[ ! -e "$w/vault/pwned" ] || fail "--import executed its input"
+assert_none_created "$w" "shell syntax"
+ok "an invalid value creates nothing, and input is never executed"

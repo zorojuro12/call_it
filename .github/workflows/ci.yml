@@ -164,6 +164,9 @@ jobs:
       - name: Test secret materialization
         run: bash deploy/tests/secrets_test.sh
 
+      - name: Test vault bootstrap
+        run: bash deploy/tests/op-bootstrap_test.sh
+
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3

@@ -3,6 +3,8 @@
 # vault. Run on your laptop, signed in to op as yourself; the server only
 # ever gets read-only access (deploy/README.md §4).
 #   deploy/op-bootstrap.sh --generate <duckdns-token>   fresh install
+#   ssh callit 'cat ~/call_it/deploy/.env' | deploy/op-bootstrap.sh --import
+#                                  move an existing server's secrets over
 #
 # It never overwrites an item: a replaced postgres-password would no longer
 # open the existing database volume, and a replaced jwt-secret logs
@@ -13,7 +15,20 @@ vault=callit-prod
 items=(jwt-secret postgres-password duckdns-token)
 
 fail() { echo "op-bootstrap: $*" >&2; exit 1; }
-usage() { echo "usage: deploy/op-bootstrap.sh --generate <duckdns-token>" >&2; exit 2; }
+usage() { echo "usage: deploy/op-bootstrap.sh --generate <duckdns-token> | --import <env-lines" >&2; exit 2; }
+
+# read_env <key>: the first KEY=value line's value from $input, parsed,
+# never sourced, so nothing in the input can execute.
+read_env() {
+  local line
+  while IFS= read -r line; do
+    if [ "${line%%=*}" = "$1" ] && [ "$line" != "$1" ]; then
+      printf '%s' "${line#*=}"
+      return 0
+    fi
+  done <<<"$input"
+  fail "$1 missing from input"
+}
 
 # validate <jwt> <pg> <duck>: the same rules deploy/secrets.sh applies on
 # the server, so nothing goes into the vault that the server would refuse.
@@ -41,6 +56,13 @@ case "${1:-}" in
     jwt="$(openssl rand -hex 32)"
     pg="$(openssl rand -hex 24)"
     duck="$2"
+    ;;
+  --import)
+    [ $# -eq 1 ] || usage
+    input="$(cat)"
+    jwt="$(read_env JWT_SECRET)"
+    pg="$(read_env POSTGRES_PASSWORD)"
+    duck="$(read_env DUCKDNS_TOKEN)"
     ;;
   *) usage ;;
 esac
