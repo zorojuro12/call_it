@@ -123,3 +123,16 @@ fi
 [ "$(grep -c 'token-set$' "$w/vault/calls.log")" = 3 ] || fail "credential file: op did not get the token: $(cat "$w/vault/calls.log")"
 ! grep -qF ops_from_credential "$w/vault/calls.log" "$w/out" || fail "credential file: the token appeared in argv or output"
 ok "a systemd credential supplies the token through op's environment only"
+
+# A directory where a secret file belongs (what Docker Desktop's compose up
+# leaves behind when the file was missing; plan Task 1) is refused, and
+# nothing is written into it.
+w="$(setup)"
+mkdir -p "$w/secrets/jwt_secret"
+if run_secrets "$w"; then
+  fail "directory at jwt_secret: exited 0, want a failure"
+fi
+grep -qF "secrets: $w/secrets/jwt_secret exists and is not a regular file" "$w/out" \
+  || fail "directory at jwt_secret: output was $(cat "$w/out")"
+[ -z "$(ls -A "$w/secrets/jwt_secret")" ] || fail "directory at jwt_secret: wrote into it"
+ok "a non-file at a secret's path is refused"

@@ -37,9 +37,22 @@ duck="$(fetch duckdns-token)" || fail "could not read duckdns-token"
 [[ "$duck" =~ ^[A-Za-z0-9-]+$ ]] || fail "duckdns-token may contain only letters, digits and '-'"
 dsn="postgres://callit:$pg@postgres:5432/callit?sslmode=disable"
 
+names=(jwt_secret postgres_password postgres_dsn duckdns_token)
+# A missing bind source can leave a directory where a file belongs; mv
+# would then move the new secret into it and report success.
+for name in "${names[@]}"; do
+  if [ -e "$dir/$name" ] && [ ! -f "$dir/$name" ]; then
+    fail "$dir/$name exists and is not a regular file; remove it and rerun"
+  fi
+done
+
 umask 077
 mkdir -p "$dir"
 chmod 0750 "$dir"
+# The docker group may read the dir (deploy.sh, the DuckDNS cron job). It
+# is root-equivalent already, so this grants nothing new; containers read
+# their files through the bind mount, which needs the files 0444.
+if [ "$(id -u)" = 0 ]; then chgrp docker "$dir"; fi
 
 # put <name> <value>: write to a temp file in the same dir, then rename
 # over the final name, so a reader sees the old file or the new one, never

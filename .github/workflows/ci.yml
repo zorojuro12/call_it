@@ -161,6 +161,9 @@ jobs:
       - name: Test secret generation
         run: bash deploy/tests/gen-env_test.sh
 
+      - name: Test secret materialization
+        run: bash deploy/tests/secrets_test.sh
+
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
