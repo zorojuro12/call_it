@@ -17,7 +17,8 @@ trap 'rm -rf "${cleanup[@]}"' EXIT
 filled() {
   d="$(mktemp -d "$1/preflight-test.XXXXXX")"
   cleanup+=("$d")
-  for f in jwt_secret postgres_password postgres_dsn duckdns_token; do printf 'x' >"$d/$f"; done
+  for f in jwt_secret postgres_password duckdns_token; do printf 'x' >"$d/$f"; done
+  printf 'postgres://callit:x@postgres:5432/callit?sslmode=disable' >"$d/postgres_dsn"
 }
 
 # expect_refused <dir> <message>
@@ -44,3 +45,10 @@ filled /dev/shm
 : >"$d/jwt_secret"
 expect_refused "$d" "preflight: $d/jwt_secret missing or empty"
 ok "a missing or empty secret is refused"
+
+# A DSN that doesn't carry the current Postgres password (a set left
+# half-replaced) is refused before anything starts against it.
+filled /dev/shm
+printf 'y' >"$d/postgres_password"
+expect_refused "$d" "preflight: $d/postgres_dsn does not match postgres_password"
+ok "a DSN out of step with the Postgres password is refused"
