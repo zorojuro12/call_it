@@ -40,6 +40,19 @@ mutant jwt-in-env api.yaml '            - {name: JWT_SECRET_FILE, value: /run/se
 expect_rejected 1
 ok "a secret in the API environment fails check 1"
 
+mutant relay-all-secrets relay.yaml '            capabilities: {drop: [ALL]}' \
+  '            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: s, mountPath: /run/secrets, readOnly: true}]
+      volumes: [{name: s, secret: {secretName: callit-secrets}}]'
+expect_rejected 1
+ok "a Secret volume without items (every key) fails check 1"
+
+mutant secret-key-ref relay.yaml '          envFrom: [{configMapRef: {name: callit-config}}]' \
+  '          envFrom: [{configMapRef: {name: callit-config}}]
+          env: [{name: PG, valueFrom: {secretKeyRef: {name: callit-secrets, key: postgres_password}}}]'
+expect_rejected 1
+ok "a secretKeyRef env var fails check 1"
+
 mutant kafka-emptydir kafka.yaml '  volumeClaimTemplates:' '  volumeClaimTemplatesDisabled:'
 expect_rejected 3
 ok "Kafka without persistent storage fails check 3"

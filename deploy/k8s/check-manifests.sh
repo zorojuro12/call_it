@@ -19,14 +19,29 @@ rendered=$(kubectl kustomize "$dir") || fail "0. $dir does not render with kubec
 cfg=$(python3 -I -c 'import json, sys, yaml; json.dump([d for d in yaml.safe_load_all(sys.stdin) if d], sys.stdout)' <<<"$rendered") \
   || fail "0. rendered manifests are not valid YAML"
 q() { jq -r "$@" <<<"$cfg"; }
-# Every workload's pod spec, as {name, kind, spec}.
-workloads='[.[] | select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "Job") | {name: .metadata.name, kind, spec: .spec.template.spec}]'
+# Every pod-bearing object's pod spec, as {name, kind, spec}, with init
+# containers folded into containers so no check can be dodged through one.
+workloads='[.[] | {name: .metadata.name, kind, spec: (
+    if .kind == "Pod" then .spec
+    elif .kind == "CronJob" then .spec.jobTemplate.spec.template.spec
+    elif IN(.kind; "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job") then .spec.template.spec
+    else empty end)}
+  | .spec.containers = ((.spec.containers // []) + (.spec.initContainers // []))]'
 
 # 1. No secret in any container's environment, and each workload is
-#    granted exactly the secret files it needs.
+#    granted exactly the secret files it needs. Every other route a Secret
+#    can take into a pod is refused outright: a volume with no items
+#    (it mounts every key, yet would count as no grant), a projected
+#    volume, a secretKeyRef env var, or envFrom.secretRef.
 leaked=$(q "$workloads"' | [.[] | .name as $w | .spec.containers[] | (.env // [])[] | .name
   | select(IN("JWT_SECRET","POSTGRES_PASSWORD","POSTGRES_DSN","DUCKDNS_TOKEN")) | "\($w).\(.)"] | join(",")')
 [ -z "$leaked" ] || fail "1. secret passed as an environment value: $leaked"
+routes=$(q "$workloads"' | [.[] | .name as $w |
+  ((.spec.volumes // [])[] | select(.secret != null and ((.secret.items // []) | length) == 0) | "\($w): secret volume \(.name) has no items"),
+  ((.spec.volumes // [])[] | select(any(.projected.sources[]?; .secret != null)) | "\($w): projected secret volume \(.name)"),
+  (.spec.containers[] | (.env // [])[] | select(.valueFrom.secretKeyRef != null) | "\($w): env \(.name) from secretKeyRef"),
+  (.spec.containers[] | (.envFrom // [])[] | select(.secretRef != null) | "\($w): envFrom secretRef")] | join("; ")')
+[ -z "$routes" ] || fail "1. secret reaches a pod outside its granted files: $routes"
 want_grants="api=jwt_secret
 kafka=
 ledger-worker=postgres_dsn

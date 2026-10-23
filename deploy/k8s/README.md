@@ -105,9 +105,12 @@ volume.
 ## Invariants (`check-manifests.sh`, in CI)
 
 It renders the manifests offline, with no cluster, and fails on:
-1. a secret in any container's environment, or any secret grant beyond
-   `api=jwt_secret`, `migrate`/`ledger-worker=postgres_dsn` and
-   `postgres=postgres_password`;
+1. a secret in any container's environment (init containers included),
+   any secret grant beyond `api=jwt_secret`,
+   `migrate`/`ledger-worker=postgres_dsn` and
+   `postgres=postgres_password`, or a Secret reaching a pod any other way:
+   a Secret volume without `items` (which mounts every key), a projected
+   Secret, `secretKeyRef` or `envFrom.secretRef`;
 2. an image other than the four production runs, or a pullable backend
    image;
 3. a data store without persistent storage. Kafka on an `emptyDir` would
@@ -117,7 +120,8 @@ It renders the manifests offline, with no cluster, and fails on:
 5. an API without its `/healthz` readiness probe.
 
 `tests/check-manifests_test.sh` proves checks 1, 3 and 4 reject a broken
-copy.
+copy, with five mutants: a secret env var, an all-keys Secret volume, a
+`secretKeyRef`, Kafka without a volume claim, and two relays.
 
 ## Limits
 
