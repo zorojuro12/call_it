@@ -55,7 +55,9 @@ Phase 8a.1's `*_FILE` secrets.
    September 2025, and the alternatives are a different chart, or an
    operator, per store. Single-replica StatefulSets on the images
    production already runs are less work and match production exactly.
-3. **Exactly one relay, replaced with `Recreate`.** Claiming with min-idle 0
+3. **Exactly one relay, replaced with `Recreate`.** *(Superseded during
+   execution: the relay is a one-replica StatefulSet. See "Execution
+   Deviations" at the end.)* Claiming with min-idle 0
    is only safe if no other relay is alive. A `RollingUpdate` would briefly
    run two, and the new one would steal the old one's in-flight batch and
    could relay a `rounds-settled` ahead of its wagers. Compose already runs
@@ -414,3 +416,41 @@ Two findings change Task 3's manifests (marked **→**).
 | Secret volume | The mount at `/run/secrets` is **tmpfs**: the Kubernetes counterpart of 8a.1's `/run/callit/secrets`. |
 | **→ ServiceAccount token collision** | A read-only Secret volume at `/run/secrets` made the container fail to start (`RunContainerError`). The kubelet's automatic token mount at `/var/run/secrets/kubernetes.io/serviceaccount` can't create its mount point inside it (`/var/run` → `/run`). **Every CallIt pod sets `automountServiceAccountToken: false`.** None of them talks to the Kubernetes API, so this is also least privilege: a compromised pod holds no cluster credential. The paths stay `/run/secrets/<name>`, as in Compose. |
 | **→ Kafka needs a Service named `kafka`** | The broker advertises `PLAINTEXT://kafka:9092`. Without a Service by that name, every client, including the broker's own CLI tools, hangs on `UnknownHostException: kafka`. `kafka.yaml` must include a headless Service `kafka`, plus a readiness probe matching Compose's healthcheck (`kafka-broker-api-versions.sh --bootstrap-server localhost:9092`). |
+
+---
+
+## Execution Deviations
+
+Recorded after execution (2026-10-22). Results: `deploy/k8s/README.md`;
+full record: `docs/project-history.md`, Phase 8a.2.
+
+1. **The relay is a one-replica StatefulSet, not a Deployment with
+   `Recreate` (Decision 3).** The security review showed `Recreate` only
+   governs rollouts. On a pod delete, eviction or drain, a Deployment
+   starts the replacement while the old pod is still terminating, so two
+   relays can overlap. A StatefulSet waits for `relay-0` to be gone. Check
+   4 asserts the StatefulSet, and the "rolling relay" mutant became a
+   "two relays" mutant (`f42834c`).
+2. **The chaos schedule gained a second relay kill at 125 s, during the
+   Kafka outage, and "outbox drains" became a pass condition (Task 5).**
+   The first before run, with the relay killed at 60 s only, passed the
+   reconciler while 25 entries sat stranded under a dead consumer. They'd
+   all reached Kafka before the kill, and a ledger check can't see a stuck
+   outbox. The plan's fallback (rerun once, then move the kill into the
+   outage) was taken without the identical rerun, because the diagnosis
+   already explained the pass.
+3. **Port-forwards during the run: the API only (Task 5).** k6 needs only
+   the API, which is never killed. The Redis, Postgres and Kafka forwards
+   open after the load, for the reconciler, so no forward needs
+   re-establishing after a kill.
+4. **Manifest details found in the spike or at bring-up, not in the plan:**
+   - `automountServiceAccountToken: false` on every pod;
+   - a Service named `kafka`, plus a broker readiness probe;
+   - `runAsUser: 65532`, because the image names its user;
+   - a user-local `kubectl` 1.37.1, because the system 1.32 was five
+     minors behind the node.
+5. **Security-review fixes beyond Decision 3:**
+   - check 1 now closes every route a Secret can take into a pod
+     (`270dc66`);
+   - the reconciler masks the DSN password in its failure messages
+     (`e4d9615`).

@@ -548,6 +548,13 @@ session — all deferred to Phase 7): `docs/project-history.md`.
   anything needed it — **now historical**: `make test` and CI both bring
   Kafka up unconditionally from Phase 5a onward, since `internal/events`'
   integration suite needs it and fails rather than skips without it.
+- **The system `kubectl` (`/usr/local/bin`, v1.32) is too old for the kind
+  cluster (Phase 8a.2).** kind v0.33.0 runs Kubernetes 1.37, and kubectl
+  supports only one minor version of skew either way. A checksum-verified
+  kubectl v1.37.1 and kind v0.33.0 live in `~/.local/bin`, which comes
+  first on `PATH`. If `kubectl version` reports a 1.32 client, `~/.local/bin`
+  isn't on `PATH` in that shell. Add it the same way as Go's path above;
+  don't upgrade the system copy with sudo.
 - **A bare `docker compose down` does not stop or remove `full`-profile
   services** (Kafka) — it only touches services in the profiles that
   invocation activates, so `down` after `up-full` used to leave the Kafka
