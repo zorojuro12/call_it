@@ -3,6 +3,8 @@ package relay
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -278,5 +280,86 @@ func TestRunRecoversBeforeNewWork(t *testing.T) {
 	}
 	if second.IdempotencyKey != "idem-s1" {
 		t.Errorf("second recorded event idempotency key = %q, want %q", second.IdempotencyKey, "idem-s1")
+	}
+}
+
+// A relay restarts under a fresh consumer ID (cmd/relay picks a new UUID
+// on every start), so a batch the previous process read but never acked
+// is pending under a consumer that no longer exists. Run must claim it,
+// relay it, and do so ahead of new work, or those wagers never reach the
+// ledger.
+func TestRunClaimsOrphanedEntries(t *testing.T) {
+	// Arrange
+	ctx := context.Background()
+	stream, group := testStreamAndGroup(t)
+
+	dead := New(testClient, stream, group, "dead", &fakeProducer{err: errors.New("broker down")})
+	if err := dead.EnsureGroup(ctx); err != nil {
+		t.Fatalf("EnsureGroup() = %v, want nil", err)
+	}
+	xaddWagerPlaced(t, ctx, stream)
+	xaddRoundRefunded(t, ctx, stream)
+	if _, err := dead.Once(ctx, 10, time.Second); err == nil {
+		t.Fatalf("Once() with failing producer = nil error, want an error")
+	}
+	xaddRoundSettled(t, ctx, stream) // new, unread work
+
+	var recorded []events.Event
+	var mu sync.Mutex
+	recording := producerFunc(func(_ context.Context, evs []events.Event) error {
+		mu.Lock()
+		recorded = append(recorded, evs...)
+		mu.Unlock()
+		return nil
+	})
+	fresh := New(testClient, stream, group, "fresh", recording)
+
+	// Act: run until all three are relayed and nothing is pending, then
+	// stop. Cancelling from inside the producer instead would fail the
+	// last batch's XACK on a cancelled context.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- fresh.Run(runCtx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(recorded)
+		mu.Unlock()
+		p, err := testClient.XPending(ctx, stream, group).Result()
+		if err == nil && n >= 3 && p.Count == 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+
+	// Assert
+	mu.Lock()
+	defer mu.Unlock()
+	var keys []string
+	for _, ev := range recorded {
+		switch e := ev.(type) {
+		case events.WagerPlaced:
+			keys = append(keys, e.IdempotencyKey)
+		case events.RoundSettled:
+			keys = append(keys, e.IdempotencyKey)
+		default:
+			keys = append(keys, fmt.Sprintf("%T", ev))
+		}
+	}
+	want := []string{"idem-w1", "idem-r1", "idem-s1"}
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Fatalf("relayed %v, want %v (orphans first, in stream order, then new work)", keys, want)
+	}
+	pending, err := testClient.XPending(ctx, stream, group).Result()
+	if err != nil {
+		t.Fatalf("XPENDING: %v", err)
+	}
+	if pending.Count != 0 {
+		t.Errorf("XPENDING count = %d, want 0 (every orphan relayed and acked)", pending.Count)
 	}
 }
