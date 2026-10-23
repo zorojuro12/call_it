@@ -44,9 +44,9 @@ mutant kafka-emptydir kafka.yaml '  volumeClaimTemplates:' '  volumeClaimTemplat
 expect_rejected 3
 ok "Kafka without persistent storage fails check 3"
 
-mutant relay-rolling relay.yaml '    type: Recreate' '    type: RollingUpdate'
+mutant relay-scaled relay.yaml '  replicas: 1' '  replicas: 2'
 expect_rejected 4
-ok "a rolling relay rollout fails check 4"
+ok "two relays fail check 4"
 
 bash "$src/check-manifests.sh" >/dev/null || fail "the real deploy/k8s manifests are rejected"
 ok "the real manifests pass"

@@ -73,7 +73,7 @@ that no longer existed:
 
 **The fix:** on startup, the relay claims every pending entry in the
 group with `XAUTOCLAIM`, then drains them ahead of new work, so ordering
-holds. This is safe because exactly one relay ever runs (below).
+holds. This is safe because at most one relay pod ever exists (below).
 Redelivery can't double-count, because the ledger is idempotent on each
 event's `idempotency_key`.
 
@@ -89,7 +89,7 @@ added to hit the window where stuck means lost.
 |---|---|
 | `postgres`, `redis`, `kafka` services with named volumes | StatefulSets with `volumeClaimTemplates` (kind's local-path storage) and headless Services |
 | `api` | Deployment, plus a ClusterIP Service, with a readiness probe on `/healthz` |
-| `relay` | Deployment with `replicas: 1` and `strategy: Recreate` |
+| `relay` | A one-replica **StatefulSet**. A Deployment's replacement pod starts while the old one is still terminating, on any delete or eviction, whatever its strategy. A StatefulSet waits for the old pod to be gone, so two relays never overlap. |
 | `ledger-worker` | Deployment |
 | `migrate` (`restart: "no"`) | Job (`backoffLimit: 10`) |
 | `depends_on` with health conditions | Nothing: pods restart until their dependencies are up (the Kubernetes way) |
@@ -112,8 +112,8 @@ It renders the manifests offline, with no cluster, and fails on:
    image;
 3. a data store without persistent storage. Kafka on an `emptyDir` would
    lose unconsumed messages when its pod is deleted;
-4. a relay with more than one replica, or with a rolling update. Its
-   startup claim would take a live relay's in-flight batch;
+4. a relay that isn't a one-replica StatefulSet. Its startup claim
+   would take a live relay's in-flight batch;
 5. an API without its `/healthz` readiness probe.
 
 `tests/check-manifests_test.sh` proves checks 1, 3 and 4 reject a broken
@@ -128,8 +128,17 @@ copy.
   (`deploy/README.md`).
 - No NetworkPolicies, so Compose's network isolation (the API can't reach
   Postgres or Kafka) is not reproduced here.
-- Exactly one relay, by design. Scaling it would need a minimum idle time
-  on the claim, plus per-key ordering.
+- At most one relay, by design. Scaling it would need a minimum idle time
+  on the claim, plus per-key ordering. `chaos.sh`'s force-deletes bypass the
+  StatefulSet's wait, which is acceptable for a SIGKILLed test pod.
+- **Redis has no password, and nothing restricts pod-to-pod traffic.**
+  Redis holds every wallet and the outbox, so any pod in the cluster, or
+  any local process during `chaos.sh`'s port-forward, could change
+  balances. Production makes the same trade-off, isolating Redis by
+  Compose networks instead (`deploy/README.md`).
+- Hardening parity is for the backend workloads only. Postgres, Redis and
+  Kafka run their images' defaults: no `securityContext`, no seccomp
+  profile, no resource limits.
 - `relay` and `ledger-worker` have no health endpoint, so they have no
   probes. They recover by crashing and being restarted.
 - k6's `wager_ack_ms` p99 < 15 ms threshold fails during chaos runs (the

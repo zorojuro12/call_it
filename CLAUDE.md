@@ -307,9 +307,13 @@ Gotchas).
   relay, and `Recover` drains it in stream order. Before this, a relay
   killed during a Kafka outage lost wagers from the ledger:
   `deploy/k8s/chaos.sh` reproduced 25 missing, and passes after the fix.
-  Min-idle 0 is only safe with one live relay, so never scale it.
-  Kubernetes deploys it with `replicas: 1` and `strategy: Recreate`
-  (`deploy/k8s/check-manifests.sh` check 4), and Compose runs one.
+  Min-idle 0 is only safe with at most one live relay, so never scale it.
+  Kubernetes runs it as a one-replica **StatefulSet**, not a Deployment
+  (`deploy/k8s/check-manifests.sh` check 4). A Deployment starts its
+  replacement while the old pod is still terminating, on any pod delete
+  or eviction, whatever its strategy. Compose runs one. Never trim
+  `wager-outbox`: `XAUTOCLAIM` silently drops pending entries whose stream
+  entry is gone.
 - **Kafka broker access is equivalent to ledger-write access.**
   `cmd/ledger-worker` writes PostgreSQL money rows from any message on the
   `wagers-placed`/`rounds-settled` topics without authenticating the

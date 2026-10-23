@@ -83,10 +83,15 @@ func (r *Relay) Recover(ctx context.Context, count int64) (int, error) {
 // failure while Kafka was down) is pending under a consumer that no
 // longer exists, and Recover alone would never see it again.
 //
-// It claims with no minimum idle time, which is safe only because exactly
-// one relay runs at a time (CLAUDE.md; Kubernetes deploys it with
-// replicas 1 and the Recreate strategy). A second live relay would have
-// its in-flight batch taken from it.
+// It claims with no minimum idle time, which is safe only because at most
+// one relay runs at a time (CLAUDE.md): Compose runs one, and Kubernetes
+// runs it as a one-replica StatefulSet, which doesn't start a replacement
+// until the old pod is gone. A second live relay would have its in-flight
+// batch taken from it, and could let a rounds_settled overtake its wagers.
+//
+// XAUTOCLAIM silently drops pending entries whose stream entry was
+// deleted, and go-redis doesn't report them. Nothing trims wager-outbox
+// today; trimming it (XTRIM, MAXLEN) would turn that into silent loss.
 func (r *Relay) ClaimOrphans(ctx context.Context, count int64) (int, error) {
 	claimed := 0
 	start := "0-0"

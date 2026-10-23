@@ -1,16 +1,19 @@
-# Redis wager-outbox stream -> Kafka. Exactly one, replaced with Recreate:
-# on startup it claims every pending outbox entry, which is only safe if
-# no other relay is alive (plan 8a.2, Decision 3). A RollingUpdate would
-# briefly run two, and the new one would take the old one's in-flight
-# batch. Never scale this up.
+# Redis wager-outbox stream -> Kafka. At most one relay pod may ever
+# exist: on startup it claims every pending outbox entry, which would take
+# a still-running relay's in-flight batch and could let a rounds_settled
+# overtake the wagers it settles (plan 8a.2, Decision 3). That's why this
+# is a one-replica StatefulSet, not a Deployment. A Deployment starts its
+# replacement while the old pod is still terminating (on a pod delete,
+# eviction or node drain, whatever its strategy); a StatefulSet waits for
+# relay-0 to be gone before creating it again. Never scale this up.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: relay
 spec:
+  # Required by the API; no Service is needed, the relay accepts no traffic.
+  serviceName: relay
   replicas: 1
-  strategy:
-    type: Recreate
   selector: {matchLabels: {app: relay}}
   template:
     metadata: {labels: {app: relay}}

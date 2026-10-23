@@ -53,10 +53,10 @@ k delete job migrate --ignore-not-found >/dev/null
 kubectl --context "kind-$cluster" apply -k "$here" >/dev/null
 # The backend image keeps one tag, so Kubernetes can't see that it
 # changed: restart the Deployments onto the image just loaded.
-k rollout restart deployment/api deployment/relay deployment/ledger-worker >/dev/null
+k rollout restart deployment/api statefulset/relay deployment/ledger-worker >/dev/null
 
 k wait --for=condition=complete job/migrate --timeout=300s >/dev/null || fail "migrate did not complete (k logs job/migrate)"
-for w in statefulset/postgres statefulset/redis statefulset/kafka deployment/api deployment/relay deployment/ledger-worker; do
+for w in statefulset/postgres statefulset/redis statefulset/kafka deployment/api statefulset/relay deployment/ledger-worker; do
   k rollout status "$w" --timeout=300s >/dev/null || fail "$w did not become ready"
 done
 echo "up: the stack is ready in namespace callit (kubectl --context kind-$cluster -n callit get pods)"

@@ -57,13 +57,16 @@ for s in postgres redis kafka; do
 done
 ok "3. postgres, redis and kafka are persistent StatefulSets"
 
-# 4. Exactly one relay, replaced rather than rolled: it claims every
-#    pending outbox entry on startup, which a second live relay would have
-#    taken from it.
-relay=$(q '[.[] | select(.kind == "Deployment" and .metadata.name == "relay")][0] // {}')
-[ "$(jq -r '.spec.replicas // 1' <<<"$relay")" = 1 ] || fail "4. relay replicas is not 1"
-[ "$(jq -r '.spec.strategy.type // "RollingUpdate"' <<<"$relay")" = Recreate ] || fail "4. relay strategy is not Recreate"
-ok "4. one relay, Recreate strategy"
+# 4. At most one relay pod ever exists: it claims every pending outbox
+#    entry on startup, which a second live relay would have taken from
+#    it. A Deployment can't promise that (on a pod delete, eviction or
+#    drain its replacement starts while the old pod is still terminating,
+#    whatever the strategy); a one-replica StatefulSet waits for the old
+#    pod to be gone first.
+relay=$(q '[.[] | select(.metadata.name == "relay" and (.kind == "Deployment" or .kind == "StatefulSet"))]')
+[ "$(jq -r 'map(.kind) | join(",")' <<<"$relay")" = StatefulSet ] || fail "4. relay must be exactly one StatefulSet (got: $(jq -r 'map(.kind) | join(",")' <<<"$relay"))"
+[ "$(jq -r '.[0].spec.replicas // 1' <<<"$relay")" = 1 ] || fail "4. relay replicas is not 1"
+ok "4. relay is a one-replica StatefulSet"
 
 # 5. The API only receives traffic once /healthz answers.
 probe=$(q '[.[] | select(.kind == "Deployment" and .metadata.name == "api") | .spec.template.spec.containers[0].readinessProbe.httpGet | "\(.path):\(.port)"][0] // ""')
