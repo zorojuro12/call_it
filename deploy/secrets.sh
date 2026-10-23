@@ -19,6 +19,13 @@ fetch() { op read --no-newline "op://$vault/$1/password"; }
 jwt="$(fetch jwt-secret)" || fail "could not read jwt-secret"
 pg="$(fetch postgres-password)" || fail "could not read postgres-password"
 duck="$(fetch duckdns-token)" || fail "could not read duckdns-token"
+
+# ...and validated as a set before anything is written. Messages name the
+# item, never its value. The Postgres pattern keeps the password safe to
+# embed in the DSN without escaping.
+[[ "$jwt" =~ ^[0-9a-f]{64}$ ]] || fail "jwt-secret must be 64 lowercase hex characters"
+[[ "$pg" =~ ^[A-Za-z0-9]{16,}$ ]] || fail "postgres-password must be 16+ letters and digits"
+[[ "$duck" =~ ^[A-Za-z0-9-]+$ ]] || fail "duckdns-token may contain only letters, digits and '-'"
 dsn="postgres://callit:$pg@postgres:5432/callit?sslmode=disable"
 
 umask 077

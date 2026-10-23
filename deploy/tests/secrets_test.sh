@@ -58,3 +58,44 @@ done
 [ "$(cat "$d/postgres_dsn")" = "postgres://callit:$pg@postgres:5432/callit?sslmode=disable" ] \
   || fail "postgres_dsn is $(cat "$d/postgres_dsn")"
 ok "a good fetch writes all four files, 0444 in a 0750 dir, no trailing newline"
+
+# Any failure leaves the previous set byte-identical, adds no file, and
+# prints none of the values involved. Each case starts from a good set,
+# then changes the vault so a run that wrote as it read, or skipped
+# validation, would change something.
+# expect_untouched <case> <work-dir> [env assignments...]
+expect_untouched() {
+  local name=$1 w=$2 before listing
+  shift 2
+  before="$(cd "$w/secrets" && sha256sum -- *)"
+  listing="$(ls -A "$w/secrets")"
+  if run_secrets "$w" "$@"; then
+    fail "$name: exited 0, want a failure"
+  fi
+  [ "$(cd "$w/secrets" && sha256sum -- *)" = "$before" ] || fail "$name: changed a secret file"
+  [ "$(ls -A "$w/secrets")" = "$listing" ] || fail "$name: added or removed a file: $(ls -A "$w/secrets" | tr '\n' ' ')"
+  for v in "$jwt" "$pg" "$duck" "$(cat "$w/vault/jwt-secret")" "$(cat "$w/vault/postgres-password")" "$(cat "$w/vault/duckdns-token")"; do
+    ! grep -qF -- "$v" "$w/out" || fail "$name: output leaks a secret value: $(cat "$w/out")"
+  done
+}
+
+new_jwt="$(printf 'b%.0s' {1..64})"
+
+w="$(setup)"; run_secrets "$w"
+printf '%s' "$new_jwt" >"$w/vault/jwt-secret"
+expect_untouched "a failed second read" "$w" FAKE_OP_FAIL_ON=postgres-password
+
+w="$(setup)"; run_secrets "$w"
+printf '%s' "${new_jwt:1}" >"$w/vault/jwt-secret"
+expect_untouched "a 63-char JWT secret" "$w"
+
+w="$(setup)"; run_secrets "$w"
+printf '%s' "$new_jwt" >"$w/vault/jwt-secret"
+printf '%s' "abcDEF123456789x@y" >"$w/vault/postgres-password"
+expect_untouched "an @ in the Postgres password" "$w"
+
+w="$(setup)"; run_secrets "$w"
+printf '%s' "$new_jwt" >"$w/vault/jwt-secret"
+printf '%s' "tok;id" >"$w/vault/duckdns-token"
+expect_untouched "a ; in the DuckDNS token" "$w"
+ok "any failure leaves the previous set untouched and prints no secret"
