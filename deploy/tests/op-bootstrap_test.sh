@@ -11,15 +11,15 @@ cleanup=()
 trap 'rm -rf "${cleanup[@]}"' EXIT
 items=(jwt-secret postgres-password duckdns-token)
 
-# setup prints a fresh work dir holding an empty fake vault and an op on PATH.
+# setup sets w to a fresh work dir holding an empty fake vault and an op
+# on PATH. It sets w rather than printing it: called as $(setup), the
+# cleanup+= would happen in a subshell and the dir would never be removed.
 setup() {
-  local w
   w="$(mktemp -d)"
   cleanup+=("$w")
   mkdir -p "$w/vault" "$w/bin"
   ln -s "$src/tests/fake-op" "$w/bin/op"
   : >"$w/vault/calls.log"
-  echo "$w"
 }
 
 # run_bootstrap <work-dir> <args...>: stdin passes through; output goes to
@@ -51,7 +51,7 @@ assert_none_created() {
 }
 
 # --generate creates all three items with fresh values, passed on stdin.
-w="$(setup)"
+setup
 run_bootstrap "$w" --generate tok-1 || fail "--generate exited non-zero: $(cat "$w/out")"
 for i in "${items[@]}"; do assert_item "$w" "$i"; done
 [[ "$(created "$w" jwt-secret)" =~ ^[0-9a-f]{64}$ ]] || fail "jwt-secret is not 64 lowercase hex"
@@ -62,7 +62,7 @@ ok "--generate creates three Password items, values never in argv"
 # An existing item is never overwritten, and nothing is created at all:
 # every item is checked before the first create. A replaced
 # postgres-password would no longer open the existing database.
-w="$(setup)"
+setup
 printf 'existing' >"$w/vault/postgres-password"
 if run_bootstrap "$w" --generate tok-1; then
   fail "--generate over an existing item exited 0"
@@ -77,7 +77,7 @@ live_pg="$(printf 'd%.0s' {1..48})"
 
 # --import copies the live server's values exactly. This is the cutover:
 # the database volume only opens with the password it was created with.
-w="$(setup)"
+setup
 printf 'CALLIT_HOSTNAME=h\nJWT_SECRET=%s\nPOSTGRES_PASSWORD=%s\nDUCKDNS_TOKEN=tok-9\n' "$live_jwt" "$live_pg" \
   | run_bootstrap "$w" --import || fail "--import exited non-zero: $(cat "$w/out")"
 for i in "${items[@]}"; do assert_item "$w" "$i"; done
@@ -88,7 +88,7 @@ for i in "${items[@]}"; do assert_item "$w" "$i"; done
 ok "--import copies the live values byte-for-byte"
 
 # Input missing a secret creates nothing.
-w="$(setup)"
+setup
 if printf 'JWT_SECRET=%s\nDUCKDNS_TOKEN=tok-9\n' "$live_jwt" | run_bootstrap "$w" --import; then
   fail "--import without POSTGRES_PASSWORD exited 0"
 fi
@@ -98,12 +98,12 @@ ok "input missing a secret creates nothing"
 
 # A value the server would refuse creates nothing, and input is never
 # executed: it is parsed, not sourced.
-w="$(setup)"
+setup
 if printf 'JWT_SECRET=short\nPOSTGRES_PASSWORD=%s\nDUCKDNS_TOKEN=tok-9\n' "$live_pg" | run_bootstrap "$w" --import; then
   fail "--import with a short JWT_SECRET exited 0"
 fi
 assert_none_created "$w" "a short JWT_SECRET"
-w="$(setup)"
+setup
 if printf 'JWT_SECRET=$(touch %s/pwned)\nPOSTGRES_PASSWORD=%s\nDUCKDNS_TOKEN=tok-9\n' "$w/vault" "$live_pg" \
     | run_bootstrap "$w" --import; then
   fail "--import with shell syntax exited 0"

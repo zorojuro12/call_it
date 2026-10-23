@@ -14,10 +14,11 @@ jwt="$(printf 'a%.0s' {1..64})"
 pg="abcDEF123456789xyz"
 duck="tok-1"
 
-# setup prints a fresh work dir holding a fake vault (vault/), an op on
-# PATH (bin/op), and no secrets dir yet (secrets/ is created by the run).
+# setup sets w to a fresh work dir holding a fake vault (vault/), an op
+# on PATH (bin/op), and no secrets dir yet (secrets/ is created by the
+# run). It sets w rather than printing it: called as $(setup), the
+# cleanup+= would happen in a subshell and the dir would never be removed.
 setup() {
-  local w
   w="$(mktemp -d)"
   cleanup+=("$w")
   mkdir -p "$w/vault" "$w/bin"
@@ -26,7 +27,6 @@ setup() {
   printf '%s' "$pg" >"$w/vault/postgres-password"
   printf '%s' "$duck" >"$w/vault/duckdns-token"
   : >"$w/vault/calls.log"
-  echo "$w"
 }
 
 # run_secrets <work-dir> [env assignments...]: runs secrets.sh with the fake
@@ -42,7 +42,7 @@ run_secrets() {
 # A good fetch writes the full set: a 0750 dir with exactly the four
 # files, each 0444, none ending in a newline, and the DSN derived from the
 # Postgres password.
-w="$(setup)"
+setup
 run_secrets "$w" || fail "good fetch exited non-zero: $(cat "$w/out")"
 d="$w/secrets"
 [ "$(stat -c %a "$d")" = 750 ] || fail "secrets dir mode is $(stat -c %a "$d"), want 750"
@@ -81,27 +81,27 @@ expect_untouched() {
 
 new_jwt="$(printf 'b%.0s' {1..64})"
 
-w="$(setup)"; run_secrets "$w"
+setup; run_secrets "$w"
 printf '%s' "$new_jwt" >"$w/vault/jwt-secret"
 expect_untouched "a failed second read" "$w" FAKE_OP_FAIL_ON=postgres-password
 
-w="$(setup)"; run_secrets "$w"
+setup; run_secrets "$w"
 printf '%s' "${new_jwt:1}" >"$w/vault/jwt-secret"
 expect_untouched "a 63-char JWT secret" "$w"
 
-w="$(setup)"; run_secrets "$w"
+setup; run_secrets "$w"
 printf '%s' "$new_jwt" >"$w/vault/jwt-secret"
 printf '%s' "abcDEF123456789x@y" >"$w/vault/postgres-password"
 expect_untouched "an @ in the Postgres password" "$w"
 
-w="$(setup)"; run_secrets "$w"
+setup; run_secrets "$w"
 printf '%s' "$new_jwt" >"$w/vault/jwt-secret"
 printf '%s' "tok;id" >"$w/vault/duckdns-token"
 expect_untouched "a ; in the DuckDNS token" "$w"
 ok "any failure leaves the previous set untouched and prints no secret"
 
 # With no token at all, it fails before ever running op.
-w="$(setup)"
+setup
 if env -u OP_SERVICE_ACCOUNT_TOKEN -u CREDENTIALS_DIRECTORY PATH="$w/bin:$PATH" FAKE_OP_DIR="$w/vault" \
     CALLIT_SECRETS_DIR="$w/secrets" bash "$src/secrets.sh" >"$w/out" 2>&1; then
   fail "no token: exited 0, want a failure"
@@ -113,7 +113,7 @@ ok "no token fails before op runs"
 
 # A systemd credential (LoadCredential=op-token:...) supplies the token,
 # which reaches op only through its environment, never its argv.
-w="$(setup)"
+setup
 mkdir "$w/creds"
 printf 'ops_from_credential' >"$w/creds/op-token"
 if ! env -u OP_SERVICE_ACCOUNT_TOKEN PATH="$w/bin:$PATH" FAKE_OP_DIR="$w/vault" CALLIT_SECRETS_DIR="$w/secrets" \
@@ -127,7 +127,7 @@ ok "a systemd credential supplies the token through op's environment only"
 # A directory where a secret file belongs (what Docker Desktop's compose up
 # leaves behind when the file was missing; plan Task 1) is refused, and
 # nothing is written into it.
-w="$(setup)"
+setup
 mkdir -p "$w/secrets/jwt_secret"
 if run_secrets "$w"; then
   fail "directory at jwt_secret: exited 0, want a failure"
@@ -141,7 +141,7 @@ ok "a non-file at a secret's path is refused"
 # creates must be traversable (0755): the deploy user and the DuckDNS cron
 # job reach the secrets through it, and a root-only 0700 parent would lock
 # them out. The secrets dir itself stays 0750.
-w="$(setup)"
+setup
 env PATH="$w/bin:$PATH" FAKE_OP_DIR="$w/vault" CALLIT_SECRETS_DIR="$w/run/callit/secrets" \
   OP_SERVICE_ACCOUNT_TOKEN=ops_fake bash "$src/secrets.sh" >"$w/out" 2>&1 || fail "nested dir: exited non-zero: $(cat "$w/out")"
 [ "$(stat -c %a "$w/run/callit")" = 755 ] || fail "created parent mode is $(stat -c %a "$w/run/callit"), want 755"
@@ -151,7 +151,7 @@ ok "parents created on first boot are traversable; the secrets dir stays 0750"
 # A failure while writing (here: chmod failing on the second temp file,
 # standing in for a full tmpfs or a kill) replaces none of the set and
 # leaves no temp file, which would otherwise sit on tmpfs holding a secret.
-w="$(setup)"; run_secrets "$w"
+setup; run_secrets "$w"
 printf '%s' "$new_jwt" >"$w/vault/jwt-secret"
 cat >"$w/bin/chmod" <<'STUB'
 #!/usr/bin/env bash
