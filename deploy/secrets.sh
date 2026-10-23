@@ -12,6 +12,15 @@ vault=callit-prod
 
 fail() { echo "secrets: $*" >&2; exit 1; }
 
+# The service account token comes from the systemd credential when run by
+# callit-secrets.service (LoadCredential=op-token:...), else from the
+# environment. It reaches op only through op's environment, never argv.
+if [ -n "${CREDENTIALS_DIRECTORY:-}" ] && [ -s "$CREDENTIALS_DIRECTORY/op-token" ]; then
+  OP_SERVICE_ACCOUNT_TOKEN="$(<"$CREDENTIALS_DIRECTORY/op-token")"
+fi
+[ -n "${OP_SERVICE_ACCOUNT_TOKEN:-}" ] || fail "no 1Password service account token (see deploy/README.md §4)"
+export OP_SERVICE_ACCOUNT_TOKEN
+
 # fetch <item>: the item's password, exactly, with no trailing newline.
 fetch() { op read --no-newline "op://$vault/$1/password"; }
 

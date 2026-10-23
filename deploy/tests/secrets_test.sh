@@ -99,3 +99,27 @@ printf '%s' "$new_jwt" >"$w/vault/jwt-secret"
 printf '%s' "tok;id" >"$w/vault/duckdns-token"
 expect_untouched "a ; in the DuckDNS token" "$w"
 ok "any failure leaves the previous set untouched and prints no secret"
+
+# With no token at all, it fails before ever running op.
+w="$(setup)"
+if env -u OP_SERVICE_ACCOUNT_TOKEN -u CREDENTIALS_DIRECTORY PATH="$w/bin:$PATH" FAKE_OP_DIR="$w/vault" \
+    CALLIT_SECRETS_DIR="$w/secrets" bash "$src/secrets.sh" >"$w/out" 2>&1; then
+  fail "no token: exited 0, want a failure"
+fi
+grep -qF "secrets: no 1Password service account token" "$w/out" || fail "no token: output was $(cat "$w/out")"
+[ ! -s "$w/vault/calls.log" ] || fail "no token: op ran anyway: $(cat "$w/vault/calls.log")"
+[ ! -e "$w/secrets" ] || fail "no token: created the secrets dir"
+ok "no token fails before op runs"
+
+# A systemd credential (LoadCredential=op-token:...) supplies the token,
+# which reaches op only through its environment, never its argv.
+w="$(setup)"
+mkdir "$w/creds"
+printf 'ops_from_credential' >"$w/creds/op-token"
+if ! env -u OP_SERVICE_ACCOUNT_TOKEN PATH="$w/bin:$PATH" FAKE_OP_DIR="$w/vault" CALLIT_SECRETS_DIR="$w/secrets" \
+    CREDENTIALS_DIRECTORY="$w/creds" bash "$src/secrets.sh" >"$w/out" 2>&1; then
+  fail "credential file: exited non-zero: $(cat "$w/out")"
+fi
+[ "$(grep -c 'token-set$' "$w/vault/calls.log")" = 3 ] || fail "credential file: op did not get the token: $(cat "$w/vault/calls.log")"
+! grep -qF ops_from_credential "$w/vault/calls.log" "$w/out" || fail "credential file: the token appeared in argv or output"
+ok "a systemd credential supplies the token through op's environment only"
