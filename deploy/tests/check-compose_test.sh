@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Proves check-compose.sh actually bites: it must reject a compose file
 # that publishes a data store's port or puts the API on a data network
-# it must never reach, and accept the real file unchanged.
+# it must never reach, or hands a secret to the wrong service or back to
+# a container environment, and accept the real file unchanged.
 set -euo pipefail
 
 src="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,6 +46,21 @@ ok "a published Redis port fails check 1"
 
 expect_rejected "$(mutate api-on-ledger '    networks: [edge, state]' '    networks: [edge, state, ledger]')" 2
 ok "the API on the ledger network fails check 2"
+
+expect_rejected "$(mutate relay-gets-dsn '    command: ["/app/relay"]
+' '    command: ["/app/relay"]
+    secrets: [postgres_dsn]
+')" 12
+ok "a Postgres DSN granted to the relay fails check 12"
+
+expect_rejected "$(mutate jwt-in-env '      TRUSTED_PROXIES: 172.30.0.10/32
+' '      TRUSTED_PROXIES: 172.30.0.10/32
+      JWT_SECRET: x
+')" 12
+ok "a secret back in the API environment fails check 12"
+
+expect_rejected "$(mutate dsn-on-disk '${CALLIT_SECRETS_DIR:?CALLIT_SECRETS_DIR is required — run deploy/gen-env.sh}/postgres_dsn' '/home/ubuntu/postgres_dsn')" 12
+ok "a secret file outside the secrets dir fails check 12"
 
 bash "$src/check-compose.sh" >/dev/null || fail "the real compose.prod.yml is rejected"
 ok "the real compose.prod.yml passes"
