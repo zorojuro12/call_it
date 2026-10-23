@@ -15,6 +15,8 @@ state="$here/.deployed-ref"
 fail() { echo "deploy: $*" >&2; exit 1; }
 
 [ -f "$here/.env" ] || fail "deploy/.env missing — run deploy/gen-env.sh first"
+# Read, never source: sourcing .env would execute anything in it.
+env_get() { { grep -m1 "^$1=" "$here/.env" || true; } | cut -d= -f2-; }
 [ -z "$(git -C "$repo" status --porcelain --untracked-files=no)" ] \
   || fail "working tree has local changes; refusing to check out over them"
 
@@ -30,12 +32,23 @@ echo "deploy: checked out $ref (${sha:0:7}); previous: $previous"
 
 bash "$here/check-compose.sh" >/dev/null || fail "check-compose.sh failed for $ref"
 
+# Refetch the secrets so an edit in 1Password takes effect on this
+# deploy, then refuse to start unless they're complete and on tmpfs.
+sudo systemctl restart callit-secrets.service || fail "fetching secrets from 1Password failed (journalctl -u callit-secrets)"
+secrets_dir="$(env_get CALLIT_SECRETS_DIR)"
+[ -n "$secrets_dir" ] || fail "CALLIT_SECRETS_DIR missing from deploy/.env"
+# Only the dir callit-secrets.service writes counts: a .env left pointing
+# at a rehearsal dir would otherwise pass preflight with secrets that never
+# came from the vault.
+[ "$secrets_dir" = /run/callit/secrets ] \
+  || fail "CALLIT_SECRETS_DIR is $secrets_dir; on the server it must be /run/callit/secrets"
+bash "$here/preflight-secrets.sh" "$secrets_dir" >/dev/null || fail "secrets preflight failed"
+
 dc() { docker compose -f "$here/compose.prod.yml" --env-file "$here/.env" "$@"; }
 dc build
 dc up -d --wait
 
-# Read, never source: sourcing .env would execute anything in it.
-hostname="$(grep -m1 '^CALLIT_HOSTNAME=' "$here/.env" | cut -d= -f2-)"
+hostname="$(env_get CALLIT_HOSTNAME)"
 [ -n "$hostname" ] || fail "CALLIT_HOSTNAME missing from deploy/.env"
 if ! bash "$here/smoke.sh" "$hostname"; then
   echo "deploy: smoke test FAILED for $ref" >&2

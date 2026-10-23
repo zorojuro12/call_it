@@ -87,7 +87,8 @@ binaries and removes the race. Don't drop it to "speed up" `go test
 ./...`.
 
 **Running the server itself needs `JWT_SECRET`** (32+ bytes, no
-default — the process fails fast without it) and, optionally,
+default — the process fails fast without it; or `JWT_SECRET_FILE`, naming
+a file that holds it, as production does — Phase 8a.1) and, optionally,
 `JWT_TTL` (default `2h`, valid `1m`–`24h`) and `METRICS_ADDR` (optional
 `host:port` for the separate metrics listener added in Phase 7a; unset
 disables it; must be loopback under `ENV=production` — see README.md),
@@ -120,7 +121,11 @@ the Caddyfile, and the scripts that run it. The runbook is
 `deploy/README.md`. CI's `deploy` job runs `deploy/check-compose.sh` (the
 topology invariants), `deploy/tests/check-compose_test.sh` (proof those
 checks reject a broken layout), and `deploy/tests/gen-env_test.sh`, and
-builds the backend image for `linux/arm64`. `deploy/check-image.sh` and
+builds the backend image for `linux/arm64`. Secrets (Phase 8a.1) live in
+the `callit-prod` 1Password vault; `callit-secrets.service` (installed by
+`deploy/install-secrets.sh`) fetches them into tmpfs at boot and on every
+deploy, and the deploy job also runs `deploy/tests/secrets_test.sh`,
+`op-bootstrap_test.sh` and `preflight-secrets_test.sh`. `deploy/check-image.sh` and
 `deploy/smoke.sh` need a local Docker stack and run by hand. Never run
 `deploy/deploy.sh` in a development clone: it checks out a detached tag
 over the working branch.
@@ -311,6 +316,15 @@ Gotchas).
   `deploy/check-compose.sh` asserts the exact membership and fails CI
   otherwise. Don't "temporarily" publish a data store's port to debug; use
   `docker compose exec` instead.
+- **Production secrets reach containers only as files (Phase 8a.1).**
+  `compose.prod.yml` mounts each one from `$CALLIT_SECRETS_DIR` (tmpfs)
+  into exactly the services that need it, and the binaries read them
+  through `*_FILE` (`config.ResolveSecretFiles`). Never pass a secret as a
+  container environment value: Docker persists a container's environment
+  in its on-disk config, readable by `docker inspect`. `check-compose.sh`
+  check 12 fails CI on a secret in any service's environment or a grant
+  beyond the exact map. `deploy/op-bootstrap.sh` never overwrites a vault
+  item: a replaced `postgres-password` no longer opens the database volume.
 - **The browser origin allowlist has exactly one definition** (Phase 6a):
   `config.Config.AllowedOrigins`, parsed once from `CORS_ALLOWED_ORIGINS`
   and read by both `httpapi.CORS` (REST) and the WebSocket upgrader's
