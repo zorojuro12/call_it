@@ -16,6 +16,8 @@ fail() { echo "install-secrets: $*" >&2; exit 1; }
 command -v op >/dev/null || fail "the 1Password CLI (op) is not installed"
 getent group docker >/dev/null || fail "no docker group; install Docker first"
 
+# /usr/local/libexec doesn't exist on a stock Ubuntu install.
+install -d -o root -g root -m 0755 /usr/local/libexec
 install -o root -g root -m 0755 "$here/secrets.sh" /usr/local/libexec/callit-secrets
 install -o root -g root -m 0644 "$here/systemd/callit-secrets.service" /etc/systemd/system/callit-secrets.service
 systemctl daemon-reload
