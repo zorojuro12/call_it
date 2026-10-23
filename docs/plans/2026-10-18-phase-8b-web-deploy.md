@@ -23,6 +23,12 @@ v2 · Playwright (existing). No new npm or Go dependencies.
 **Spec:** [`docs/specs/2026-08-21-callit-design.md`](../specs/2026-08-21-callit-design.md) §8 (live deployment, lifted by 8a)
 **Parent plan:** [`docs/plans/2026-08-21-implementation-plan.md`](2026-08-21-implementation-plan.md) §9, row 8b, and the "Phase 8 split" note
 **Builds on:** [`docs/plans/2026-10-17-phase-8a-backend-deploy.md`](2026-10-17-phase-8a-backend-deploy.md), whose Decision 5 reserved `/` for this phase
+**Amended by 8a.1** ([`2026-10-22-phase-8a1-op-secrets.md`](2026-10-22-phase-8a1-op-secrets.md)):
+`deploy/.env` now holds only `CALLIT_HOSTNAME` and `CALLIT_SECRETS_DIR`, and
+the secrets are files in that dir. Every rehearsal below starts from
+`deploy/README.md`'s "Local rehearsal" setup, which writes both. A new
+`web` service takes no secret, so `check-compose.sh` check 12 needs a
+`web=` line in its grant map.
 
 ---
 
@@ -489,7 +495,7 @@ Expected: both browser specs pass through Caddy over TLS with zero CSP
 violations, and the ordinary `make fe-e2e` (dev mode, no `E2E_BASE_URL`,
 `csp-guard` skipped) still passes. Record both results for Task 5. Then tear
 the rehearsal down with `docker compose -f deploy/compose.prod.yml --env-file deploy/.env down -v`
-and delete `deploy/.env` and `.caddy-root.crt`.
+and delete `deploy/.env`, `.caddy-root.crt` and the rehearsal secrets dir.
 
 ---
 
