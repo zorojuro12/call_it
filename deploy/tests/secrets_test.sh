@@ -147,3 +147,20 @@ env PATH="$w/bin:$PATH" FAKE_OP_DIR="$w/vault" CALLIT_SECRETS_DIR="$w/run/callit
 [ "$(stat -c %a "$w/run/callit")" = 755 ] || fail "created parent mode is $(stat -c %a "$w/run/callit"), want 755"
 [ "$(stat -c %a "$w/run/callit/secrets")" = 750 ] || fail "secrets dir mode is $(stat -c %a "$w/run/callit/secrets"), want 750"
 ok "parents created on first boot are traversable; the secrets dir stays 0750"
+
+# A failure while writing (here: chmod failing on the second temp file,
+# standing in for a full tmpfs or a kill) replaces none of the set and
+# leaves no temp file, which would otherwise sit on tmpfs holding a secret.
+w="$(setup)"; run_secrets "$w"
+printf '%s' "$new_jwt" >"$w/vault/jwt-secret"
+cat >"$w/bin/chmod" <<'STUB'
+#!/usr/bin/env bash
+n=$(( $(cat "$FAKE_OP_DIR/chmod-calls" 2>/dev/null || echo 0) + 1 ))
+echo "$n" >"$FAKE_OP_DIR/chmod-calls"
+[ "$n" != "$FAKE_CHMOD_FAIL_AT" ] || { echo "chmod: simulated failure" >&2; exit 1; }
+exec /bin/chmod "$@"
+STUB
+/bin/chmod +x "$w/bin/chmod"
+expect_untouched "a failed write" "$w" FAKE_CHMOD_FAIL_AT=3
+[ -z "$(find "$w/secrets" -name '.tmp.*')" ] || fail "a failed write left temp files: $(ls -A "$w/secrets")"
+ok "a failed write replaces none of the set and leaves no temp file"

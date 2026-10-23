@@ -57,19 +57,25 @@ chmod 0750 "$dir"
 # their files through the bind mount, which needs the files 0444.
 if [ "$(id -u)" = 0 ]; then chgrp docker "$dir"; fi
 
-# put <name> <value>: write to a temp file in the same dir, then rename
-# over the final name, so a reader sees the old file or the new one, never
-# a partial write.
-put() {
+# Two phases, so a failure writing any one file (a full tmpfs, a kill)
+# replaces none of them: first every value goes to a temp file in the
+# same dir, then each is renamed over its final name. A rename can't run
+# out of space, and a reader sees an old file or a new one, never a
+# partial write. Staged temp files are removed on any exit, so none is
+# left on tmpfs holding a secret.
+staged=()
+trap 'rm -f "${staged[@]}"' EXIT
+# stage <value>: prints the path of a new 0444 temp file holding value.
+stage() {
   local tmp
   tmp="$(mktemp "$dir/.tmp.XXXXXX")"
-  printf '%s' "$2" >"$tmp"
+  staged+=("$tmp")
+  printf '%s' "$1" >"$tmp"
   chmod 0444 "$tmp"
-  mv -f "$tmp" "$dir/$1"
 }
 
-put jwt_secret "$jwt"
-put postgres_password "$pg"
-put postgres_dsn "$dsn"
-put duckdns_token "$duck"
+values=("$jwt" "$pg" "$dsn" "$duck")
+for i in "${!names[@]}"; do stage "${values[$i]}"; done
+for i in "${!names[@]}"; do mv -f "${staged[$i]}" "$dir/${names[$i]}"; done
+staged=()
 echo "secrets: wrote 4 secrets to $dir"
