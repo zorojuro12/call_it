@@ -3,8 +3,8 @@
 **Status:** Branch `phase-8a1-op-secrets` has Tasks 1–7 done and green: Go suite, lint, and all five deploy test scripts. Not merged. Security review: no CRITICAL/HIGH; all 3 MEDIUMs and the test temp-dir leak are fixed (`6eae6d8`, `29031e8`, `fbee0f9`, `6fc3601`, `fa3ff8f`). A competing `op run` plan for the same work (`Phase 8f`, `cd69502`, from another session) was deleted at the user's request; 8a.1 is the plan.
 **Decided:** Secrets reach containers as **file secrets bind-mounted from tmpfs**, read through `*_FILE`, not as env vars via `op run`. Docker persists container env in `config.v2.json` and `docker inspect`, which the spike proved (the canary appeared 1× as an env var, 0× as a file). See the plan's Decisions 1–7.
 **Spec:** No change. The journal idea's "`op run`, no backend change" decision is withdrawn (plan Decision 1).
-**Next:** Run the full-stack local rehearsal (needs the user's OK to write a scratch `deploy/.env`), then merge `--no-ff` into `dev`.
-**Blocked on:** Nothing, except that the full-stack local rehearsal is unrun: the attempt to create a scratch `deploy/.env` was denied, and it needs permission.
+**Next:** Merge `--no-ff` into `dev` (`finishing-a-development-branch`), then the VM move-over per `deploy/README.md`.
+**Blocked on:** Nothing. The full-stack local rehearsal passed after this entry was first written (see What Worked), using an env file outside the repo instead of a scratch `deploy/.env`.
 **Touches:** `deploy/{secrets,op-bootstrap,preflight-secrets,install-secrets,gen-env,deploy,duckdns-update,check-compose,check-image}.sh`, `deploy/systemd/`, `deploy/compose.prod.yml`, `deploy/tests/`, `deploy/README.md`, `backend/internal/config/secret_files*.go`, `backend/cmd/{api,migrate,ledger-worker}/main.go`, `.github/workflows/ci.yml`, `CLAUDE.md`, `docs/plans/2026-10-22-phase-8a1-op-secrets.md`
 
 ---
@@ -35,6 +35,13 @@ No live secrets have been touched. The VM's `deploy/.env` and the running stack 
 - **Every checkpoint went RED, then GREEN.** Two partial REDs were expected and noted in commits. The unreadable-file case was already covered by Checkpoint 1's error wrapping. The failed-second-read case was already covered because `secrets.sh` fetches everything before it writes.
 - **`check-image.sh` proves all three binaries read `*_FILE`.**
 - **`systemd-analyze verify` accepts the unit.**
+- **The full-stack local rehearsal passed on file secrets** (Docker Desktop; `-p callit-rehearsal`, env file outside the repo):
+  - all 8 containers came up healthy;
+  - `migrate` applied the schema with the DSN file (exit 0);
+  - `smoke.sh` steps 1, 2 and 4 passed: a full round over `wss://` with the file-based JWT key;
+  - the ledger went 0 → 2 transactions, so the ledger worker connected using the DSN file;
+  - each secret value appears 0× in `docker inspect`, with only the `*_FILE` pointers present.
+- **The old Phase 8a rehearsal stack was paused, not deleted.** `docker compose -p callit-prod down` kept its 5 volumes, and its old-format `deploy/.env` and `.caddy-root.crt` are untouched in the repo. Bring it back from `dev`'s compose file, because this branch's needs `CALLIT_SECRETS_DIR`.
 
 ## What Didn't Work
 - **Docker Desktop (the laptop) behaves differently from the VM when a bind source is missing:** `compose up` creates an empty root-owned directory at the path and starts the container anyway. That's why `secrets.sh` refuses a non-file at a secret's path (Task 3, Checkpoint 4). Don't treat Desktop results as proof of the VM's behaviour.
@@ -49,7 +56,6 @@ No live secrets have been touched. The VM's `deploy/.env` and the running stack 
   - preflight: tmpfs, completeness;
   - `check-compose.sh` check 12, with 3 mutants.
 - **Not covered yet:**
-  - the full stack starting from file secrets (the local rehearsal);
   - the unit and `install-secrets.sh` on a real host;
   - `deploy.sh` and `duckdns-update.sh`, which have no tests, as before;
   - the `chgrp docker` branch in `secrets.sh`, which only runs as root.
@@ -80,4 +86,4 @@ No live secrets have been touched. The VM's `deploy/.env` and the running stack 
 - `cd69502`: **not this session's work.** The competing Phase 8f plan, deleted on this branch.
 
 ## Next Step
-Run the local rehearsal, then `finishing-a-development-branch` (merge `--no-ff` into `dev`), then do the VM move-over per `deploy/README.md` "Moving an existing server to 1Password".
+`finishing-a-development-branch` (merge `--no-ff` into `dev`), then do the VM move-over per `deploy/README.md` "Moving an existing server to 1Password".
