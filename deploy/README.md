@@ -98,7 +98,7 @@ Generating new secrets for it would lock you out of its database.
    at the prompt, so it never lands in your shell history:
    ```bash
    sudo install -d -m 0700 /etc/callit
-   sudo sh -c 'umask 077; read -rsp "token: " t; printf %s "$t" > /etc/callit/op-service-account-token'; echo
+   sudo bash -c 'umask 077; read -rsp "token: " t; printf %s "$t" > /etc/callit/op-service-account-token'; echo
    sudo bash deploy/install-secrets.sh
    sudo systemctl start callit-secrets
    bash deploy/gen-env.sh callit.duckdns.org
