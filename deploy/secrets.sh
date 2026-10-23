@@ -46,8 +46,11 @@ for name in "${names[@]}"; do
   fi
 done
 
+# Parents this run creates (on first boot, /run/callit) must stay
+# traversable, so they're made under umask 022; mkdir -p leaves existing
+# dirs' modes alone. The secrets dir itself is then narrowed to 0750.
+(umask 022; mkdir -p "$dir")
 umask 077
-mkdir -p "$dir"
 chmod 0750 "$dir"
 # The docker group may read the dir (deploy.sh, the DuckDNS cron job). It
 # is root-equivalent already, so this grants nothing new; containers read

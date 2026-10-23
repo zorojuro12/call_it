@@ -136,3 +136,14 @@ grep -qF "secrets: $w/secrets/jwt_secret exists and is not a regular file" "$w/o
   || fail "directory at jwt_secret: output was $(cat "$w/out")"
 [ -z "$(ls -A "$w/secrets/jwt_secret")" ] || fail "directory at jwt_secret: wrote into it"
 ok "a non-file at a secret's path is refused"
+
+# On first boot /run/callit doesn't exist either. Any parent the run
+# creates must be traversable (0755): the deploy user and the DuckDNS cron
+# job reach the secrets through it, and a root-only 0700 parent would lock
+# them out. The secrets dir itself stays 0750.
+w="$(setup)"
+env PATH="$w/bin:$PATH" FAKE_OP_DIR="$w/vault" CALLIT_SECRETS_DIR="$w/run/callit/secrets" \
+  OP_SERVICE_ACCOUNT_TOKEN=ops_fake bash "$src/secrets.sh" >"$w/out" 2>&1 || fail "nested dir: exited non-zero: $(cat "$w/out")"
+[ "$(stat -c %a "$w/run/callit")" = 755 ] || fail "created parent mode is $(stat -c %a "$w/run/callit"), want 755"
+[ "$(stat -c %a "$w/run/callit/secrets")" = 750 ] || fail "secrets dir mode is $(stat -c %a "$w/run/callit/secrets"), want 750"
+ok "parents created on first boot are traversable; the secrets dir stays 0750"
