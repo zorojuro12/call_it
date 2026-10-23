@@ -26,7 +26,11 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.LoadLedger(os.LookupEnv)
+	lookup, err := config.ResolveSecretFiles(os.LookupEnv, os.ReadFile, "POSTGRES_DSN")
+	if err != nil {
+		return err
+	}
+	cfg, err := config.LoadLedger(lookup)
 	if err != nil {
 		return err
 	}

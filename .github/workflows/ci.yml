@@ -158,8 +158,17 @@ jobs:
       - name: Prove the topology checks reject a broken layout
         run: bash deploy/tests/check-compose_test.sh
 
-      - name: Test secret generation
+      - name: Test server settings generation
         run: bash deploy/tests/gen-env_test.sh
+
+      - name: Test secret materialization
+        run: bash deploy/tests/secrets_test.sh
+
+      - name: Test vault bootstrap
+        run: bash deploy/tests/op-bootstrap_test.sh
+
+      - name: Test the secrets preflight
+        run: bash deploy/tests/preflight-secrets_test.sh
 
       - uses: docker/setup-qemu-action@v3
 

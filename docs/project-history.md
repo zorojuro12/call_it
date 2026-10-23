@@ -652,6 +652,30 @@ Caddy's local CA via `SSL_CERT_FILE`):**
 plan's "After merge" section, and its result (including the real-client-IP
 check above) gets appended here.
 
+**Go-live (2026-10-18): `v0.2.0` at `https://callit.duckdns.org`.** Oracle
+Always Free A1 VM, home region US West (Phoenix), Ubuntu 24.04 aarch64,
+following `deploy/README.md` §1–6 end to end.
+- **`deploy.sh v0.2.0` passed `smoke.sh` 4/4 on the server**, and the site
+  is reachable from the internet with a Let's Encrypt certificate. `/`
+  returns 404 by design until Phase 8b.
+- **The real-client-IP check passes.** A `/healthz` request from the laptop
+  appeared in Caddy's access log with the laptop's public IP as
+  `remote_ip`, not a `172.x.0.1` gateway address. So Docker Engine's
+  iptables NAT path keeps source addresses on this VM, and the accepted
+  MEDIUM above (every client collapsing into one `auth` bucket) doesn't
+  occur here. Other `remote_ip`s in the same window were internet scanners.
+- **The app-level backup works.** A manual `deploy/backup.sh` wrote a
+  `0600` archive holding `postgres.sql` and Redis's `dump.rdb` plus the
+  append-only files. A 03:00 UTC cron job runs it nightly, logging to
+  `/var/backups/callit/backup.log`.
+- **A boot-volume backup policy is attached.** It's a custom
+  `callit_weekly` policy (weekly incremental, Monday 00:00 UTC, 27-day
+  retention), not Oracle's Bronze. Always Free includes 5 volume backups,
+  and Bronze keeps 12 monthly ones. With 27-day retention the oldest
+  backup expires the day before the next one starts, so the policy holds
+  at most 4. The first scheduled run is 2026-10-19; no manual boot-volume
+  backup was taken, so that run is the first proof it works.
+
 ---
 
 ## Coverage notes

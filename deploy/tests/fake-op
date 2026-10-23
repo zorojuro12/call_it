@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Stand-in for the 1Password CLI in deploy/tests. A fake vault is a
+# directory, $FAKE_OP_DIR, holding one file per item, named after the item
+# and containing its password. Every call's argv is appended to
+# $FAKE_OP_DIR/calls.log, followed by "token-set" when the caller exported
+# OP_SERVICE_ACCOUNT_TOKEN, so tests can assert what op was (and wasn't)
+# given without ever seeing the token's value in argv.
+#   read --no-newline op://callit-prod/<item>/password
+#     prints the item, or exits 1 if it is missing or $FAKE_OP_FAIL_ON names it
+#   whoami
+#     exits 0
+#   item get <title> --vault callit-prod
+#     exits 0 if the item exists, 1 otherwise
+#   item create --vault callit-prod -
+#     reads a JSON item template on stdin and saves it, verbatim, as
+#     $FAKE_OP_DIR/created-<title>.json
+set -euo pipefail
+
+: "${FAKE_OP_DIR:?FAKE_OP_DIR must point at the fake vault}"
+echo "$* ${OP_SERVICE_ACCOUNT_TOKEN:+token-set}" >>"$FAKE_OP_DIR/calls.log"
+
+case "${1:-} ${2:-}" in
+  "read --no-newline")
+    ref="${3:-}"
+    [[ "$ref" =~ ^op://callit-prod/([a-z-]+)/password$ ]] || { echo "fake-op: bad reference '$ref'" >&2; exit 1; }
+    item="${BASH_REMATCH[1]}"
+    if [ "${FAKE_OP_FAIL_ON:-}" = "$item" ] || [ ! -f "$FAKE_OP_DIR/$item" ]; then
+      echo "[ERROR] could not read secret '$ref': item not found" >&2
+      exit 1
+    fi
+    cat "$FAKE_OP_DIR/$item"
+    ;;
+  "whoami ")
+    ;;
+  "item get")
+    [ "${4:-} ${5:-}" = "--vault callit-prod" ] || { echo "fake-op: item get outside callit-prod: $*" >&2; exit 2; }
+    [ -f "$FAKE_OP_DIR/${3:-}" ] || { echo "[ERROR] \"${3:-}\" isn't an item in the \"callit-prod\" vault" >&2; exit 1; }
+    ;;
+  "item create")
+    [ "${3:-} ${4:-} ${5:-}" = "--vault callit-prod -" ] || { echo "fake-op: unexpected item create: $*" >&2; exit 2; }
+    template="$(cat)"
+    title="$(jq -r .title <<<"$template")"
+    printf '%s' "$template" >"$FAKE_OP_DIR/created-$title.json"
+    ;;
+  *)
+    echo "fake-op: unsupported command: $*" >&2
+    exit 2
+    ;;
+esac

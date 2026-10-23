@@ -1,7 +1,14 @@
 # Production topology (plan 8a). Run from the repo root:
 #   docker compose -f deploy/compose.prod.yml --env-file deploy/.env up -d --build
 # deploy/.env is created on the server by deploy/gen-env.sh and never
-# committed. deploy/check-compose.sh asserts this file's invariants in CI.
+# committed; it holds no secret. deploy/check-compose.sh asserts this
+# file's invariants in CI.
+#
+# Secrets (plan 8a.1) are files in $CALLIT_SECRETS_DIR (tmpfs, written by
+# deploy/secrets.sh from 1Password), mounted as file secrets at
+# /run/secrets/<name> and read through *_FILE variables. Never pass a
+# secret as an environment value: Docker persists a container's
+# environment in its on-disk config.
 #
 # Networks, one per trust relationship (Decision 2):
 #   edge   — caddy, api              (not internal: Caddy needs ACME egress)
@@ -57,11 +64,12 @@ services:
     environment:
       ENV: production
       REDIS_ADDR: redis:6379
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — run deploy/gen-env.sh}
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
       CORS_ALLOWED_ORIGINS: https://${CALLIT_HOSTNAME:?CALLIT_HOSTNAME is required — run deploy/gen-env.sh}
       # Caddy's static edge address; the API believes X-Forwarded-For only
       # from it (Decision 1).
       TRUSTED_PROXIES: 172.30.0.10/32
+    secrets: [jwt_secret]
     networks: [edge, state]
     depends_on:
       redis:
@@ -86,7 +94,8 @@ services:
     command: ["/app/migrate"]
     restart: "no"
     environment:
-      POSTGRES_DSN: postgres://callit:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — run deploy/gen-env.sh}@postgres:5432/callit?sslmode=disable
+      POSTGRES_DSN_FILE: /run/secrets/postgres_dsn
+    secrets: [postgres_dsn]
     networks: [ledger]
     depends_on:
       postgres:
@@ -98,7 +107,8 @@ services:
     environment:
       ENV: production
       KAFKA_BROKERS: kafka:9092
-      POSTGRES_DSN: postgres://callit:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — run deploy/gen-env.sh}@postgres:5432/callit?sslmode=disable
+      POSTGRES_DSN_FILE: /run/secrets/postgres_dsn
+    secrets: [postgres_dsn]
     networks: [events, ledger]
     depends_on:
       migrate:
@@ -127,7 +137,8 @@ services:
     environment:
       POSTGRES_USER: callit
       POSTGRES_DB: callit
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — run deploy/gen-env.sh}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U callit"]
       interval: 5s
@@ -173,6 +184,16 @@ networks:
     internal: true
   ledger:
     internal: true
+
+# The ${...:?} guard sits on every entry, because Compose interpolates
+# each one separately.
+secrets:
+  jwt_secret:
+    file: ${CALLIT_SECRETS_DIR:?CALLIT_SECRETS_DIR is required — run deploy/gen-env.sh}/jwt_secret
+  postgres_password:
+    file: ${CALLIT_SECRETS_DIR:?CALLIT_SECRETS_DIR is required — run deploy/gen-env.sh}/postgres_password
+  postgres_dsn:
+    file: ${CALLIT_SECRETS_DIR:?CALLIT_SECRETS_DIR is required — run deploy/gen-env.sh}/postgres_dsn
 
 volumes:
   redis-data:

@@ -34,7 +34,11 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load(os.LookupEnv)
+	lookup, err := config.ResolveSecretFiles(os.LookupEnv, os.ReadFile, "JWT_SECRET")
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+	cfg, err := config.Load(lookup)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}

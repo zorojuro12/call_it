@@ -3,8 +3,9 @@
 # invariants the deployment's safety rests on (plan 8a, Decisions 2-5):
 # only Caddy is reachable from outside, each data store sits on an
 # internal network shared only with the processes that need it, the API
-# can never reach PostgreSQL or Kafka, and missing secrets fail the render
-# instead of starting with blanks.
+# can never reach PostgreSQL or Kafka, missing settings fail the render
+# instead of starting with blanks, and secrets reach containers only as
+# files granted to exactly the services that need them (plan 8a.1).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -19,10 +20,10 @@ ok() { echo "ok: $*"; }
 [ -f "$compose_file" ] || fail "0. $compose_file does not exist"
 
 # Secrets from the caller's shell must not mask a missing one in the file.
-unset CALLIT_HOSTNAME JWT_SECRET POSTGRES_PASSWORD DUCKDNS_TOKEN ACME_EMAIL
+unset CALLIT_HOSTNAME CALLIT_SECRETS_DIR JWT_SECRET POSTGRES_PASSWORD DUCKDNS_TOKEN ACME_EMAIL
 cfg=$(docker compose -f "$compose_file" --env-file "$fixture" config --format json) \
   || fail "0. compose file does not render with the fixture env"
-q() { jq -r "$1" <<<"$cfg"; }
+q() { jq -r "$@" <<<"$cfg"; }
 
 # 1. Only caddy publishes ports, and exactly 80 and 443.
 [ "$(q '[.services | to_entries[] | select(.value.ports != null and (.value.ports | length) > 0) | .key] | join(",")')" = caddy ] \
@@ -75,13 +76,13 @@ env_of() { q ".services.\"$1\".environment.\"$2\" // \"<unset>\""; }
 [ "$(q '.services.caddy.networks.edge.ipv4_address')" = "172.30.0.10" ] || fail "5. caddy's edge address is not 172.30.0.10"
 ok "5. api environment and caddy address"
 
-# 6. relay and ledger-worker reach Kafka; Postgres DSNs point at postgres.
+# 6. relay and ledger-worker reach Kafka; the Postgres DSN arrives as a file.
 for s in relay ledger-worker; do
   [ "$(env_of "$s" KAFKA_BROKERS)" = "kafka:9092" ] || fail "6. $s KAFKA_BROKERS is not kafka:9092"
   [ "$(env_of "$s" ENV)" = production ] || fail "6. $s ENV is not production"
 done
 for s in ledger-worker migrate; do
-  env_of "$s" POSTGRES_DSN | grep -q '@postgres:5432/' || fail "6. $s POSTGRES_DSN does not target postgres:5432"
+  [ "$(env_of "$s" POSTGRES_DSN_FILE)" = /run/secrets/postgres_dsn ] || fail "6. $s POSTGRES_DSN_FILE is not /run/secrets/postgres_dsn"
 done
 ok "6. relay/ledger-worker/migrate wiring"
 
@@ -107,13 +108,13 @@ ok "9. restart policies"
 # 10. Each required value missing fails the render.
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
-for key in JWT_SECRET POSTGRES_PASSWORD CALLIT_HOSTNAME; do
+for key in CALLIT_HOSTNAME CALLIT_SECRETS_DIR; do
   grep -v "^$key=" "$fixture" >"$tmp"
   if docker compose -f "$compose_file" --env-file "$tmp" config -q 2>/dev/null; then
     fail "10. rendering without $key succeeded"
   fi
 done
-ok "10. missing JWT_SECRET, POSTGRES_PASSWORD or CALLIT_HOSTNAME fails the render"
+ok "10. missing CALLIT_HOSTNAME or CALLIT_SECRETS_DIR fails the render"
 
 # 11. The Go services run with no privilege escalation, no capabilities,
 #     and a read-only root filesystem (none of them writes to disk).
@@ -124,3 +125,25 @@ for s in api relay ledger-worker migrate; do
     || fail "11. $s allows privilege escalation (no-new-privileges unset)"
 done
 ok "11. Go services: read-only, no capabilities, no-new-privileges"
+
+# 12. Secrets never sit in a container environment (Docker persists it in
+#     its on-disk config). Each arrives as a file from the secrets dir,
+#     granted to exactly the services that need it.
+leaked=$(q '[.services | to_entries[] | .key as $s | (.value.environment // {} | keys[]) | select(IN("JWT_SECRET","POSTGRES_PASSWORD","POSTGRES_DSN","DUCKDNS_TOKEN")) | "\($s).\(.)"] | join(",")')
+[ -z "$leaked" ] || fail "12. secret passed as an environment value: $leaked"
+want_secrets="api=jwt_secret
+caddy=
+kafka=
+ledger-worker=postgres_dsn
+migrate=postgres_dsn
+postgres=postgres_password
+redis=
+relay="
+got_secrets=$(q '.services | to_entries | map("\(.key)=\([.value.secrets[]?.source] | sort | join(","))") | .[]' | sort)
+[ "$got_secrets" = "$(sort <<<"$want_secrets")" ] \
+  || fail "12. secret grants differ:
+$(diff <(sort <<<"$want_secrets") <(echo "$got_secrets") || true)"
+secrets_dir=$(grep -m1 '^CALLIT_SECRETS_DIR=' "$fixture" | cut -d= -f2-)
+outside=$(q --arg d "$secrets_dir/" '[.secrets // {} | to_entries[] | select((.value.file // "") | startswith($d) | not) | .key] | join(",")')
+[ -z "$outside" ] || fail "12. secret not sourced from \$CALLIT_SECRETS_DIR: $outside"
+ok "12. secrets are files, granted only where needed"

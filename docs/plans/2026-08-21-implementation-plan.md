@@ -433,9 +433,11 @@ MVP and contain the demo; 5 onward are separate milestones.
 | 7b | **Tuning + reconciliation under load** ✅ | Acts on 7a's two MISSED targets: profile and tune the wager-placement path (five sequential Redis round trips today) against the p99 < 15 ms target, re-baseline throughput on an optimized `go build` binary and either close the 5,000 rps gap or record this environment's ceiling with evidence, and re-run the Redis↔PostgreSQL reconciliation after a real k6 load run (closes §12's last unchecked money-correctness box) | 7a | None new |
 | 7c | **Security debt + docs** ✅ | The three security items open by design (login timing, reconnect grace window, `RoundSettled.Payouts` length cap), and the README with an architecture diagram | 7b | None new |
 | 8a | **Backend deployment** ✅ (code; go-live per the 8a plan's "After merge" section) | The backend live on one public VM (Oracle Cloud Always Free, arm64) behind Caddy TLS at a DuckDNS hostname: one container image for all four Go binaries, a production Compose file whose networks structurally isolate Redis/PostgreSQL/Kafka, trusted-proxy client-IP resolution (without which every caller shares one auth rate-limit bucket behind the proxy), secrets generated on the server, backup/restore, tag-based deploy and rollback | 7c | `docker-patterns` (already installed) |
-| 8b | **Web frontend deployment** | `frontend/` served at the same hostname as 8a's API, so the browser origin and the API share one origin | 8a | None new |
-| 8c | **Expo mobile app** | React Native client in `mobile/`, sharing the framework-free `frontend/lib/` modules | 8a | Decide at 8c's planning pass |
-| 8d | **App Store readiness** | Account deletion (App Store guideline 5.1.1(v)), privacy policy, TestFlight, submission | 8c | Decide at 8d's planning pass |
+| 8a.1 | **Production secrets from 1Password** | Secrets in a `callit-prod` 1Password vault, fetched at boot and on every deploy by a read-only Service Account into tmpfs, and mounted as file secrets (`*_FILE` in `internal/config`), so no secret is a container environment variable or sits on the VM's disk except the one scoped, revocable token. Includes the cutover that imports the live server's values. Inserted ahead of 8b without renumbering (plan `2026-10-22-phase-8a1-op-secrets.md`) | 8a | None new (`op` is a host tool) |
+| 8b | **Web frontend deployment** | `frontend/` served at the same hostname as 8a's API, so the browser origin and the API share one origin | 8a.1 | None new |
+| 8c | **Frontend polish** | A production-quality visual design for the web app: a chosen design direction, design tokens (colour, type, spacing) the 8d mobile app can reuse, and every 6a/6b page and component restyled to them, with no behaviour change and the anonymity invariant untouched | 8b | Decide at 8c's planning pass (design direction first, via `brainstorming`) |
+| 8d | **Expo mobile app** | React Native client in `mobile/`, sharing the framework-free `frontend/lib/` modules and 8c's design tokens | 8c | Decide at 8d's planning pass |
+| 8e | **App Store readiness** | Account deletion (App Store guideline 5.1.1(v)), privacy policy, TestFlight, submission | 8d | Decide at 8e's planning pass |
 | 9 | **Deferred** | LLM question suggestions, Prometheus/Grafana | 8a | Decide when unblocked |
 
 **Phase 5 split into 5a/5b (added at Phase 5's planning pass).** Done
@@ -608,14 +610,14 @@ the literal `redis_wallet == ledger_balance` instead of subtracting the
 opening stake. The identity it would simplify is already proven as-is by
 `internal/ledger/reconcile_test.go`. It stays a candidate.
 
-**Phase 8 split into 8a–8d, and Terraform dropped (added at Phase 8a's
+**Phase 8 split into 8a–8d (now 8a–8e, see below), and Terraform dropped (added at Phase 8a's
 planning pass, 2026-10-17).** The old row 8 was a bucket of deferred work
 rather than a phase. Live deployment came out of it when the project's goal
 moved from a local demo to a public release that ends on the iOS App Store
 (spec §8 deferred live deployment; that deferral is now lifted). It is split
 at the **reachability boundary**: 8a ends when the backend answers on a
 public `https://`/`wss://` hostname. That is the one thing 8b's web deploy,
-8c's mobile app, and 8d's store submission all need, and none of them can
+8d's mobile app, and 8e's store submission all need, and none of them can
 be tested for real without it. 8a is independently shippable: a public API
 with a working CLI client (`cmd/callit-cli`) is a deliverable even if no
 other client ever ships.
@@ -626,6 +628,17 @@ would be a second definition of a machine whose only state is "Docker
 installed, ports 80/443 open". `deploy/README.md`'s runbook is that
 definition, and it is the one that gets used. Revisit if the deployment ever
 grows past one host.
+
+**Frontend polish inserted as 8c (added 2026-10-18, before 8b's planning
+pass).** 6a and 6b built a frontend that is functional, accessible and
+tested, but no phase ever owned its visual design, so 8b would have shipped
+it unpolished and nothing after 8b would have fixed that. Polish is its own
+phase rather than part of 8b because a phase is one deliverable: 8b is
+packaging and routing, polish is a redesign. It follows 8b so every change
+can be checked on a real phone at the live URL, and it precedes the mobile
+app because 8d shares only `frontend/lib/`, not the React components; design
+tokens settled first are what let the mobile app reuse the look instead of
+designing it twice. The old 8c (Expo) and 8d (App Store) became 8d and 8e.
 
 **Phase 4 split into 4a/4b (added at Phase 4a close-out).** Scoping Phase 4
 as written above produced ~13 tasks / ~38 checkpoints — the shape this
