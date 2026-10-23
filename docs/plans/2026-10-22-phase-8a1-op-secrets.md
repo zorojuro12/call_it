@@ -653,3 +653,17 @@ anything could replace it.
    command only, copied from the vault item that stores the token). The ledger worker connects,
    which proves a restore no longer depends on the VM's disk.
 8. Journal the go-live with the results of each step.
+
+---
+
+## Spike Results (Task 1)
+
+Run 2026-10-22. Every assumption held, so Decisions 1–4 stand unamended.
+
+| Step | Where | Result |
+|---|---|---|
+| 1. A file secret is readable and stays out of the container config | Laptop (Docker Desktop 28.4.0, Compose 2.39.2) and VM (native Docker Engine, aarch64) | Read as uid 65532 and as uid 70 from a 0444 file in a 0750 dir. Canary count: `docker inspect` 0, and on the VM `config.v2.json` 0. An env-var control showed up in `docker inspect` once. Mount is `bind … -> /run/secrets/s rw=false`. |
+| 2. Missing bind source | VM | `docker start` refuses, and `compose up` fails. No directory is created. Fail-closed. |
+| 2. Missing bind source | Laptop (Docker Desktop) | `docker start` refuses, **but `compose up` creates an empty root-owned directory at the path and starts the container**. Task 3, Checkpoint 4 stays: the production engine doesn't need it, but the local rehearsal runs on Desktop. |
+| 3. `op` behaviour | Laptop, `op` 2.41.1 | `op read` ends with `\n` by default, and `op read --no-newline` doesn't (Review Focus #2 confirmed). `op item create --vault V -` **accepts a JSON template on stdin**, so Task 5 passes values on stdin and the `--template`-file fallback isn't needed. |
+| 4. `op` on arm64 | VM (`aarch64`, `/run` is tmpfs) | Installed from 1Password's signed apt repo (`debian/arm64`, debsig policy `AC2D62742012EA22`). `op --version`: 2.41.1. |
