@@ -108,7 +108,8 @@ log "drained=$drained outbox_pending=$pending outbox_lag=$lag ledger_transaction
 forward svc/redis "$redis_port" 6379
 forward svc/postgres "$pg_port" 5432
 forward svc/kafka "$kafka_port" 9092
-# Read into a variable, never echoed.
+# Read into a variable and never echoed. The reconciler masks it in its
+# failure messages (redactDSN), since those land in this script's output.
 pg_password="$(k get secret callit-secrets -o jsonpath='{.data.postgres_password}' | base64 -d)"
 log "reconciling room $room"
 (cd "$repo/backend" && RECONCILE_ROOM_IDS="$room" REDIS_ADDR="localhost:$redis_port" \
