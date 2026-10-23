@@ -1,9 +1,9 @@
 # 2026-10-22 — ansh — Phase 8a.1: production secrets from 1Password (planned and built, not merged)
 
-**Status:** **`v0.3.0` is live on the VM with secrets from 1Password.** Merged to `dev` (`5a72a88`) and `main` (`11f126c`), tagged and pushed. The live switch-over is done through step 4 (`smoke.sh` 4/4, no secret in `docker inspect`). The reboot test, a backup check, and shredding `/root/env.pre-8a1` remain. Security review: no CRITICAL/HIGH, and all MEDIUMs fixed. The competing `op run` plan (`cd69502`) was deleted at the user's request.
+**Status:** **`v0.3.0` is live on the VM with secrets from 1Password.** Merged to `dev` (`5a72a88`) and `main` (`11f126c`), tagged and pushed. **The live switch-over is complete:** `smoke.sh` 4/4, no secret in `docker inspect`, the reboot test passed, `backup.sh` works, and the old plaintext copy was shredded. The only secret on the VM's disk is the Service Account token. Security review: no CRITICAL/HIGH, and all MEDIUMs fixed. The competing `op run` plan (`cd69502`) was deleted at the user's request.
 **Decided:** Secrets reach containers as **file secrets bind-mounted from tmpfs**, read through `*_FILE`, not as env vars via `op run`. Docker persists container env in `config.v2.json` and `docker inspect`, which the spike proved (the canary appeared 1× as an env var, 0× as a file). See the plan's Decisions 1–7.
 **Spec:** No change. The journal idea's "`op run`, no backend change" decision is withdrawn (plan Decision 1).
-**Next:** Finish the switch-over: reboot test, `backup.sh`, then `sudo shred -u /root/env.pre-8a1`. Then push `dev`: three post-`v0.3.0` runbook and install fixes are unpushed. After that, the Kubernetes phase the user wants next (see Open Questions).
+**Next:** Plan the Kubernetes phase the user wants (see Next Step).
 **Blocked on:** Nothing. The full-stack local rehearsal passed after this entry was first written (see What Worked), using an env file outside the repo instead of a scratch `deploy/.env`.
 **Touches:** `deploy/{secrets,op-bootstrap,preflight-secrets,install-secrets,gen-env,deploy,duckdns-update,check-compose,check-image}.sh`, `deploy/systemd/`, `deploy/compose.prod.yml`, `deploy/tests/`, `deploy/README.md`, `backend/internal/config/secret_files*.go`, `backend/cmd/{api,migrate,ledger-worker}/main.go`, `.github/workflows/ci.yml`, `CLAUDE.md`, `docs/plans/2026-10-22-phase-8a1-op-secrets.md`
 
@@ -75,7 +75,7 @@ No live secrets have been touched. The VM's `deploy/.env` and the running stack 
 - **The 8f plan raises the Service Account rate limit (1,000 requests/day on Individual/Families).** This branch makes 3 `op` calls per boot or deploy, and the DuckDNS cron makes none, so it's well clear of the limit.
 - **Unconfirmed: did the user finish creating the `callit-prod` vault and the `callit-prod-vm` Service Account?**
 
-## Go-live (2026-10-22, in progress)
+## Go-live (2026-10-22, complete)
 - **Released:** `dev` merged into `main` (`11f126c`), tagged **`v0.3.0`**, pushed; CI green.
 - **Step 1, import:** `ssh callit 'cat …/.env' | op-bootstrap.sh --import` created all three items. The vault's `postgres-password` and the VM's `.env` have **identical sha256**.
 - **Step 2, VM access:**
@@ -88,6 +88,8 @@ No live secrets have been touched. The VM's `deploy/.env` and the running stack 
   - The new two-line `.env` was written directly.
   - `deploy.sh v0.3.0` passed `smoke.sh` 4/4, with the ledger at 2 → 3.
 - **Step 4:** `docker inspect` shows 0 secret matches, and only the `*_FILE` pointers are present.
+- **Step 5:** after `sudo reboot`, `/healthz` answered with no manual step, and `callit-secrets.service` was `active (exited)` with status `0/SUCCESS` from boot.
+- **Step 6:** `backup.sh` wrote a `0600` archive under the new `.env`, then `/root/env.pre-8a1` was shredded.
 - **Found during the run, and fixed on `dev` after the tag:**
   - `/usr/local/libexec` is missing on stock Ubuntu (`c30f575`). The VM was worked around with `install -d`.
   - The token prompt needs `bash`, not `sh`/dash (`e002ded`).
@@ -105,4 +107,4 @@ No live secrets have been touched. The VM's `deploy/.env` and the running stack 
 - `cd69502`: **not this session's work.** The competing Phase 8f plan, deleted on this branch.
 
 ## Next Step
-Finish switch-over steps 5–6, and append their results to `docs/project-history.md`'s 8a.1 go-live block. Then plan the **Kubernetes phase** the user wants: kind cluster, Helm for Postgres/Redis/Kafka, and manifests for api/relay/ledger-worker plus a migrate Job. Its flagship evidence is the k6 load test while killing the relay, worker and Kafka pods, with every bet still reconciling. Mount Kubernetes Secrets as files (`*_FILE`), not env, to keep the 8a.1 invariant. It needs a §9 row and a `writing-plans` pass first.
+Plan the **Kubernetes phase** the user wants: kind cluster, Helm for Postgres/Redis/Kafka, and manifests for api/relay/ledger-worker plus a migrate Job. Its flagship evidence is the k6 load test while killing the relay, worker and Kafka pods, with every bet still reconciling. Mount Kubernetes Secrets as files (`*_FILE`), not env, to keep the 8a.1 invariant. It needs a §9 row and a `writing-plans` pass first.

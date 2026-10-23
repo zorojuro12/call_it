@@ -751,9 +751,15 @@ plan from another session (`cd69502`) was deleted unexecuted.
 - **No secret is in the running containers' config:**
   `docker inspect … | grep -ciE 'JWT_SECRET=|POSTGRES_PASSWORD=|POSTGRES_DSN='`
   prints `0`, and only the `*_FILE` pointers are present.
-- **Pending:** the reboot test (the site comes back with no manual step),
-  then a backup check and shredding `/root/env.pre-8a1`. Append the results
-  here.
+- **Reboot test passed.** After `sudo reboot`, `/healthz` answered with no
+  manual step. `callit-secrets.service` was `active (exited)` with status
+  `0/SUCCESS` from boot, so the secrets were fetched before Docker restarted
+  the stack.
+- **`backup.sh` works under the new `.env`.** It wrote a `0600` archive,
+  alongside that night's 03:00 cron archive.
+- **The old plaintext `.env` copy is destroyed** (`shred -u
+  /root/env.pre-8a1`). The only secret left on the VM's disk is the Service
+  Account token.
 
 ---
 
