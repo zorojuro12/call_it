@@ -219,11 +219,18 @@ password must reach the vault before anything could replace it.
    ssh callit "grep -m1 '^POSTGRES_PASSWORD=' ~/call_it/deploy/.env | cut -d= -f2- | tr -d '\n' | sha256sum"
    ```
 2. **VM:** §4 steps 3–4, except `gen-env.sh`, which refuses while the old
-   `.env` exists. Then `preflight-secrets.sh` passes.
-3. **VM:** keep the old file until step 6, then rewrite `.env`:
+   `.env` exists. Run the scripts from the new tag without checking it out
+   yet (an old checkout's crons keep working meanwhile):
+   `git archive <the 8a.1 tag> deploy | tar -x -C /tmp/callit-new`, then
+   `sudo bash /tmp/callit-new/deploy/install-secrets.sh`. Then
+   `preflight-secrets.sh` passes.
+3. **VM:** keep the old file until step 6, then rewrite `.env`. Write it
+   directly rather than with `gen-env.sh`: the checkout is still the old
+   tag, whose `gen-env.sh` would generate new secrets:
    ```bash
+   h="$(grep -m1 '^CALLIT_HOSTNAME=' deploy/.env | cut -d= -f2-)"; echo "hostname: $h"
    sudo install -m 0400 deploy/.env /root/env.pre-8a1
-   rm deploy/.env && bash deploy/gen-env.sh callit.duckdns.org
+   (umask 077; printf 'CALLIT_HOSTNAME=%s\nCALLIT_SECRETS_DIR=/run/callit/secrets\n' "$h" > deploy/.env.new) && mv deploy/.env.new deploy/.env
    bash deploy/deploy.sh <the 8a.1 tag>
    ```
    The smoke test passes and existing accounts still log in. Existing
