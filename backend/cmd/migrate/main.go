@@ -12,7 +12,12 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadMigrate(os.LookupEnv)
+	lookup, err := config.ResolveSecretFiles(os.LookupEnv, os.ReadFile, "POSTGRES_DSN")
+	if err != nil {
+		slog.Error("loading config", "error", err)
+		os.Exit(1)
+	}
+	cfg, err := config.LoadMigrate(lookup)
 	if err != nil {
 		slog.Error("loading config", "error", err)
 		os.Exit(1)

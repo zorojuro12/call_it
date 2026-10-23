@@ -42,6 +42,11 @@ expect_config_error api "JWT_SECRET is required"
 expect_config_error migrate "POSTGRES_DSN is required"
 expect_config_error ledger-worker "POSTGRES_DSN is required"
 expect_config_error relay "is not one of development|production|test" -e ENV=bogus
+# Production passes secrets as files (compose.prod.yml); each binary that
+# takes one must actually read its *_FILE variable, not ignore it.
+expect_config_error api "reading JWT_SECRET_FILE" -e JWT_SECRET_FILE=/nonexistent
+expect_config_error migrate "reading POSTGRES_DSN_FILE" -e POSTGRES_DSN_FILE=/nonexistent
+expect_config_error ledger-worker "reading POSTGRES_DSN_FILE" -e POSTGRES_DSN_FILE=/nonexistent
 
 out=$(docker run --rm --network none "$image" /app/callit-cli 2>&1 || true)
 grep -qF "specify exactly one of --host or --join" <<<"$out" || fail "/app/callit-cli did not start: $out"
