@@ -3,7 +3,7 @@
 **Status:** Branch `phase-8a2-kubernetes` is complete and green: lint, the full Go suite, and the manifest checks with their mutants. Not merged. The chaos run went **FAIL → PASS**: 25 wagers lost before the relay fix, none after, and PASS again on the final StatefulSet manifests. Security review: no CRITICAL/HIGH; 3 MEDIUMs fixed, and the rest documented as limits.
 **Decided:** The relay claims orphaned outbox entries on startup (`XAUTOCLAIM`, min-idle 0). That's safe only with at most one relay pod, so in Kubernetes it's a **one-replica StatefulSet**, not a Deployment. See plan Decisions 1 and 3, and the security-review entry in `docs/project-history.md`.
 **Spec:** No change.
-**Next:** Merge `--no-ff` into `dev`, then push. Releasing and deploying the relay fix to the VM is a separate decision: it's a real production bug fix (Compose hits it on any relay crash during a Kafka outage).
+**Next:** Nothing outstanding for this phase. Merged to `dev` (`d8cc4df`) and pushed with CI green. **The relay fix is live in production as `v0.3.1`** (`main` `e3de8f6`; `smoke.sh` 4/4 on the VM, ledger at 4 → 6). Optional: `bash deploy/k8s/down.sh` frees the local cluster.
 **Blocked on:** Nothing.
 **Touches:** `backend/internal/relay/relay.go`, `backend/internal/relay/relay_test.go`, `backend/internal/ledger/{reconcile_after_load_test,redact_dsn_test}.go`, `deploy/k8s/`, `.github/workflows/ci.yml`, `CLAUDE.md`, `README.md`, `docs/project-history.md`, `docs/plans/2026-10-22-phase-8a2-kubernetes.md`
 
