@@ -397,3 +397,20 @@ make lint && make test && bash deploy/k8s/check-manifests.sh && bash deploy/k8s/
 
 Then write the journal entry. The branch is green: hand off to
 `finishing-a-development-branch`.
+
+---
+
+## Spike Results (Task 2)
+
+Run 2026-10-22 on Docker Desktop (16 CPUs, 7.4 GiB). Decisions 2–4 stand.
+Two findings change Task 3's manifests (marked **→**).
+
+| Check | Result |
+|---|---|
+| kind | **v0.33.0** (released 2026-08-26), `sha256` verified against the release's `.sha256sum`, in `~/.local/bin`. The node runs **Kubernetes v1.37.0**. |
+| kubectl skew | The installed `/usr/local/bin/kubectl` was **v1.32.2**, five minors behind the node (supported skew is ±1). **v1.37.1** (released 2026-09-23) was installed to `~/.local/bin`, which is earlier on `PATH`, with its `sha256` verified. It bundles kustomize v5.8.1. CI only uses `kubectl kustomize` (rendering, no cluster), so the runner's kubectl version doesn't matter there. |
+| PVCs | The default StorageClass `standard` (`rancher.io/local-path`, `WaitForFirstConsumer`) bound both 1Gi claims. The mount root is `777 root`, so **no `fsGroup` is needed**. Kafka runs as uid 1000 and wrote `meta.properties` and `__cluster_metadata-0`. Postgres initialized in `PGDATA=/var/lib/postgresql/data/pgdata`. |
+| Kafka survives a force-kill | A message was produced, then `kubectl delete pod kafka-0 --grace-period=0 --force`. The broker restarted on the same PVC with no cluster-ID mismatch: end offset `1` before and after, and the message read back intact. |
+| Secret volume | The mount at `/run/secrets` is **tmpfs**: the Kubernetes counterpart of 8a.1's `/run/callit/secrets`. |
+| **→ ServiceAccount token collision** | A read-only Secret volume at `/run/secrets` made the container fail to start (`RunContainerError`). The kubelet's automatic token mount at `/var/run/secrets/kubernetes.io/serviceaccount` can't create its mount point inside it (`/var/run` → `/run`). **Every CallIt pod sets `automountServiceAccountToken: false`.** None of them talks to the Kubernetes API, so this is also least privilege: a compromised pod holds no cluster credential. The paths stay `/run/secrets/<name>`, as in Compose. |
+| **→ Kafka needs a Service named `kafka`** | The broker advertises `PLAINTEXT://kafka:9092`. Without a Service by that name, every client, including the broker's own CLI tools, hangs on `UnknownHostException: kafka`. `kafka.yaml` must include a headless Service `kafka`, plus a readiness probe matching Compose's healthcheck (`kafka-broker-api-versions.sh --bootstrap-server localhost:9092`). |
