@@ -57,6 +57,9 @@ make down        # docker compose down
 make test-unit   # cd backend && go test ./... -race -cover -p 1 — assumes Redis is already up
 make migrate     # cd backend && go run ./cmd/migrate $(ARGS) — applies the ledger schema; `ARGS=down` reverts
 make ledger-worker # cd backend && go run ./cmd/ledger-worker — Kafka → PostgreSQL ledger writer (Phase 5b); run `make migrate` first, this binary never migrates
+bash deploy/k8s/up.sh     # Phase 8a.2: the full stack on a local kind cluster (needs kind, and kubectl within one minor of its node)
+bash deploy/k8s/chaos.sh  # k6 load while relay, ledger worker and Kafka are SIGKILLed, then drain + reconcile
+bash deploy/k8s/down.sh   # delete the kind cluster
 ```
 
 `make test` now brings up the **full stack** — Redis, PostgreSQL, and
@@ -296,6 +299,17 @@ Gotchas).
   claims it, then credits — never the reverse: crediting before the
   claim succeeds would mint tokens on a retry that raced the claim,
   which this codebase's invariants forbid.
+- **Exactly one relay runs, and on startup it claims every orphaned
+  outbox entry before any new work (Phase 8a.2).** `cmd/relay` starts
+  under a fresh UUID consumer each time, so a batch a dead process read
+  but never acked is pending under a consumer that no longer exists.
+  `Relay.ClaimOrphans` (`XAUTOCLAIM`, min-idle 0) moves it to the live
+  relay, and `Recover` drains it in stream order. Before this, a relay
+  killed during a Kafka outage lost wagers from the ledger:
+  `deploy/k8s/chaos.sh` reproduced 25 missing, and passes after the fix.
+  Min-idle 0 is only safe with one live relay, so never scale it.
+  Kubernetes deploys it with `replicas: 1` and `strategy: Recreate`
+  (`deploy/k8s/check-manifests.sh` check 4), and Compose runs one.
 - **Kafka broker access is equivalent to ledger-write access.**
   `cmd/ledger-worker` writes PostgreSQL money rows from any message on the
   `wagers-placed`/`rounds-settled` topics without authenticating the
@@ -402,6 +416,11 @@ Phase 8a adds, at the repo root:
 ```
 deploy/                      # production Compose, Caddyfile, deploy/backup/restore/smoke scripts — runbook: deploy/README.md
 backend/Dockerfile           # one distroless image carrying every cmd/ binary
+```
+
+Phase 8a.2 adds:
+```
+deploy/k8s/                  # kind cluster, kustomize manifests, up/down/chaos scripts, check-manifests.sh — README: deploy/k8s/README.md
 ```
 
 **`relay` and `ledger-worker` are separate binaries under `cmd/` deliberately** —
