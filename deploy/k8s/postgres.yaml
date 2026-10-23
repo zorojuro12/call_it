@@ -1,0 +1,52 @@
+# The ledger store. Persistent: a deleted pod comes back on the same
+# volume. The password arrives as a file (POSTGRES_PASSWORD_FILE).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  clusterIP: None
+  selector: {app: postgres}
+  ports: [{name: postgres, port: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      # No pod in this stack talks to the Kubernetes API. Without this, the
+      # kubelet's token mount under /var/run/secrets also collides with the
+      # read-only /run/secrets volume (plan 8a.2, spike results).
+      automountServiceAccountToken: false
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - {name: POSTGRES_USER, value: callit}
+            - {name: POSTGRES_DB, value: callit}
+            - {name: POSTGRES_PASSWORD_FILE, value: /run/secrets/postgres_password}
+            # A subdirectory, so initdb never meets the volume root.
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{containerPort: 5432}]
+          readinessProbe:
+            exec: {command: ["pg_isready", "-U", "callit"]}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: secrets, mountPath: /run/secrets, readOnly: true}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: callit-secrets
+            items: [{key: postgres_password, path: postgres_password}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 1Gi}}

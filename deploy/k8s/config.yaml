@@ -1,0 +1,13 @@
+# Non-secret settings shared by the backend workloads. Each binary reads
+# only the keys it knows (internal/config). Secrets never go here: they
+# are files from the callit-secrets Secret, read through *_FILE.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: callit-config
+data:
+  ENV: production
+  REDIS_ADDR: redis:6379
+  KAFKA_BROKERS: kafka:9092
+  # The API is reached through `kubectl port-forward svc/api 18080:8080`.
+  CORS_ALLOWED_ORIGINS: http://localhost:18080

@@ -70,9 +70,49 @@ func (r *Relay) Once(ctx context.Context, count int64, block time.Duration) (int
 // of Once's ">") and relays them the same way. Used at startup, and
 // after a produce failure, to close the at-least-once gap Once's error
 // return leaves open: an entry Once read but could not produce stays
-// pending until Recover successfully relays it.
+// pending until Recover successfully relays it. Entries a previous
+// process left pending reach it only through ClaimOrphans.
 func (r *Relay) Recover(ctx context.Context, count int64) (int, error) {
 	return r.readDecodeProduceAck(ctx, "0", count, 0)
+}
+
+// ClaimOrphans moves every entry pending under any consumer in the group
+// to this one, count at a time, and returns how many it moved. cmd/relay
+// starts under a fresh consumer ID each time, so a batch the previous
+// process read but never acked (it crashed, or exited on a produce
+// failure while Kafka was down) is pending under a consumer that no
+// longer exists, and Recover alone would never see it again.
+//
+// It claims with no minimum idle time, which is safe only because at most
+// one relay runs at a time (CLAUDE.md): Compose runs one, and Kubernetes
+// runs it as a one-replica StatefulSet, which doesn't start a replacement
+// until the old pod is gone. A second live relay would have its in-flight
+// batch taken from it, and could let a rounds_settled overtake its wagers.
+//
+// XAUTOCLAIM silently drops pending entries whose stream entry was
+// deleted, and go-redis doesn't report them. Nothing trims wager-outbox
+// today; trimming it (XTRIM, MAXLEN) would turn that into silent loss.
+func (r *Relay) ClaimOrphans(ctx context.Context, count int64) (int, error) {
+	claimed := 0
+	start := "0-0"
+	for {
+		msgs, next, err := r.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+			Stream:   r.stream,
+			Group:    r.group,
+			Consumer: r.consumer,
+			MinIdle:  0,
+			Start:    start,
+			Count:    count,
+		}).Result()
+		if err != nil {
+			return claimed, fmt.Errorf("relay: XAUTOCLAIM on stream %q: %w", r.stream, err)
+		}
+		claimed += len(msgs)
+		if next == "0-0" {
+			return claimed, nil
+		}
+		start = next
+	}
 }
 
 func (r *Relay) readDecodeProduceAck(ctx context.Context, id string, count int64, block time.Duration) (int, error) {
@@ -128,14 +168,19 @@ func (r *Relay) readDecodeProduceAck(ctx context.Context, id string, count int64
 // waiting for an idle blocking read to time out.
 const blockInterval = 200 * time.Millisecond
 
-// Run drains every pending entry via Recover, then loops on Once until
-// ctx is cancelled. Draining first, before reading any new entry, keeps
-// ordering intact: rounds-settled must never reach Kafka ahead of the
-// wagers-placed entries it settles, and reading new work before the
-// backlog would invert exactly that. Returns nil on context
-// cancellation — a clean shutdown, not an error.
+// Run claims entries orphaned by any earlier relay process, drains every
+// pending entry via Recover, then loops on Once until ctx is cancelled.
+// Draining first, before reading any new entry, keeps ordering intact:
+// rounds-settled must never reach Kafka ahead of the wagers-placed
+// entries it settles, and reading new work before the backlog would
+// invert exactly that. Returns nil on context cancellation — a clean
+// shutdown, not an error.
 func (r *Relay) Run(ctx context.Context) error {
 	if err := r.EnsureGroup(ctx); err != nil {
+		return err
+	}
+
+	if _, err := r.ClaimOrphans(ctx, 100); err != nil {
 		return err
 	}
 

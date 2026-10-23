@@ -1,0 +1,36 @@
+# Applies the ledger schema. Kubernetes has no depends_on: until Postgres
+# is ready this fails and the Job retries with backoff, and the ledger
+# worker likewise restarts until the schema exists.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+spec:
+  backoffLimit: 10
+  template:
+    metadata: {labels: {app: migrate}}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: migrate
+          image: callit-backend:local
+          imagePullPolicy: Never
+          command: ["/app/migrate"]
+          env:
+            - {name: POSTGRES_DSN_FILE, value: /run/secrets/postgres_dsn}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            # distroless's nonroot; the image names its user, and the kubelet
+            # can only verify runAsNonRoot against a numeric UID.
+            runAsUser: 65532
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: secrets, mountPath: /run/secrets, readOnly: true}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: callit-secrets
+            items: [{key: postgres_dsn, path: postgres_dsn}]

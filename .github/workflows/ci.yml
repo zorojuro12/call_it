@@ -170,6 +170,12 @@ jobs:
       - name: Test the secrets preflight
         run: bash deploy/tests/preflight-secrets_test.sh
 
+      - name: Check Kubernetes manifest invariants
+        run: bash deploy/k8s/check-manifests.sh
+
+      - name: Prove the manifest checks reject a broken layout
+        run: bash deploy/k8s/tests/check-manifests_test.sh
+
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3

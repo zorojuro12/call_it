@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -61,11 +62,11 @@ func TestReconcileAfterLoad(t *testing.T) {
 	}
 	pool, err := pgxpool.New(ctx, liveDSN)
 	if err != nil {
-		t.Fatalf("connect to live PostgreSQL at %s: %v", liveDSN, err)
+		t.Fatalf("connect to live PostgreSQL at %s: %v", redactDSN(liveDSN), err)
 	}
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
-		t.Fatalf("ping live PostgreSQL at %s: %v", liveDSN, err)
+		t.Fatalf("ping live PostgreSQL at %s: %v", redactDSN(liveDSN), err)
 	}
 	repo := New(pool)
 
@@ -232,4 +233,15 @@ func assertWagerCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, roo
 	if wagerTxns < 1000 {
 		t.Errorf("room %s: only %d wager transactions — this gate requires at least 1,000 to be evidence of reconciliation holding under load, not just under a fixture", roomID, wagerTxns)
 	}
+}
+
+// redactDSN returns dsn with its password masked, for failure messages:
+// deploy/k8s/chaos.sh runs this test with the cluster's real Postgres
+// password in POSTGRES_DSN. A DSN that doesn't parse isn't echoed at all.
+func redactDSN(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "<unparseable DSN>"
+	}
+	return u.Redacted()
 }
