@@ -218,6 +218,13 @@ environment variable, so none ends up in Docker's on-disk config or in
 `docker inspect`. CI fails if one ever does. The one credential left on disk
 is that scoped, revocable Service Account token.
 
+The same topology also runs on Kubernetes (a local kind cluster,
+[`deploy/k8s/README.md`](deploy/k8s/README.md)), where a chaos run kills
+the relay, the ledger worker and the Kafka broker mid-load, then proves
+every wager reached the ledger exactly once. Its first runs found a relay
+bug that lost wagers when the relay crashed during a Kafka outage: 25
+wagers missing before the fix, none after.
+
 Everything (VM setup, DuckDNS, 1Password, deploy and rollback by git tag,
 backups, restore, rotating secrets, and what's still on disk) is in
 [`deploy/README.md`](deploy/README.md). The same stack rehearses locally

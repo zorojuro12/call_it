@@ -761,6 +761,97 @@ plan from another session (`cd69502`) was deleted unexecuted.
   /root/env.pre-8a1`). The only secret left on the VM's disk is the Service
   Account token.
 
+### Phase 8a.2 — Kubernetes (kind) deployment, chaos-tested outbox delivery, relay orphan claim
+
+Plan: `docs/plans/2026-10-22-phase-8a2-kubernetes.md`. Runbook and
+results: `deploy/k8s/README.md`.
+
+**A money-movement bug found while planning, then reproduced and fixed.**
+`cmd/relay` starts under a fresh `uuid.NewString()` consumer each time, and
+`Relay.Recover` reads only its own pending entries. A batch a dead process
+had read but not acked was stranded forever. This was reachable under
+Compose too: a Kafka outage makes `Once` fail, `Run` returns, the process
+exits, and it restarts under a new ID. The fix (`1cf0eb3`) is
+`Relay.ClaimOrphans`: `XAUTOCLAIM`, min-idle 0, then the existing `Recover`
+drain, so the backlog still precedes new work.
+`TestRunClaimsOrphanedEntries` failed on the old code (only the new entry
+was relayed) and passes on the new. The test's restructure, which cancels
+only after the last ack, was re-verified as RED against the unfixed relay.
+
+**Chaos evidence** (`deploy/k8s/chaos.sh`; k6 `wager_latency.js` with 25
+players for 240 s; SIGKILLs: relay at 60 s, ledger worker at 90 s, Kafka at
+120 s, relay at 125 s):
+- **Before the fix (image from `bd5d0e4`): FAIL.**
+  - 50 entries stranded under two dead consumers, 25 each.
+  - The 60 s batch had reached the ledger (25/25 idempotency keys present):
+    stuck, not lost.
+  - The 125 s batch, read during the Kafka outage, never did: **25 wagers
+    of 10 tokens missing**, so every player's ledger balance was exactly 10
+    above `redis − opening`.
+- **After the fix: PASS.**
+  - Outbox pending 0 within 24 s of the load ending.
+  - `TestReconcileAfterLoad` passed over 5,967 ledger transactions.
+  - All three consumers end with 0 pending.
+- **An earlier before run, with only the 60 s relay kill, passed the
+  reconciler** while 25 entries sat stranded, all already in the ledger. A
+  ledger check alone can't see a stuck outbox, so "outbox drains" became a
+  pass condition, and the mid-outage kill was added. That's a deliberate
+  deviation from the plan, which had the relay kill at 60 s only.
+
+**Spike and bring-up findings, all fixed in the manifests:**
+- The installed `kubectl` 1.32 was five minors behind kind v0.33.0's
+  Kubernetes 1.37 node. A checksum-verified 1.37.1 went into `~/.local/bin`.
+- A read-only Secret volume at `/run/secrets` broke the kubelet's
+  ServiceAccount token mount (`RunContainerError`). Every pod now sets
+  `automountServiceAccountToken: false`, which is also least privilege.
+- Kafka advertises `kafka:9092`, so it needs a Service of that name, or
+  every client hangs.
+- The distroless image names its user, so `runAsNonRoot` needs
+  `runAsUser: 65532`.
+- Kafka on a local-path PVC survives a force-kill: the end offset and the
+  message survive, with no cluster-ID mismatch.
+
+**Offline invariants:** `deploy/k8s/check-manifests.sh` (in CI) enforces:
+- secrets as files, with an exact grant map;
+- pinned images, with the backend image never pulled;
+- persistent data stores;
+- one Recreate relay;
+- the API readiness probe.
+
+Three mutants prove checks 1, 3 and 4 bite.
+
+**Security review: no CRITICAL or HIGH findings.** Run against
+`dev...phase-8a2-kubernetes`. It confirmed that `ClaimOrphans` keeps
+ordering: pending IDs precede undelivered ones, and claimed entries drain
+before new work.
+
+**Fixed:**
+- **MEDIUM:** `Recreate` governs rollouts only. On a pod delete, eviction
+  or drain, a Deployment starts the replacement while the old pod is
+  still terminating, so two relays could overlap. The relay is now a
+  one-replica **StatefulSet**, which waits for `relay-0` to be gone, and
+  check 4 requires it (`f42834c`). The chaos run was repeated on it:
+  PASS, drained in 26 s, 5,962 transactions reconciled.
+- **MEDIUM:** check 1 was bypassable. A Secret volume without `items`
+  mounts every key but counted as an empty grant. `secretKeyRef`,
+  `envFrom.secretRef`, projected volumes, init containers and other
+  pod-bearing kinds weren't examined. All are covered now, with two new
+  mutants (`270dc66`).
+- **MEDIUM:** `TestReconcileAfterLoad`'s connect and ping failures printed
+  the live DSN, password included, into `chaos.sh`'s output. They're
+  masked with `url.Redacted()` now, test first (`e4d9615`).
+
+**Documented as limits:**
+- **MEDIUM:** Redis has no password and there are no NetworkPolicies. That
+  matches production's accepted trade-off.
+- **LOW:** the data stores run without a `securityContext`, seccomp
+  profile or resource limits.
+- **LOW:** trimming `wager-outbox` would make `XAUTOCLAIM` drop entries
+  silently. Nothing trims it today, and that's now a `CLAUDE.md`
+  invariant.
+- **LOW:** `chaos.sh`'s force-deletes bypass the StatefulSet's wait,
+  which is acceptable for a SIGKILLed test pod.
+
 ---
 
 ## Coverage notes

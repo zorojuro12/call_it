@@ -1,0 +1,8 @@
+# Local Kubernetes cluster for Phase 8a.2: one node is enough for a
+# single-replica stack. Create with deploy/k8s/up.sh, or by hand:
+#   kind create cluster --config deploy/k8s/kind.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: callit
+nodes:
+  - role: control-plane

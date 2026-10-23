@@ -1,0 +1,18 @@
+# The full CallIt stack on Kubernetes (Phase 8a.2), translated from
+# deploy/compose.prod.yml. Render: kubectl kustomize deploy/k8s
+# Apply: deploy/k8s/up.sh (it also creates the callit-secrets Secret,
+# which is deliberately not in this list: its values are generated at
+# bring-up and never committed). Invariants: check-manifests.sh.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: callit
+resources:
+  - namespace.yaml
+  - config.yaml
+  - postgres.yaml
+  - redis.yaml
+  - kafka.yaml
+  - migrate.yaml
+  - api.yaml
+  - relay.yaml
+  - ledger-worker.yaml
