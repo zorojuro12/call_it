@@ -1,0 +1,36 @@
+# Kafka -> PostgreSQL double-entry ledger. Idempotent on each event's
+# idempotency_key, so redelivery after a restart can't double-count.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger-worker
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: ledger-worker}}
+  template:
+    metadata: {labels: {app: ledger-worker}}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: ledger-worker
+          image: callit-backend:local
+          imagePullPolicy: Never
+          command: ["/app/ledger-worker"]
+          envFrom: [{configMapRef: {name: callit-config}}]
+          env:
+            - {name: POSTGRES_DSN_FILE, value: /run/secrets/postgres_dsn}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            # distroless's nonroot; the image names its user, and the kubelet
+            # can only verify runAsNonRoot against a numeric UID.
+            runAsUser: 65532
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: secrets, mountPath: /run/secrets, readOnly: true}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: callit-secrets
+            items: [{key: postgres_dsn, path: postgres_dsn}]
