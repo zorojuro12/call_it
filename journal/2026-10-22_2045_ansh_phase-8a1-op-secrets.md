@@ -1,9 +1,9 @@
 # 2026-10-22 — ansh — Phase 8a.1: production secrets from 1Password (planned and built, not merged)
 
-**Status:** Branch `phase-8a1-op-secrets` has Tasks 1–7 done and green: Go suite, lint, and all five deploy test scripts. Not merged. The security review returned 3 MEDIUM findings, none fixed yet. A competing `op run` plan for the same work (`Phase 8f`, `cd69502`, from another session) was deleted at the user's request; 8a.1 is the plan.
+**Status:** Branch `phase-8a1-op-secrets` has Tasks 1–7 done and green: Go suite, lint, and all five deploy test scripts. Not merged. Security review: no CRITICAL/HIGH; all 3 MEDIUMs and the test temp-dir leak are fixed (`6eae6d8`, `29031e8`, `fbee0f9`, `6fc3601`, `fa3ff8f`). A competing `op run` plan for the same work (`Phase 8f`, `cd69502`, from another session) was deleted at the user's request; 8a.1 is the plan.
 **Decided:** Secrets reach containers as **file secrets bind-mounted from tmpfs**, read through `*_FILE`, not as env vars via `op run`. Docker persists container env in `config.v2.json` and `docker inspect`, which the spike proved (the canary appeared 1× as an env var, 0× as a file). See the plan's Decisions 1–7.
 **Spec:** No change. The journal idea's "`op run`, no backend change" decision is withdrawn (plan Decision 1).
-**Next:** Fix review MEDIUMs 1–3 and the preflight test's temp-dir leak before merging.
+**Next:** Run the full-stack local rehearsal (needs the user's OK to write a scratch `deploy/.env`), then merge `--no-ff` into `dev`.
 **Blocked on:** Nothing, except that the full-stack local rehearsal is unrun: the attempt to create a scratch `deploy/.env` was denied, and it needs permission.
 **Touches:** `deploy/{secrets,op-bootstrap,preflight-secrets,install-secrets,gen-env,deploy,duckdns-update,check-compose,check-image}.sh`, `deploy/systemd/`, `deploy/compose.prod.yml`, `deploy/tests/`, `deploy/README.md`, `backend/internal/config/secret_files*.go`, `backend/cmd/{api,migrate,ledger-worker}/main.go`, `.github/workflows/ci.yml`, `CLAUDE.md`, `docs/plans/2026-10-22-phase-8a1-op-secrets.md`
 
@@ -56,7 +56,7 @@ No live secrets have been touched. The VM's `deploy/.env` and the running stack 
 
 ## Open Questions / Blockers
 - **Resolved: two plans for one feature.** `8a.1` (this branch: tmpfs files plus a Go change) versus `8f` (`op run` env injection, with no Go or Compose change and DuckDNS staying in `.env`). The user chose 8a.1 and had the 8f plan deleted. It's recoverable from `cd69502`.
-- **Security review MEDIUMs:**
+- **Security review MEDIUMs, all fixed after this entry was first written:**
   1. **First boot fails.** `secrets.sh` uses `umask 077`, so `mkdir -p` creates `/run/callit` as root `0700`. The deploy user then can't traverse it, so preflight fails and the DuckDNS cron fails silently. Fix: `RuntimeDirectory=callit` with mode `0750` in the unit, or `install -d`.
   2. **`deploy.sh` trusts `.env`'s `CALLIT_SECRETS_DIR`.** A rehearsal `/dev/shm` dir on the server would pass preflight. Fix: pin it to `/run/callit/secrets`.
   3. **The four writes aren't atomic as a set, and nothing traps away leftover `.tmp.*` files.**
@@ -80,4 +80,4 @@ No live secrets have been touched. The VM's `deploy/.env` and the running stack 
 - `cd69502`: **not this session's work.** The competing Phase 8f plan, deleted on this branch.
 
 ## Next Step
-Fix MEDIUMs 1–3 and the test leak as `fix:` commits, run the local rehearsal, then `finishing-a-development-branch` (merge `--no-ff` into `dev`), then do the VM move-over per `deploy/README.md` "Moving an existing server to 1Password".
+Run the local rehearsal, then `finishing-a-development-branch` (merge `--no-ff` into `dev`), then do the VM move-over per `deploy/README.md` "Moving an existing server to 1Password".
