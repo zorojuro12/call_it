@@ -62,6 +62,10 @@ It passes only if, afterwards:
 | Wagers missing from the ledger | **25** (10 tokens each, so every player's ledger balance was 10 too high) | 0 |
 | Ledger transactions | 5,931 | 5,967 |
 
+The after run was repeated once the relay became a StatefulSet (the
+security-review fix below): PASS again, with the outbox drained within
+26 s and 5,962 transactions reconciled.
+
 **The bug:** the relay starts under a fresh random consumer ID each time,
 and it only ever retried entries pending under its *own* ID. A batch it
 had read but not acknowledged when it died was stranded under a consumer

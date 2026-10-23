@@ -820,6 +820,38 @@ players for 240 s; SIGKILLs: relay at 60 s, ledger worker at 90 s, Kafka at
 
 Three mutants prove checks 1, 3 and 4 bite.
 
+**Security review: no CRITICAL or HIGH findings.** Run against
+`dev...phase-8a2-kubernetes`. It confirmed that `ClaimOrphans` keeps
+ordering: pending IDs precede undelivered ones, and claimed entries drain
+before new work.
+
+**Fixed:**
+- **MEDIUM:** `Recreate` governs rollouts only. On a pod delete, eviction
+  or drain, a Deployment starts the replacement while the old pod is
+  still terminating, so two relays could overlap. The relay is now a
+  one-replica **StatefulSet**, which waits for `relay-0` to be gone, and
+  check 4 requires it (`f42834c`). The chaos run was repeated on it:
+  PASS, drained in 26 s, 5,962 transactions reconciled.
+- **MEDIUM:** check 1 was bypassable. A Secret volume without `items`
+  mounts every key but counted as an empty grant. `secretKeyRef`,
+  `envFrom.secretRef`, projected volumes, init containers and other
+  pod-bearing kinds weren't examined. All are covered now, with two new
+  mutants (`270dc66`).
+- **MEDIUM:** `TestReconcileAfterLoad`'s connect and ping failures printed
+  the live DSN, password included, into `chaos.sh`'s output. They're
+  masked with `url.Redacted()` now, test first (`e4d9615`).
+
+**Documented as limits:**
+- **MEDIUM:** Redis has no password and there are no NetworkPolicies. That
+  matches production's accepted trade-off.
+- **LOW:** the data stores run without a `securityContext`, seccomp
+  profile or resource limits.
+- **LOW:** trimming `wager-outbox` would make `XAUTOCLAIM` drop entries
+  silently. Nothing trims it today, and that's now a `CLAUDE.md`
+  invariant.
+- **LOW:** `chaos.sh`'s force-deletes bypass the StatefulSet's wait,
+  which is acceptable for a SIGKILLed test pod.
+
 ---
 
 ## Coverage notes
