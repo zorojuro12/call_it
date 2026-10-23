@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -94,6 +95,75 @@ func TestResolveSecretFiles(t *testing.T) {
 
 			if ok != tt.wantOK || got != tt.wantValue {
 				t.Errorf("lookup(%q) = (%q, %v), want (%q, %v)", tt.key, got, ok, tt.wantValue, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestResolveSecretFilesErrors(t *testing.T) {
+	const canary = "s3cret-canary"
+	tests := []struct {
+		name          string
+		env           map[string]string
+		files         map[string]string
+		wantErrSubstr string
+		wantNotExist  bool
+	}{
+		{
+			name:          "both NAME and NAME_FILE set is ambiguous",
+			env:           map[string]string{"JWT_SECRET": "x", "JWT_SECRET_FILE": "/s/jwt"},
+			files:         map[string]string{"/s/jwt": canary},
+			wantErrSubstr: "set JWT_SECRET or JWT_SECRET_FILE, not both",
+		},
+		{
+			name:          "an empty NAME still conflicts with NAME_FILE",
+			env:           map[string]string{"JWT_SECRET": "", "JWT_SECRET_FILE": "/s/jwt"},
+			files:         map[string]string{"/s/jwt": canary},
+			wantErrSubstr: "set JWT_SECRET or JWT_SECRET_FILE, not both",
+		},
+		{
+			name:          "an empty NAME_FILE is rejected",
+			env:           map[string]string{"JWT_SECRET_FILE": ""},
+			wantErrSubstr: "JWT_SECRET_FILE must not be empty",
+		},
+		{
+			name:          "an unreadable file is reported and wrapped",
+			env:           map[string]string{"JWT_SECRET_FILE": "/s/missing"},
+			wantErrSubstr: "reading JWT_SECRET_FILE",
+			wantNotExist:  true,
+		},
+		{
+			name:          "an empty file is rejected",
+			env:           map[string]string{"JWT_SECRET_FILE": "/s/jwt"},
+			files:         map[string]string{"/s/jwt": ""},
+			wantErrSubstr: "JWT_SECRET_FILE /s/jwt is empty",
+		},
+		{
+			name:          "a file holding only a newline is rejected",
+			env:           map[string]string{"JWT_SECRET_FILE": "/s/jwt"},
+			files:         map[string]string{"/s/jwt": "\n"},
+			wantErrSubstr: "JWT_SECRET_FILE /s/jwt is empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lookup, err := ResolveSecretFiles(fakeEnv(tt.env), fakeFiles(tt.files), "JWT_SECRET")
+
+			if err == nil {
+				t.Fatalf("ResolveSecretFiles() error = nil, want error containing %q", tt.wantErrSubstr)
+			}
+			if lookup != nil {
+				t.Errorf("ResolveSecretFiles() lookup is non-nil on error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErrSubstr) {
+				t.Errorf("error = %q, want it to contain %q", err, tt.wantErrSubstr)
+			}
+			if tt.wantNotExist && !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("error = %v, want it to wrap fs.ErrNotExist", err)
+			}
+			if strings.Contains(err.Error(), canary) {
+				t.Errorf("error %q leaks the secret file's content", err)
 			}
 		})
 	}

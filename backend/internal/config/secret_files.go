@@ -11,6 +11,10 @@ import (
 // compose.prod.yml) because a container's environment is persisted in
 // Docker's on-disk container config; a file bind-mounted from tmpfs is
 // not. Every file is read once, here, so a bad one fails at startup.
+//
+// Setting both NAME and NAME_FILE is an error rather than a precedence
+// rule, so a leftover variable can't silently win. Errors name the file's
+// path, never its content.
 func ResolveSecretFiles(lookup LookupFunc, readFile func(string) ([]byte, error), names ...string) (LookupFunc, error) {
 	resolved := make(map[string]string, len(names))
 	for _, name := range names {
@@ -18,11 +22,21 @@ func ResolveSecretFiles(lookup LookupFunc, readFile func(string) ([]byte, error)
 		if !ok {
 			continue
 		}
+		if _, both := lookup(name); both {
+			return nil, fmt.Errorf("config: set %s or %s_FILE, not both", name, name)
+		}
+		if path == "" {
+			return nil, fmt.Errorf("config: %s_FILE must not be empty", name)
+		}
 		content, err := readFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("config: reading %s_FILE: %w", name, err)
 		}
-		resolved[name] = strings.TrimSuffix(string(content), "\n")
+		value := strings.TrimSuffix(string(content), "\n")
+		if value == "" {
+			return nil, fmt.Errorf("config: %s_FILE %s is empty", name, path)
+		}
+		resolved[name] = value
 	}
 
 	return func(key string) (string, bool) {
