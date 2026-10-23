@@ -1,30 +1,32 @@
 #!/usr/bin/env bash
-# Creates deploy/.env on the server with freshly generated secrets.
-# Usage: deploy/gen-env.sh <hostname> [duckdns-token]
+# Creates deploy/.env on the server: the non-secret settings compose.prod.yml
+# interpolates. Usage: deploy/gen-env.sh <hostname>
 #
-# Run once per install. It refuses to overwrite an existing .env: a new
-# JWT_SECRET would log out every session, and a new POSTGRES_PASSWORD would
-# no longer match the database volume it was first created with.
+# It holds no secret. Secrets live in the callit-prod 1Password vault
+# (deploy/op-bootstrap.sh creates them) and reach the containers as files
+# that deploy/secrets.sh writes into CALLIT_SECRETS_DIR (plan 8a.1).
+#
+# Run once per install. It refuses to overwrite an existing .env; change
+# the hostname by editing the file (deploy/README.md §9).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 env_file="$here/.env"
 
-if [ $# -lt 1 ] || [ -z "$1" ]; then
-  echo "usage: deploy/gen-env.sh <hostname> [duckdns-token]" >&2
+if [ $# -ne 1 ] || [ -z "$1" ]; then
+  if [ $# -eq 2 ]; then
+    echo "gen-env: the DuckDNS token now lives in 1Password (deploy/README.md §4)" >&2
+  else
+    echo "usage: deploy/gen-env.sh <hostname>" >&2
+  fi
   exit 2
 fi
 hostname="$1"
-token="${2:-}"
 
 # Validated before anything is written: other scripts read these values
 # back out of .env, so nothing resembling shell syntax may reach the file.
 if ! [[ "$hostname" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
   echo "gen-env: '$hostname' is not a lowercase DNS hostname" >&2
-  exit 2
-fi
-if [ -n "$token" ] && ! [[ "$token" =~ ^[A-Za-z0-9-]+$ ]]; then
-  echo "gen-env: the DuckDNS token may contain only letters, digits and '-'" >&2
   exit 2
 fi
 
@@ -37,9 +39,7 @@ umask 077
 set -C
 {
   echo "CALLIT_HOSTNAME=$hostname"
-  echo "JWT_SECRET=$(openssl rand -hex 32)"
-  echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
-  if [ -n "$token" ]; then echo "DUCKDNS_TOKEN=$token"; fi
+  echo "CALLIT_SECRETS_DIR=/run/callit/secrets"
 } >"$env_file" 2>/dev/null || refuse
 set +C
 

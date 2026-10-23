@@ -19,29 +19,27 @@ fresh_copy() {
   rm -f "$d/deploy/.env"
   echo "$d/deploy"
 }
-val() { grep "^$2=" "$1/.env" | cut -d= -f2-; }
 
-# A first run writes a 0600 .env with the hostname and strong secrets.
+# A first run writes a 0600 .env holding exactly the two non-secret
+# settings. Secrets live in 1Password and reach the server as files
+# (deploy/secrets.sh), never in .env.
 a="$(fresh_copy)"
 bash "$a/gen-env.sh" callit.duckdns.org >/dev/null || fail "first run exited non-zero"
 [ "$(stat -c %a "$a/.env")" = 600 ] || fail ".env mode is $(stat -c %a "$a/.env"), want 600"
-[ "$(val "$a" CALLIT_HOSTNAME)" = callit.duckdns.org ] || fail "CALLIT_HOSTNAME not written"
-[[ "$(val "$a" JWT_SECRET)" =~ ^[0-9a-f]{64}$ ]] || fail "JWT_SECRET is not 64 lowercase hex chars"
-[[ "$(val "$a" POSTGRES_PASSWORD)" =~ ^[0-9a-f]{48}$ ]] || fail "POSTGRES_PASSWORD is not 48 lowercase hex chars"
-grep -q '^DUCKDNS_TOKEN=' "$a/.env" && fail "DUCKDNS_TOKEN written without a token argument"
-ok "first run writes a 0600 .env with generated secrets"
+[ "$(cat "$a/.env")" = "CALLIT_HOSTNAME=callit.duckdns.org
+CALLIT_SECRETS_DIR=/run/callit/secrets" ] || fail ".env is not exactly the two settings: $(cat "$a/.env")"
+ok "first run writes a 0600 .env with only non-secret settings"
 
-# The token argument is written when given.
+# A DuckDNS token argument is refused: the token lives in 1Password now.
 t="$(fresh_copy)"
-bash "$t/gen-env.sh" callit.duckdns.org tok-123 >/dev/null
-[ "$(val "$t" DUCKDNS_TOKEN)" = tok-123 ] || fail "DUCKDNS_TOKEN not written"
-ok "DUCKDNS_TOKEN written when given"
-
-# Secrets differ between installs.
-b="$(fresh_copy)"
-bash "$b/gen-env.sh" callit.duckdns.org >/dev/null
-[ "$(val "$a" JWT_SECRET)" != "$(val "$b" JWT_SECRET)" ] || fail "two installs generated the same JWT_SECRET"
-ok "secrets differ between installs"
+set +e
+err="$(bash "$t/gen-env.sh" callit.duckdns.org tok-123 2>&1 >/dev/null)"
+code=$?
+set -e
+[ "$code" = 2 ] || fail "token argument exited $code, want 2"
+grep -qF "gen-env: the DuckDNS token now lives in 1Password (deploy/README.md §4)" <<<"$err" || fail "token refusal message was: $err"
+[ ! -e "$t/.env" ] || fail "token argument created .env"
+ok "a DuckDNS token argument is refused without writing"
 
 # A second run refuses to overwrite and leaves the file byte-identical.
 before="$(sha256sum "$a/.env")"
@@ -62,9 +60,8 @@ set -e
 [ ! -e "$c/.env" ] || fail "no-argument run created .env"
 ok "missing hostname exits 2 without writing"
 
-# Hostnames and tokens are validated before anything is written: .env is
-# read by other scripts, so a value carrying shell syntax must never land
-# in it.
+# Hostnames are validated before anything is written: .env is read by
+# other scripts, so a value carrying shell syntax must never land in it.
 for bad in 'evil;id' 'x$(id).duckdns.org' 'UPPER.duckdns.org' '-lead.duckdns.org' 'a b'; do
   d="$(fresh_copy)"
   set +e
@@ -74,14 +71,7 @@ for bad in 'evil;id' 'x$(id).duckdns.org' 'UPPER.duckdns.org' '-lead.duckdns.org
   [ "$code" = 2 ] || fail "hostname '$bad' exited $code, want 2"
   [ ! -e "$d/.env" ] || fail "hostname '$bad' created .env"
 done
-d="$(fresh_copy)"
-set +e
-bash "$d/gen-env.sh" callit.duckdns.org 'tok;id' >/dev/null 2>&1
-code=$?
-set -e
-[ "$code" = 2 ] || fail "token 'tok;id' exited $code, want 2"
-[ ! -e "$d/.env" ] || fail "invalid token created .env"
-ok "invalid hostnames and tokens are rejected without writing"
+ok "invalid hostnames are rejected without writing"
 
 # The generated file renders the production compose file.
 docker compose -f "$a/compose.prod.yml" --env-file "$a/.env" config -q || fail "generated .env does not render compose.prod.yml"
