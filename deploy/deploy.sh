@@ -37,6 +37,11 @@ bash "$here/check-compose.sh" >/dev/null || fail "check-compose.sh failed for $r
 sudo systemctl restart callit-secrets.service || fail "fetching secrets from 1Password failed (journalctl -u callit-secrets)"
 secrets_dir="$(env_get CALLIT_SECRETS_DIR)"
 [ -n "$secrets_dir" ] || fail "CALLIT_SECRETS_DIR missing from deploy/.env"
+# Only the dir callit-secrets.service writes counts: a .env left pointing
+# at a rehearsal dir would otherwise pass preflight with secrets that never
+# came from the vault.
+[ "$secrets_dir" = /run/callit/secrets ] \
+  || fail "CALLIT_SECRETS_DIR is $secrets_dir; on the server it must be /run/callit/secrets"
 bash "$here/preflight-secrets.sh" "$secrets_dir" >/dev/null || fail "secrets preflight failed"
 
 dc() { docker compose -f "$here/compose.prod.yml" --env-file "$here/.env" "$@"; }
