@@ -1,0 +1,250 @@
+# CallIt — Development Guide
+
+Real-time flash-prediction / micro-wagering platform for group watch
+parties (Discord hangouts, esports streams, live sports). A host launches
+a short prediction round; connected participants place instant wagers
+with virtual tokens; live odds update via a pari-mutuel model; the host
+resolves the round and payouts settle automatically.
+
+Setup, configuration, testing and operations reference. For the project
+overview, see the [README](../README.md).
+
+Full design: [`docs/specs/2026-08-21-callit-design.md`](specs/2026-08-21-callit-design.md).
+Full build plan: [`docs/plans/2026-08-21-implementation-plan.md`](plans/2026-08-21-implementation-plan.md).
+Binding conventions (stack, invariants, workflow): [`CLAUDE.md`](../CLAUDE.md).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser["Browser (Next.js)"]
+    API["cmd/api"]
+    Redis[("Redis")]
+    Relay["cmd/relay"]
+    Kafka[("Kafka")]
+    Worker["cmd/ledger-worker"]
+    Postgres[("PostgreSQL — ledger")]
+    Metrics["metrics listener (optional)"]
+
+    Browser -- "REST + WebSocket" --> API
+    API -- "atomic Lua: balance mutation + XADD wager-outbox" --> Redis
+    Redis -- "read the outbox stream" --> Relay
+    Relay -- "produce wagers-placed, rounds-settled" --> Kafka
+    Kafka -- "consume" --> Worker
+    Worker -- "double-entry write" --> Postgres
+    API -. "server-aggregate histograms only" .-> Metrics
+```
+
+**The API process never writes PostgreSQL directly** — that missing edge
+is the diagram's whole point. The write path is a transactional outbox:
+`cmd/api` debits a wallet and appends to a Redis stream atomically in one
+Lua script; `cmd/relay` reads that stream and produces to Kafka;
+`cmd/ledger-worker` consumes from Kafka and writes the double-entry ledger.
+This closes a crash window where Redis could debit a wallet while the
+ledger never learned of it — see `CLAUDE.md`'s Critical Invariants for the
+full list this architecture exists to uphold (anonymity until resolution,
+the host-cannot-wager rule, the single rate limiter, and more).
+
+## Repository layout
+
+```
+backend/
+├── cmd/api/               # HTTP/WS server entrypoint
+├── cmd/relay/              # Redis Stream → Kafka outbox relay
+├── cmd/ledger-worker/       # Kafka → PostgreSQL ledger writer
+├── cmd/migrate/             # applies/reverts the ledger schema
+├── cmd/callit-cli/          # CLI client — plays a full round end to end
+├── internal/domain/        # PURE, no I/O: odds, payout+dust, round FSM, wallet rules
+├── internal/auth/           # PURE, no I/O: argon2id, credential validation, JWT issue/verify
+├── internal/redisstore/     # Redis client, key schema, Lua wrappers — every writer lives here
+├── internal/account/        # register, login, refill claims       ─┐ service layer:
+├── internal/room/           # room lifecycle, short codes, joining  │ orchestrates
+├── internal/round/          # round lifecycle, server-side timers   │ redisstore +
+├── internal/wager/          # validate → Lua → broadcast           ─┘ domain
+├── internal/httpapi/        # REST handlers, mux, auth + rate-limit middleware
+├── internal/ws/              # hub, per-room goroutine, client pumps, message router
+├── internal/events/          # Kafka event schemas, producer/consumer
+├── internal/ledger/          # PostgreSQL double-entry repository
+├── internal/metrics/         # process-aggregate latency histograms (METRICS_ADDR)
+├── migrations/                # NNNN_name.up.sql / .down.sql
+└── scripts/lua/               # place_wager, lock_round, settle_round, refund_round, ...
+
+frontend/                       # Next.js App Router, TypeScript strict, Tailwind
+├── app/                        # pages — thin, compose lib/ and components/
+├── lib/                        # protocol types, REST/WS clients, the round-state reducer
+├── components/                 # OddsBoard, WagerPad, HostConsole, SettlementReveal, ...
+└── e2e/                        # Playwright acceptance tests
+
+docs/
+├── specs/                      # the living design spec
+├── plans/                      # one implementation plan per phase
+├── reports/                    # load-test baselines (Phase 7a/7b)
+└── project-history.md          # phase-by-phase outcomes, security-review findings
+
+journal/                        # dated session log — the working history behind the spec
+```
+
+Full rationale for this layout (organized by feature, not by type):
+`docs/plans/2026-08-21-implementation-plan.md` §3.
+
+## Running it
+
+| Binary | `make` target | What it does | Needs first |
+|---|---|---|---|
+| `cmd/api` | `go run ./backend/cmd/api` (see below) | HTTP/WS server | `make up` |
+| `cmd/relay` | `make relay` | Redis Stream → Kafka outbox relay | `make up-full` |
+| `cmd/ledger-worker` | `make ledger-worker` | Kafka → PostgreSQL ledger writer | `make migrate`, then `make up-full` — this binary never migrates itself |
+| `cmd/migrate` | `make migrate` | Applies the ledger schema (`ARGS=down` reverts) | `make up-full` (needs PostgreSQL) |
+| `cmd/callit-cli` | `go run ./backend/cmd/callit-cli` | CLI client — plays a full round end to end | a running `cmd/api` |
+
+### Backend
+
+```bash
+make up                                  # Redis + PostgreSQL (Kafka: make up-full)
+JWT_SECRET=$(openssl rand -hex 32) go run ./backend/cmd/api
+```
+
+`JWT_SECRET` (32+ bytes) is required, no default. Any secret can instead
+be given as a file: `JWT_SECRET_FILE` (or `POSTGRES_DSN_FILE` for `migrate`
+and `ledger-worker`) names a file holding the value, minus one trailing
+newline. Setting both forms is a startup error. Production uses only the
+file form (see Deployment). Other variables, all optional with the defaults
+shown:
+
+- `JWT_TTL` — token lifetime, default `2h`, valid `1m`–`24h`.
+- `REDIS_ADDR` — default `localhost:6379`.
+- `POSTGRES_DSN` — default `postgres://callit:callit@localhost:5432/callit?sslmode=disable`.
+- `KAFKA_BROKERS` — default `localhost:9092`.
+
+### `CORS_ALLOWED_ORIGINS`
+
+A comma-separated allowlist of browser origins permitted to call the REST
+API and open the WebSocket (`internal/httpapi.CORS` and the WS upgrader's
+`CheckOrigin` both read this one value — there is exactly one allowlist,
+never two).
+
+- Defaults to `http://localhost:3000` outside `ENV=production`.
+- **Required** when `ENV=production` — the process fails fast without it,
+  the same way it does without `JWT_SECRET`.
+- Never accepts `*`, in any environment.
+
+### `TRUSTED_PROXIES`
+
+A comma-separated list of CIDR prefixes (e.g. `172.30.0.10/32`) naming the
+reverse proxies in front of the API. The IP-keyed rate limits (the `auth`
+scope and the socket's unauthenticated fallback) believe `X-Forwarded-For`
+only from these peers, and then only its rightmost entry that isn't itself
+a trusted proxy. That entry is the one the proxy appended; everything to
+its left came from the client.
+
+- Unset: no peer is trusted, and the header is ignored entirely.
+- Set it whenever a proxy sits in front of the API. Otherwise every caller
+  shares the proxy's address, and with it a single rate-limit bucket.
+- Entries must be CIDR prefixes; a bare address is rejected.
+- Never accepts `0.0.0.0/0` or `::/0`. Trusting every peer means trusting
+  every client's header.
+
+### `METRICS_ADDR`
+
+Optional `host:port` for a second, plain-text metrics listener
+(`internal/metrics.Handler`) — server-side latency histograms for the wager
+placement and WebSocket broadcast paths, added in Phase 7a.
+
+- **Disabled by default** — unset or empty, the listener never starts and no
+  `/metrics`-style route exists on the public API port at all.
+- Serves the registry's rendered text at any path on its own
+  `http.Server`, never wrapped in `httpapi.CORS` and never registered on the
+  public mux — it adds no second origin allowlist.
+- Under `ENV=production`, the host must be loopback (`127.0.0.1`, `::1`, or
+  `localhost`) — the process fails fast otherwise.
+- Carries no per-user, per-room, or per-round data — every metric is a
+  process-aggregate count or latency quantile.
+
+### Frontend
+
+```bash
+make fe-install   # npm ci
+make fe-dev       # next dev, http://localhost:3000
+```
+
+#### `NEXT_PUBLIC_API_BASE_URL`
+
+The backend's base URL, e.g. `http://localhost:8080`. The only environment
+value the browser bundle may carry — no secret goes in a `NEXT_PUBLIC_*`
+name.
+
+- Defaults to `http://localhost:8080` outside `NODE_ENV=production`.
+- **Required** when `NODE_ENV=production` — `npm run build` and
+  `npm run start` both fail fast without it (`lib/config.ts`).
+
+## Testing and load
+
+```bash
+make test        # brings up the full stack (Redis, PostgreSQL, Kafka), then go test ./... -race -cover -p 1
+make test-unit    # same tests, assumes the stack is already up
+make fe-test      # npx vitest run
+make fe-lint      # npm run lint && npx tsc --noEmit
+make fe-e2e       # Playwright — needs the backend and Redis running
+```
+
+`make loadtest` runs a k6 REST-throughput ramp against a running
+`cmd/api`; `make loadtest SCENARIO=wager_latency` runs the WebSocket
+wager-latency scenario instead. `make loadtest-api` builds and runs the
+optimized `cmd/api` binary for exactly this purpose — never `go run
+./cmd/api`, whose disabled inlining confounds a latency measurement. See
+`loadtest/README.md` and the Phase 7a/7b baseline reports under
+`docs/reports/`.
+
+The opt-in game-logic e2e check (`frontend/e2e/logic-check.spec.ts`)
+plays two rounds with a host and two guests through to the PostgreSQL
+ledger. It needs the relay and ledger worker running; see the file's
+header, and run it with `CALLIT_LEDGER_E2E=1`.
+
+## Deployment
+
+The backend deploys to one Linux VM with Docker Compose: Caddy terminates
+TLS with an automatic Let's Encrypt certificate, and Redis, PostgreSQL and
+Kafka sit on internal networks that only the processes needing them can
+reach. The API can't even connect to PostgreSQL or Kafka.
+
+Secrets live in a 1Password vault, not on the server's disk. At boot and
+before every deploy, a systemd unit fetches them with a read-only, single-vault
+Service Account into a RAM-backed directory, and Compose mounts each one as a
+file into only the containers that need it. No secret is ever a container
+environment variable, so none ends up in Docker's on-disk config or in
+`docker inspect`. CI fails if one ever does. The one credential left on disk
+is that scoped, revocable Service Account token.
+
+The same topology also runs on Kubernetes (a local kind cluster,
+[`deploy/k8s/README.md`](../deploy/k8s/README.md)), where a chaos run kills
+the relay, the ledger worker and the Kafka broker mid-load, then proves
+every wager reached the ledger exactly once. Its first runs found a relay
+bug that lost wagers when the relay crashed during a Kafka outage: 25
+wagers missing before the fix, none after.
+
+Everything (VM setup, DuckDNS, 1Password, deploy and rollback by git tag,
+backups, restore, rotating secrets, and what's still on disk) is in
+[`deploy/README.md`](../deploy/README.md). The same stack rehearses locally
+with `CALLIT_HOSTNAME=localhost`.
+
+## Security posture
+
+- Passwords are hashed with argon2id; a login for an unknown email pays the
+  same argon2id cost as one for a wrong password, so the response body
+  *and* its timing are identical for both.
+- JWT verification pins `HS256` and rejects everything else, including
+  `alg: none`.
+- Production secrets come from 1Password and reach containers only as
+  files on tmpfs, each granted to exactly the services that need it
+  (`deploy/check-compose.sh` check 12). The fetch is all-or-nothing, never
+  prints a value, and never passes the token in argv. The trade-offs that
+  remain are written down in `deploy/README.md`, "What's still on disk".
+- One sliding-window rate limiter (`internal/redisstore`'s `rate_limit.lua`)
+  backs every throttle in the system — the refill quota, login/register (by
+  client IP), authenticated REST routes (by user ID), and the WebSocket
+  connect route — never a second implementation.
+- **Known deployment caveat:** local dev runs Kafka PLAINTEXT with no ACLs
+  (a recorded decision). Broker access is currently equivalent to
+  ledger-write access, enforced only by topology (only `cmd/relay`
+  produces) rather than the broker itself — restrict broker access before
+  any shared or production deployment.

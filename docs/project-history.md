@@ -852,6 +852,17 @@ before new work.
 - **LOW:** `chaos.sh`'s force-deletes bypass the StatefulSet's wait,
   which is acceptable for a SIGKILLed test pod.
 
+**Shipped to production (2026-10-23): `v0.3.1`.**
+- CI was green on all four jobs for the merged `dev` commit first.
+- `dev` was merged into `main` (`e3de8f6`) and tagged.
+- `v0.3.0..v0.3.1` touches no VM-side deploy piece (secrets script,
+  systemd unit, Compose file, `deploy.sh`, preflight), so it was a plain
+  `deploy.sh v0.3.1` with nothing to reinstall.
+- `smoke.sh` passed 4/4 on the server, with the ledger at 4 → 6
+  transactions.
+- The production relay (Compose, a single instance) now claims orphaned
+  outbox entries on startup.
+
 ---
 
 ## Coverage notes
