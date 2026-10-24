@@ -94,7 +94,7 @@ default — the process fails fast without it; or `JWT_SECRET_FILE`, naming
 a file that holds it, as production does — Phase 8a.1) and, optionally,
 `JWT_TTL` (default `2h`, valid `1m`–`24h`) and `METRICS_ADDR` (optional
 `host:port` for the separate metrics listener added in Phase 7a; unset
-disables it; must be loopback under `ENV=production` — see README.md),
+disables it; must be loopback under `ENV=production` — see docs/development.md),
 and `TRUSTED_PROXIES` (Phase 8a; CIDR prefixes of the reverse proxies
 whose `X-Forwarded-For` the IP-keyed rate limits believe; unset trusts
 none, `0.0.0.0/0` / `::/0` are rejected).
